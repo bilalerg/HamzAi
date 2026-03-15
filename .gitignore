@@ -1,0 +1,18 @@
+# Hassas bilgiler - asla GitHub'a gitmesin
+.env
+
+# Python derleme dosyaları - gereksiz
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environment - herkes kendi kurar
+.venv/
+venv/
+
+# PyCharm proje dosyaları
+.idea/
+
+# Log dosyaları
+logs/
+*.log

@@ -1,0 +1,34 @@
+# Anthropic - Claude API (OCR, NLP, Computer Use)
+anthropic==0.25.0
+
+# Veritabanı - PostgreSQL bağlantısı
+psycopg2-binary==2.9.9
+sqlalchemy==2.0.30
+
+# Ortam değişkenleri - .env dosyasını okumak için
+python-dotenv==1.0.1
+
+# Görüntü işleme - OCR için fotoğraf kırpma
+pillow==10.3.0
+
+# Async HTTP istekleri - Paraşüt API çağrıları için
+httpx==0.27.0
+
+# Telegram bot
+python-telegram-bot==21.3
+
+# Zirve ekran otomasyonu
+pyautogui==0.9.54
+pywinauto==0.6.8
+
+# OCR - Çapraz kontrol için (ücretsiz, yerel)
+pytesseract==0.3.10
+
+# Zamanlama - periyodik görevler için
+schedule==1.2.2
+
+# Loglama - standart print() yerine bunu kullanacağız
+loguru==0.7.2
+
+# E-mail okuma
+imaplib2==3.6
