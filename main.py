@@ -130,17 +130,17 @@ async def startup_recovery():
 
 
 # ── MAIL LİSTENER ────────────────────────────────────────────────────────
+# main.py içindeki ilgili fonksiyonu bununla değiştir:
+
 async def mail_listener_baslat():
     """
-    Mail listener'ı arka planda başlatır.
-    Fabrika teyit maillerini 60sn'de bir kontrol eder.
+    Mail listener'ı ana döngüden tamamen koparıp ayrı bir kanalda çalıştırır.
+    Böylece FastAPI (uvicorn) kantar fişlerini işlemeye devam edebilir.
     """
-    # asyncio ile sync fonksiyonu arka planda çalıştır
-    loop = asyncio.get_event_loop()
-    await loop.run_in_executor(
-        None,
-        lambda: __import__(
-            'app.mail.listener',
-            fromlist=['gelen_kutu_dinle']
-        ).gelen_kutu_dinle(60)
-    )
+    import threading
+    from app.mail.listener import gelen_kutu_dinle
+
+    # Daemon=True sayesinde ana program kapanınca bu da kapanır
+    thread = threading.Thread(target=gelen_kutu_dinle, args=(60,), daemon=True)
+    thread.start()
+    logger.info("📬 Mail dinleyici bağımsız bir kanalda (Thread) başlatıldı.")

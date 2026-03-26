@@ -262,24 +262,27 @@ def fis_oku(fotograf_yolu: str) -> FisVerisi:
 
 # ── VERİTABANINA KAYDET ──────────────────────────────────────────────────
 def fis_db_kaydet(fis: FisVerisi, foto_path: str, db) -> object:
-    """
-    OCR sonucunu veritabanına kaydeder.
-
-    NEDEN AYRI FONKSİYON?
-    OCR okuma ve DB kayıt işlemlerini birbirinden ayırıyoruz.
-    Tek sorumluluk prensibi (Single Responsibility Principle):
-    Her fonksiyon sadece bir iş yapmalı.
-    fis_oku() → sadece okur
-    fis_db_kaydet() → sadece kaydeder
-    """
     from app.core.database import WeighTicket, TicketStatus
+    from datetime import datetime
 
-    # Yeni WeighTicket nesnesi oluştur
+    # Tarihi string'den datetime'a çevir
+    # Fişten "16.12.2025" formatında geliyor, DB datetime istiyor
+    fis_tarihi = None
+    if fis.tarih:
+        try:
+            fis_tarihi = datetime.strptime(fis.tarih, "%d.%m.%Y")
+        except:
+            try:
+                fis_tarihi = datetime.strptime(fis.tarih, "%Y-%m-%d")
+            except:
+                pass
+
     ticket = WeighTicket(
         foto_path=foto_path,
         plaka=fis.plaka,
         agirlik_kg=fis.net_agirlik_kg,
-        malzeme="hurda",  # şimdilik sabit, ileride fişten çekilecek
+        fis_tarihi=fis_tarihi,          # ← eklendi
+        malzeme="hurda",
         ocr_ham_cikti=fis.claude_ham_cikti,
         tesseract_agirlik=fis.tesseract_agirlik,
         ocr_uyusma=1 if fis.ocr_uyusma else 0,
@@ -287,10 +290,9 @@ def fis_db_kaydet(fis: FisVerisi, foto_path: str, db) -> object:
         hata_mesaji=fis.hata
     )
 
-    # DB'ye ekle ve kaydet
     db.add(ticket)
     db.commit()
-    db.refresh(ticket)  # DB'nin atadığı ID'yi al
+    db.refresh(ticket)
 
     logger.info(f"✅ Fiş DB'ye kaydedildi: ticket_id={ticket.id} plaka={ticket.plaka} status={ticket.status}")
 
