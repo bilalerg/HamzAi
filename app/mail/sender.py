@@ -8,31 +8,37 @@
 # NEDEN SMTP?
 # IMAP → mail okumak için
 # SMTP → mail göndermek için
-# Mailhog hem IMAP hem SMTP destekler → geliştirmede gerçek mail gitmiyor
-# Canlıda sadece .env'deki MAIL_HOST değişecek
+# Gmail SMTP: smtp.gmail.com:587 (TLS)
+# Uygulama şifresi ile authentication yapılır.
 
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from email.mime.base import MIMEBase
-from email import encoders
-import os
-from app.core.config import MAIL_HOST, MAIL_PORT, MAIL_FROM
+from app.core.config import MAIL_HOST, MAIL_PORT, MAIL_FROM, MAIL_USER, MAIL_PASSWORD
 from app.core.logger import logger
 
 
 # ── YARDIMCI: SMTP BAĞLANTISI ───────────────────────────────────────────
 def smtp_baglan():
     """
-    SMTP sunucusuna bağlanır.
+    Gmail SMTP sunucusuna TLS ile bağlanır.
 
-    NEDEN CONTEXT MANAGER DEĞİL?
-    smtplib.SMTP() with bloğu ile kullanılabilir ama
-    her fonksiyonda ayrı bağlantı açıp kapatmak daha temiz.
-    Mailhog için authentication gerekmez — production'da gerekir.
+    NEDEN TLS (STARTTLS)?
+    Port 587 → önce düz bağlantı açılır, sonra STARTTLS ile şifrelenir.
+    Port 465 → direkt SSL (daha eski yöntem)
+    Gmail port 587 + STARTTLS kullanır — bu standart.
+
+    NEDEN AUTH?
+    Mailhog'da authentication gerekmiyordu — geliştirme aracıydı.
+    Gmail gerçek sunucu — uygulama şifresi ile login olmak zorunlu.
     """
     try:
         smtp = smtplib.SMTP(MAIL_HOST, MAIL_PORT)
+        smtp.ehlo()
+        smtp.starttls()  # TLS şifrelemesini başlat
+        smtp.ehlo()
+        if MAIL_USER and MAIL_PASSWORD:
+            smtp.login(MAIL_USER, MAIL_PASSWORD)
         logger.debug(f"SMTP bağlantısı kuruldu: {MAIL_HOST}:{MAIL_PORT}")
         return smtp
     except Exception as e:
@@ -59,21 +65,13 @@ def fabrikaya_irsaliye_gonder(
 
     Döndürür: ref_kodu (DB'ye kaydetmek için)
     """
-
-    # Ref kodu oluştur: waybill_id=1 → "HZ-0001"
     ref_kodu = f"HZ-{waybill_id:04d}"
 
-    # Mail oluştur
-    # MIMEMultipart → hem metin hem ek içerebilen mail formatı
     msg = MIMEMultipart()
     msg['From'] = MAIL_FROM
     msg['To'] = fabrika_mail
     msg['Subject'] = f"İrsaliye Onayı [Ref: {ref_kodu}]"
 
-    # Mail gövdesi
-    # NEDEN F-STRING?
-    # Değişkenleri direkt string içine gömmek için.
-    # Okunması kolay, hata riski az.
     govde = f"""Sayın Yetkili,
 
 Aşağıdaki sevkiyat için irsaliye oluşturulmuştur.
@@ -95,7 +93,6 @@ HamzaAI Otomatik Bildirim Sistemi
 
     msg.attach(MIMEText(govde, 'plain', 'utf-8'))
 
-    # Gönder
     try:
         smtp = smtp_baglan()
         smtp.send_message(msg)
@@ -157,7 +154,6 @@ def patrona_bildirim_gonder(
 ) -> bool:
     """
     Fatura kesilince patrona bildirim gönderir.
-    Faz 4'te Paraşüt entegrasyonu tamamlanınca çağrılacak.
     """
     msg = MIMEMultipart()
     msg['From'] = MAIL_FROM

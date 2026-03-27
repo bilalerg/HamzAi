@@ -24,24 +24,34 @@ IS_PRODUCTION = ENV == "production"
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
 # ── PARAŞÜT ────────────────────────────────────────────────────────────
-PARASUT_CLIENT_ID       = os.getenv("PARASUT_CLIENT_ID")
-PARASUT_CLIENT_SECRET   = os.getenv("PARASUT_CLIENT_SECRET")
-PARASUT_USERNAME        = os.getenv("PARASUT_USERNAME")
-PARASUT_PASSWORD        = os.getenv("PARASUT_PASSWORD")
-PARASUT_COMPANY_ID      = os.getenv("PARASUT_COMPANY_ID")
-PARASUT_BASE_URL        = os.getenv("PARASUT_BASE_URL", "https://api.parasut.com/v4")
-PARASUT_DEMO_CONTACT_ID = os.getenv("PARASUT_DEMO_CONTACT_ID") # Demo için sabit cari
+PARASUT_CLIENT_ID        = os.getenv("PARASUT_CLIENT_ID")
+PARASUT_CLIENT_SECRET    = os.getenv("PARASUT_CLIENT_SECRET")
+PARASUT_USERNAME         = os.getenv("PARASUT_USERNAME")
+PARASUT_PASSWORD         = os.getenv("PARASUT_PASSWORD")
+PARASUT_COMPANY_ID       = os.getenv("PARASUT_COMPANY_ID")
+PARASUT_BASE_URL         = os.getenv("PARASUT_BASE_URL", "https://api.parasut.com/v4")
+PARASUT_DEMO_CONTACT_ID  = os.getenv("PARASUT_DEMO_CONTACT_ID")
 PARASUT_HURDA_PRODUCT_ID = os.getenv("PARASUT_HURDA_PRODUCT_ID")
 
 # ── VERİTABANI ─────────────────────────────────────────────────────────
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# ── MAİL ───────────────────────────────────────────────────────────────
-MAIL_HOST     = os.getenv("MAIL_HOST", "localhost")
-MAIL_PORT     = int(os.getenv("MAIL_PORT", "1025"))
+# ── MAİL — SMTP (gönderme) ─────────────────────────────────────────────
+MAIL_HOST     = os.getenv("MAIL_HOST", "smtp.gmail.com")
+MAIL_PORT     = int(os.getenv("MAIL_PORT", "587"))
 MAIL_USER     = os.getenv("MAIL_USER", "")
 MAIL_PASSWORD = os.getenv("MAIL_PASSWORD", "")
-MAIL_FROM     = os.getenv("MAIL_FROM", "hamza@hamzaai.com")
+MAIL_FROM     = os.getenv("MAIL_FROM", "")
+FABRIKA_MAIL  = os.getenv("FABRIKA_MAIL", "")
+
+# ── MAİL — IMAP (okuma) ────────────────────────────────────────────────
+# SMTP → mail göndermek için
+# IMAP → mail okumak için (fabrika reply'larını yakalamak)
+# Gmail IMAP: imap.gmail.com:993 (SSL)
+IMAP_HOST     = os.getenv("IMAP_HOST", "imap.gmail.com")
+IMAP_PORT     = int(os.getenv("IMAP_PORT", "993"))
+IMAP_USER     = os.getenv("IMAP_USER", "")
+IMAP_PASSWORD = os.getenv("IMAP_PASSWORD", "")
 
 # ── WHATSAPP ───────────────────────────────────────────────────────────
 WHATSAPP_PROVIDER    = os.getenv("WHATSAPP_PROVIDER", "twilio_sandbox")

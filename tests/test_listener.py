@@ -12,6 +12,7 @@ import time
 from app.core.config import validate_config
 from app.core.logger import logger
 from app.mail.listener import gelen_kutu_dinle
+from app.core.database import SessionLocal, Waybill, TicketStatus
 
 validate_config()
 
@@ -27,12 +28,8 @@ def fabrika_reply_at(ref_kodu: str, onay_mi: bool = True):
     msg['From'] = "fabrika@test.com"
     msg['To'] = "hamza@hamzaai.com"
 
-    if onay_mi:
-        msg['Subject'] = f"Re: İrsaliye Onayı [Ref: {ref_kodu}]"
-        govde = "Onaylıyorum, teşekkürler."
-    else:
-        msg['Subject'] = f"Re: İrsaliye Onayı [Ref: {ref_kodu}]"
-        govde = "İtiraz ediyoruz, ağırlık yanlış."
+    msg['Subject'] = f"Re: İrsaliye Onayı [Ref: {ref_kodu}]"
+    govde = "Onaylıyorum, teşekkürler." if onay_mi else "İtiraz ediyoruz, ağırlık yanlış."
 
     msg.attach(MIMEText(govde, 'plain', 'utf-8'))
 
@@ -42,18 +39,36 @@ def fabrika_reply_at(ref_kodu: str, onay_mi: bool = True):
     print(f"\n📤 Fabrika reply attı: [Ref: {ref_kodu}] → {'ONAY' if onay_mi else 'İTİRAZ'}")
 
 
+# ── DB'DEN REF KODUNU OTOMATİK AL ────────────────────────────────────────
+# Her seferinde elle değiştirmek yerine DB'den en güncel bekleyen waybill'i alıyoruz
+# FABRIKA_BEKLENIYOR statusundaki ilk waybill'i bul
+db = SessionLocal()
+waybill = db.query(Waybill).filter(
+    Waybill.status == TicketStatus.FABRIKA_BEKLENIYOR
+).first()
+db.close()
+
+if not waybill:
+    print("❌ DB'de FABRIKA_BEKLENIYOR statusunda waybill yok!")
+    print("Önce WhatsApp'tan fiş göndererek irsaliye oluştur.")
+    sys.exit(1)
+
+ref_kodu = waybill.ref_kodu
+print(f"✅ DB'den ref kodu alındı: {ref_kodu}")
+
+
 # ── 5 saniye sonra fabrika otomatik reply atacak ─────────────────────────
 def zamanlanmis_reply():
-    print("\n⏳ 5 saniye sonra fabrika reply atacak...")
+    print(f"\n⏳ 5 saniye sonra fabrika [{ref_kodu}] için reply atacak...")
     time.sleep(5)
-    fabrika_reply_at("HZ-0011", onay_mi=True)  # Gerçek waybill ref kodu
+    fabrika_reply_at(ref_kodu, onay_mi=True)
 
 
 # Arka planda çalıştır
 threading.Thread(target=zamanlanmis_reply, daemon=True).start()
 
 # ── Listener başlat ───────────────────────────────────────────────────────
-print("\n📬 Listener başlatılıyor (5sn'de bir kontrol)...")
-print("5 saniye sonra fabrika HZ-0011 için onay atacak...")
+print(f"\n📬 Listener başlatılıyor (5sn'de bir kontrol)...")
+print(f"5 saniye sonra fabrika [{ref_kodu}] için onay atacak...")
 print("-" * 50)
 gelen_kutu_dinle(bekleme_suresi=5)

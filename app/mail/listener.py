@@ -1,100 +1,118 @@
 # listener.py — Gelen Kutusu Dinleyici
 #
-# GELİŞTİRME: Mailhog HTTP API kullanır
-# CANLI: Gerçek IMAP sunucusu kullanır
-#
-# NEDEN HTTP API?
-# Mailhog IMAP desteklemiyor.
-# Ama kendi HTTP API'si var: localhost:8025/api/v2/messages
-# Bu API tüm mailleri JSON olarak döndürüyor.
-# IMAP'tan daha basit, geliştirme için mükemmel.
+# Mailhog HTTP API'den Gmail IMAP'a geçildi.
+# IMAP → mail okumak için standart protokol.
+# Gmail IMAP: imap.gmail.com:993 (SSL)
+# Uygulama şifresi ile bağlanıyoruz — normal Gmail şifresi çalışmaz.
 
-import httpx
+import imaplib
+import email
 import time
-from app.core.config import ENV
-from app.core.database import SessionLocal, SystemLog
+from email.header import decode_header
+from app.core.config import IMAP_HOST, IMAP_PORT, IMAP_USER, IMAP_PASSWORD, MAIL_USER
+from app.core.database import SessionLocal
 from app.core.logger import logger
 from app.mail.parser import fabrika_cevabi_isle, ref_kodu_bul
 
 
-# ── FONKSİYON 1: MAİLHOG'DAN MAİLLERİ AL ───────────────────────────────
-def mailhog_mailleri_al() -> list:
+# ── FONKSİYON 1: IMAP'TAN MAİLLERİ AL ──────────────────────────────────
+def imap_mailleri_al() -> list:
     """
-    Mailhog HTTP API'sinden tüm mailleri alır.
+    Gmail IMAP üzerinden gelen kutusu maillerini alır.
 
-    NEDEN HTTP API?
-    Mailhog IMAP desteklemiyor.
-    localhost:8025/api/v2/messages → tüm mailleri JSON döndürür.
+    NEDEN IMAP?
+    IMAP standart mail okuma protokolü.
+    Gmail, Outlook, her mail sunucusu destekler.
+    SSL ile şifreli bağlantı — güvenli.
 
-    CANLI ORTAMDA NE OLACAK?
-    Gerçek mail sunucusu IMAP destekler.
-    O zaman bu fonksiyon IMAP bağlantısına çevrilir.
-    Sadece bu fonksiyon değişir, geri kalan kod aynı kalır.
+    NASIL ÇALIŞIR?
+    1. Gmail IMAP'a SSL ile bağlan
+    2. INBOX klasörünü seç
+    3. Tüm maillerin ID listesini al
+    4. Her maili indir
+    5. Liste olarak döndür
     """
     try:
-        response = httpx.get(
-            "http://localhost:8025/api/v2/messages",
-            params={"limit": 50}  # Son 50 maili al
-        )
+        # SSL ile Gmail IMAP'a bağlan
+        mail = imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT)
+        mail.login(IMAP_USER, IMAP_PASSWORD)
+        mail.select("INBOX")
 
-        if response.status_code == 200:
-            veri = response.json()
-            return veri.get("items", [])
-        else:
-            logger.error(f"Mailhog API hatası: {response.status_code}")
+        # Tüm mailleri listele
+        # "ALL" → okunmuş/okunmamış fark etmeksizin hepsi
+        durum, mesaj_idleri = mail.search(None, "ALL")
+
+        if durum != "OK":
+            mail.logout()
             return []
 
+        id_listesi = mesaj_idleri[0].split()
+
+        # Son 20 maili al — çok eski mailleri işlemek gereksiz
+        son_idler = id_listesi[-20:] if len(id_listesi) > 20 else id_listesi
+
+        mailler = []
+        for mid in son_idler:
+            durum, veri = mail.fetch(mid, "(RFC822)")
+            if durum == "OK":
+                mailler.append({
+                    "id": mid.decode(),
+                    "ham": veri[0][1]
+                })
+
+        mail.logout()
+        return mailler
+
     except Exception as e:
-        logger.error(f"Mailhog bağlantı hatası: {e}")
+        logger.error(f"IMAP bağlantı hatası: {e}")
         return []
 
 
 # ── FONKSİYON 2: MAİL İÇERİĞİNİ ÇIKAR ──────────────────────────────────
-def mail_icerik_cikar(mail: dict) -> tuple:
+def mail_icerik_cikar(mail_verisi: dict) -> tuple:
     """
-    Mailhog JSON formatından konu ve gövdeyi çıkarır.
+    Ham IMAP mail verisinden konu, gövde ve gönderen çıkarır.
 
-    Mailhog JSON yapısı:
-    {
-        "Content": {
-            "Headers": {
-                "Subject": ["İrsaliye Onayı [Ref: HZ-0001]"],
-                "From": ["hamza@hamzaai.com"]
-            },
-            "Body": "Mail gövdesi..."
-        }
-    }
+    NEDEN RFC822 FORMATI?
+    IMAP mailleri RFC822 standardında gelir.
+    Python'un email kütüphanesi bunu parse eder.
+    Konu encoding'i (UTF-8, ISO-8859-9 vs) otomatik çözülür.
 
-    NEDEN TUPLE DÖNDÜRÜYOR?
-    İki değer döndürmemiz lazım: konu ve gövde.
-    Tuple → (konu, gövde) şeklinde ikisini birlikte döndürürüz.
+    Döndürür: (konu, govde, gonderen)
     """
     try:
-        icerik = mail.get("Content", {})
-        headers = icerik.get("Headers", {})
+        msg = email.message_from_bytes(mail_verisi["ham"])
 
-        # Konu başlığı liste olarak geliyor — ilk elemanı al
-        konu_liste = headers.get("Subject", [""])
-        konu = konu_liste[0] if konu_liste else ""
-        # Encoding varsa çöz
-        from email.header import decode_header as dh
-        parcalar = dh(konu)
-        konu_temiz = ""
+        # Konu — encoding çöz
+        konu_ham = msg.get("Subject", "")
+        parcalar = decode_header(konu_ham)
+        konu = ""
         for parca, enc in parcalar:
             if isinstance(parca, bytes):
-                konu_temiz += parca.decode(enc or "utf-8", errors="ignore")
+                konu += parca.decode(enc or "utf-8", errors="ignore")
             else:
-                konu_temiz += str(parca)
-        konu = konu_temiz
+                konu += str(parca)
 
-        # Gövde
-        govde = icerik.get("Body", "")
+        # Gönderen
+        gonderen = msg.get("From", "")
 
-        return konu, govde
+        # Gövde — multipart veya düz metin
+        govde = ""
+        if msg.is_multipart():
+            for part in msg.walk():
+                if part.get_content_type() == "text/plain":
+                    charset = part.get_content_charset() or "utf-8"
+                    govde = part.get_payload(decode=True).decode(charset, errors="ignore")
+                    break
+        else:
+            charset = msg.get_content_charset() or "utf-8"
+            govde = msg.get_payload(decode=True).decode(charset, errors="ignore")
+
+        return konu, govde, gonderen
 
     except Exception as e:
         logger.error(f"Mail içerik çıkarma hatası: {e}")
-        return "", ""
+        return "", "", ""
 
 
 # ── FONKSİYON 3: ANA DÖNGÜ ──────────────────────────────────────────────
@@ -103,16 +121,12 @@ def gelen_kutu_dinle(bekleme_suresi: int = 60):
     Ana dinleme döngüsü — 7/24 çalışır.
 
     AKIŞ:
-    1. Mailhog'dan mailleri al
+    1. Gmail IMAP'tan mailleri al
     2. Her mailde [Ref: HZ-XXXX] var mı bak
-    3. Varsa parser.py'e gönder
-    4. İşlenmiş mailleri tekrar işleme
-    5. Bekle, tekrar başa dön
-
-    islenen_mailler SET'i:
-    Her mailin benzersiz ID'sini tutar.
-    Aynı mail iki kez işlenmez.
-    Set kullanıyoruz çünkü "var mı?" kontrolü çok hızlı.
+    3. Kendi gönderdiğimiz mailleri atla
+    4. Fabrika reply'ını yakala → parser.py'e gönder
+    5. İşlenmiş mailleri tekrar işleme (set ile takip)
+    6. Bekle, tekrar başa dön
     """
     logger.info(f"📬 Mail dinleyici başlatıldı (her {bekleme_suresi}sn kontrol)")
 
@@ -121,7 +135,7 @@ def gelen_kutu_dinle(bekleme_suresi: int = 60):
     while True:
         try:
             db = SessionLocal()
-            mailler = mailhog_mailleri_al()
+            mailler = imap_mailleri_al()
 
             if not mailler:
                 logger.debug("Inbox boş veya bağlanamadı")
@@ -132,27 +146,20 @@ def gelen_kutu_dinle(bekleme_suresi: int = 60):
             yeni_sayisi = 0
 
             for mail in mailler:
-                # Mail ID'si
-                mail_id = mail.get("ID", "")
-
-                if not mail_id:
-                    continue
+                mail_id = mail["id"]
 
                 # Daha önce işledik mi?
                 if mail_id in islenen_mailler:
                     continue
 
                 # İçeriği çıkar
-                konu, govde = mail_icerik_cikar(mail)
-
-                # Gönderen kim?
-                headers = mail.get("Content", {}).get("Headers", {})
-                gonderen = headers.get("From", [""])[0]
+                konu, govde, gonderen = mail_icerik_cikar(mail)
 
                 logger.debug(f"Mail kontrol: '{konu[:50]}' | Gönderen: {gonderen}")
-                # Sadece fabrikadan gelen mailleri işle
-                # Hamza'nın kendi gönderdiği mailler atlanır
-                if "hamzaai.com" in gonderen:
+
+                # Kendi gönderdiğimiz mailleri atla
+                # MAIL_USER bizim Gmail adresimiz — biz gönderdikse işleme
+                if MAIL_USER and MAIL_USER in gonderen and not konu.startswith("Re:"):
                     islenen_mailler.add(mail_id)
                     continue
 
@@ -160,23 +167,20 @@ def gelen_kutu_dinle(bekleme_suresi: int = 60):
                 ref = ref_kodu_bul(konu, govde)
 
                 if ref:
-                    # Fabrika teyit maili!
                     logger.info(f"📨 Fabrika teyit maili yakalandı: [{ref}]")
 
                     sonuc = fabrika_cevabi_isle(
                         mail_konusu=konu,
                         mail_govdesi=govde,
-                        muhasebeci_mail="muhasebe@hamzaai.com",
+                        muhasebeci_mail=MAIL_USER,
                         db=db
                     )
 
                     logger.info(f"✅ İşlendi: [{ref}] → {sonuc.get('karar', 'BILINMIYOR')}")
                     yeni_sayisi += 1
-
                 else:
                     logger.debug(f"Ref kodu yok, atlandı: '{konu[:30]}'")
 
-                # Her durumda işlendi olarak işaretle
                 islenen_mailler.add(mail_id)
 
             if yeni_sayisi > 0:

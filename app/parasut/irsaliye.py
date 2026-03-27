@@ -10,7 +10,12 @@
 
 from datetime import datetime
 from app.parasut.client import parasut_post
-from app.core.config import PARASUT_COMPANY_ID, PARASUT_DEMO_CONTACT_ID, PARASUT_HURDA_PRODUCT_ID
+from app.core.config import (
+    PARASUT_COMPANY_ID,
+    PARASUT_DEMO_CONTACT_ID,
+    PARASUT_HURDA_PRODUCT_ID,
+    FABRIKA_MAIL
+)
 from app.core.database import SessionLocal, WeighTicket, Waybill, TicketStatus
 from app.core.logger import logger
 from app.mail.sender import fabrikaya_irsaliye_gonder
@@ -54,9 +59,7 @@ def irsaliye_olustur(ticket_id: int) -> dict:
         tarih_str = _tarih_formatla(ticket.fis_tarihi)
 
         # ── ADIM 3: Paraşüt'e irsaliye isteği gönder ─────────────────
-        # API dökümanından öğrendik:
-        # item_type diye bir alan YOK — bunun yerine "inflow" boolean alanı var
-        # inflow: True  → giriş irsaliyesi (hurda bize geliyor — doğru olan bu)
+        # inflow: True  → giriş irsaliyesi (hurda bize geliyor)
         # inflow: False → çıkış irsaliyesi
         istek_verisi = {
             "data": {
@@ -105,10 +108,12 @@ def irsaliye_olustur(ticket_id: int) -> dict:
         logger.info(f"✅ Paraşüt irsaliye oluşturuldu: parasut_id={parasut_id}")
 
         # ── ADIM 4: Waybill kaydı oluştur ────────────────────────────
+        # fabrika_mail artık hardcode değil — .env'deki FABRIKA_MAIL'den geliyor
+        # Canlıda sadece .env değişecek, kod aynı kalacak
         waybill = Waybill(
             irsaliye_no=str(irsaliye_no),
             parasut_irsaliye_id=str(parasut_id),
-            fabrika_mail="fabrika@test.com",  # Canlıda .env'den gelecek
+            fabrika_mail=FABRIKA_MAIL,
             status=TicketStatus.IRSALIYE_TAMAMLANDI,
             ticket_id=ticket_id
         )
