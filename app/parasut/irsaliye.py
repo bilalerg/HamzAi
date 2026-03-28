@@ -67,7 +67,7 @@ def irsaliye_olustur(ticket_id: int) -> dict:
                 "attributes": {
                     "description": f"Kantar Fişi — {ticket.plaka} — {ticket.agirlik_kg} kg",
                     "issue_date": tarih_str,
-                    "inflow": True,
+                    "inflow": False,
                     "currency": "TRL"
                 },
                 "relationships": {
@@ -103,8 +103,7 @@ def irsaliye_olustur(ticket_id: int) -> dict:
         sonuc = parasut_post(f"/{PARASUT_COMPANY_ID}/shipment_documents", istek_verisi)
 
         parasut_id = sonuc["data"]["id"]
-        irsaliye_no = sonuc["data"]["attributes"].get("procurement_number", parasut_id)
-
+        irsaliye_no = parasut_id
         logger.info(f"✅ Paraşüt irsaliye oluşturuldu: parasut_id={parasut_id}")
 
         # ── ADIM 4: Waybill kaydı oluştur ────────────────────────────

@@ -4,13 +4,8 @@
 # 1. Gelen mailden [Ref: HZ-XXXX] kodunu bulur
 # 2. Claude NLP ile "onay mı itiraz mı?" kararı verir
 # 3. DB'deki ilgili waybill'i günceller
-# 4. Gerekirse muhasebeciye bildirim gönderir
-#
-# NEDEN BU DOSYA ÖNEMLİ?
-# Roadmap'teki en kritik güvenlik katmanı burada.
-# Sistem [Ref: HZ-XXXX] kodunu görünce otomatik fatura KESMEZ.
-# Önce "bu onay mı itiraz mı?" diye sorar.
-# Yanlış fatura kesilmesini bu dosya önler.
+# 4. ONAY → fatura_kes() çağırır
+# 5. İTİRAZ → muhasebeciye bildirim gönderir
 
 import re
 import anthropic
@@ -24,29 +19,14 @@ from app.mail.sender import muhasebeciye_uyari_gonder
 def ref_kodu_bul(mail_konusu: str, mail_govdesi: str) -> str | None:
     """
     Mail konu ve gövdesinde [Ref: HZ-XXXX] kodunu arar.
-
-    NEDEN HEM KONU HEM GÖVDE?
-    Fabrika bazen konuyu değiştirebilir:
-    "Re: İrsaliye Onayı [Ref: HZ-0001]" → konu'da
-    "Merhaba [Ref: HZ-0001] onaylıyorum" → gövde'de
-
-    Her iki yerde de arıyoruz — hangisinde olursa olsun yakalıyoruz.
-
-    REGEX AÇIKLAMASI:
-    \[     → literal [ karakteri (\ escape gerekli çünkü [] özel anlam taşır)
-    Ref:\s* → "Ref:" ve ardından boşluk olabilir
-    (HZ-\d+) → yakalamak istediğimiz grup: HZ- + bir veya daha fazla rakam
-    \]     → literal ] karakteri
+    Hem konuda hem gövdede arar — fabrika konuyu değiştirebilir.
     """
-
-    # Konu ve gövdeyi birleştir — ikisinde de ara
     tam_metin = f"{mail_konusu} {mail_govdesi}"
-
     pattern = r'\[Ref:\s*(HZ-\d+)\]'
     eslesme = re.search(pattern, tam_metin, re.IGNORECASE)
 
     if eslesme:
-        ref_kodu = eslesme.group(1)  # Parantez içindeki grubu al → "HZ-0001"
+        ref_kodu = eslesme.group(1)
         logger.info(f"✅ Ref kodu bulundu: {ref_kodu}")
         return ref_kodu
 
@@ -62,16 +42,10 @@ def nlp_karar_ver(mail_govdesi: str) -> str:
     NEDEN CLAUDE?
     Fabrika çok farklı şekillerde onay verebilir:
     "Onaylıyorum" / "Tamam" / "OK" / "Evet" / "Kabul"
-
-    Yanlış fatura kesmemek için bunların hepsini anlamalıyız.
     Regex bunu yapamaz — Claude yapabilir.
 
-    PROMPT STRATEJİSİ:
-    "Sadece ONAY veya ITIRAZ yaz" diyoruz.
-    Kısa ve net cevap istiyoruz → parse etmesi kolay.
-    Uzun cevap istersek → içinden doğru kısmı bulmak zorlaşır.
+    max_tokens=10: Sadece ONAY veya ITIRAZ bekliyoruz — 10 token yeterli.
     """
-
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
     prompt = f"""Aşağıdaki e-posta içeriğini analiz et.
@@ -87,7 +61,7 @@ Başka hiçbir şey yazma."""
 
     response = client.messages.create(
         model="claude-sonnet-4-5",
-        max_tokens=10,  # Sadece ONAY veya ITIRAZ bekliyoruz — 10 token yeterli
+        max_tokens=10,
         messages=[{"role": "user", "content": prompt}]
     )
 
@@ -95,7 +69,6 @@ Başka hiçbir şey yazma."""
     karar = karar.replace("İ", "I").replace("Ş", "S").replace("Ğ", "G")
     logger.info(f"🤖 NLP kararı: {karar}")
 
-    # Güvenlik kontrolü — beklenmedik cevap gelirse
     if karar not in ["ONAY", "ITIRAZ"]:
         logger.warning(f"⚠️ Beklenmedik NLP cevabı: {karar} → BELIRSIZ olarak işaretlendi")
         return "BELIRSIZ"
@@ -117,23 +90,14 @@ def fabrika_cevabi_isle(
     1. Ref kodunu bul
     2. DB'de ilgili waybill'i bul
     3. NLP kararını al
-    4. Status güncelle
-    5. Gerekirse muhasebeciye bildir
-
-    Döndürür:
-    {
-        "basarili": True/False,
-        "ref_kodu": "HZ-0001",
-        "karar": "ONAY"/"ITIRAZ"/"BELIRSIZ",
-        "waybill_id": 1
-    }
+    4. ONAY → fatura_kes() çağır
+    5. İTİRAZ → muhasebeciye bildir
     """
 
     # ── ADIM 1: Ref kodunu bul ───────────────────────────────────────────
     ref_kodu = ref_kodu_bul(mail_konusu, mail_govdesi)
 
     if not ref_kodu:
-        # Ref kodu yok → tanımsız mail
         logger.warning("Tanımsız mail: ref kodu yok")
         muhasebeciye_uyari_gonder(
             muhasebeci_mail=muhasebeci_mail,
@@ -143,7 +107,6 @@ def fabrika_cevabi_isle(
         return {"basarili": False, "hata": "ref_kodu_yok"}
 
     # ── ADIM 2: DB'de waybill bul ────────────────────────────────────────
-    # ref_kodu kolonu ile eşleştir
     waybill = db.query(Waybill).filter(
         Waybill.ref_kodu == ref_kodu
     ).first()
@@ -160,24 +123,30 @@ def fabrika_cevabi_isle(
     # ── ADIM 3: NLP kararı al ────────────────────────────────────────────
     karar = nlp_karar_ver(mail_govdesi)
 
-    # Mail içeriğini kaydet — ileride bakılabilsin
     waybill.teyit_mail_icerik = mail_govdesi
     waybill.nlp_karar = karar
 
-    # ── ADIM 4: Karara göre işlem yap ───────────────────────────────────
+    # ── ADIM 4: Karara göre işlem yap ────────────────────────────────────
     if karar == "ONAY":
         logger.info(f"✅ Fabrika onayladı: {ref_kodu}")
         waybill.status = TicketStatus.FATURA_KESILIYOR
         db.commit()
 
-        # Faz 4'te Paraşüt buraya bağlanacak
-        # Şimdilik sadece status güncelliyoruz
+        # Fatura kes — lazy import döngüsel bağımlılığı önler
+        from app.parasut.fatura import fatura_kes
+        fatura_sonuc = fatura_kes(waybill.id)
+
+        if fatura_sonuc["basarili"]:
+            logger.info(f"✅ Fatura kesildi: {fatura_sonuc['fatura_no']}")
+        else:
+            logger.error(f"❌ Fatura kesilemedi: {fatura_sonuc.get('hata')}")
 
         return {
             "basarili": True,
             "ref_kodu": ref_kodu,
             "karar": "ONAY",
-            "waybill_id": waybill.id
+            "waybill_id": waybill.id,
+            "fatura_sonuc": fatura_sonuc
         }
 
     elif karar == "ITIRAZ":
@@ -185,7 +154,6 @@ def fabrika_cevabi_isle(
         waybill.status = TicketStatus.FABRIKA_ITIRAZI
         db.commit()
 
-        # Muhasebeciye mail içeriğini ilet
         muhasebeciye_uyari_gonder(
             muhasebeci_mail=muhasebeci_mail,
             konu=f"Fabrika İtirazı — {ref_kodu}",
@@ -200,7 +168,6 @@ def fabrika_cevabi_isle(
         }
 
     else:
-        # BELİRSİZ — Claude ne dediğini anlayamadı
         logger.warning(f"⚠️ Belirsiz fabrika cevabı: {ref_kodu}")
 
         muhasebeciye_uyari_gonder(

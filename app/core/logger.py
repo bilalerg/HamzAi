@@ -33,12 +33,12 @@ logger.add(
 # Sistem gece çalışırken ekran kimse görmüyor.
 # Dosyaya yazılınca sabah "dün gece ne oldu?" diye bakabilirsin.
 #
-# rotation="1 day"  → Her gün yeni dosya açılır (hamzaai_2026-03-13.log)
+# rotation="1 day"  → Her gün yeni dosya açılır (profaix_2026-03-13.log)
 # retention="30 days" → 30 günden eski loglar otomatik silinir (disk dolmasın)
 # compression="zip" → Eski loglar sıkıştırılır
 
 logger.add(
-    "logs/hamzaai_{time:YYYY-MM-DD}.log",
+    "logs/profaix_{time:YYYY-MM-DD}.log",
     format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {message}",
     level="DEBUG",
     rotation="1 day",

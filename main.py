@@ -1,4 +1,4 @@
-# main.py — HamzaAI FastAPI Uygulaması
+# main.py — Profaix FastAPI Uygulaması
 
 import asyncio
 from contextlib import asynccontextmanager
@@ -14,7 +14,7 @@ from app.chatbox.webhook import router as webhook_router
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Sistem başlarken çalışır
-    logger.info("🚀 HamzaAI başlatılıyor...")
+    logger.info("🚀 Profaix başlatılıyor...")
 
     # Config kontrolü
     validate_config()
@@ -28,17 +28,17 @@ async def lifespan(app: FastAPI):
     # Mail listener'ı arka planda başlat
     asyncio.create_task(mail_listener_baslat())
 
-    logger.info(f"✅ HamzaAI hazır — Ortam: {ENV}")
+    logger.info(f"✅ Profaix hazır — Ortam: {ENV}")
 
     yield
 
     # Sistem kapanırken çalışır
-    logger.info("HamzaAI kapanıyor...")
+    logger.info("Profaix kapanıyor...")
 
 
 # ── FASTAPI UYGULAMASI ────────────────────────────────────────────────────
 app = FastAPI(
-    title="HamzaAI",
+    title="Profaix",
     description="Muhasebe Otomasyon Ajanı",
     version="1.0.0",
     lifespan=lifespan

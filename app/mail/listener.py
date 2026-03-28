@@ -18,19 +18,8 @@ from app.mail.parser import fabrika_cevabi_isle, ref_kodu_bul
 # ── FONKSİYON 1: IMAP'TAN MAİLLERİ AL ──────────────────────────────────
 def imap_mailleri_al() -> list:
     """
-    Gmail IMAP üzerinden gelen kutusu maillerini alır.
-
-    NEDEN IMAP?
-    IMAP standart mail okuma protokolü.
-    Gmail, Outlook, her mail sunucusu destekler.
-    SSL ile şifreli bağlantı — güvenli.
-
-    NASIL ÇALIŞIR?
-    1. Gmail IMAP'a SSL ile bağlan
-    2. INBOX klasörünü seç
-    3. Tüm maillerin ID listesini al
-    4. Her maili indir
-    5. Liste olarak döndür
+    Gmail IMAP üzerinden SADECE OKUNMAMIŞ (UNSEEN) mailleri alır.
+    Bir mail (RFC822) ile çekildiğinde otomatik olarak "Okundu" statüsüne geçer.
     """
     try:
         # SSL ile Gmail IMAP'a bağlan
@@ -38,21 +27,21 @@ def imap_mailleri_al() -> list:
         mail.login(IMAP_USER, IMAP_PASSWORD)
         mail.select("INBOX")
 
-        # Tüm mailleri listele
-        # "ALL" → okunmuş/okunmamış fark etmeksizin hepsi
-        durum, mesaj_idleri = mail.search(None, "ALL")
+        # SADECE OKUNMAMIŞ MAİLLERİ FİLTRELE
+        durum, mesaj_idleri = mail.search(None, "UNSEEN")
 
-        if durum != "OK":
+        if durum != "OK" or not mesaj_idleri[0]:
             mail.logout()
             return []
 
         id_listesi = mesaj_idleri[0].split()
 
-        # Son 20 maili al — çok eski mailleri işlemek gereksiz
+        # Çok fazla okunmamış biriktiyse sadece son 20'yi al
         son_idler = id_listesi[-20:] if len(id_listesi) > 20 else id_listesi
 
         mailler = []
         for mid in son_idler:
+            # Bu satır çalıştığı an mail Gmail'de "Okundu" olarak işaretlenir
             durum, veri = mail.fetch(mid, "(RFC822)")
             if durum == "OK":
                 mailler.append({
@@ -131,6 +120,7 @@ def gelen_kutu_dinle(bekleme_suresi: int = 60):
     logger.info(f"📬 Mail dinleyici başlatıldı (her {bekleme_suresi}sn kontrol)")
 
     islenen_mailler = set()
+    islenen_refler = set() # 🚀 YENİ: Mükerrer fatura kesimini önlemek için hafıza
 
     while True:
         try:
@@ -167,6 +157,12 @@ def gelen_kutu_dinle(bekleme_suresi: int = 60):
                 ref = ref_kodu_bul(konu, govde)
 
                 if ref:
+                    # 🚀 YENİ KONTROL: Bu Ref kodu bu oturumda zaten faturalandırıldı mı?
+                    if ref in islenen_refler:
+                        logger.debug(f"⚠️ [{ref}] zaten bu oturumda işlendi, mükerrer mail atlanıyor.")
+                        islenen_mailler.add(mail_id)
+                        continue
+
                     logger.info(f"📨 Fabrika teyit maili yakalandı: [{ref}]")
 
                     sonuc = fabrika_cevabi_isle(
@@ -178,6 +174,7 @@ def gelen_kutu_dinle(bekleme_suresi: int = 60):
 
                     logger.info(f"✅ İşlendi: [{ref}] → {sonuc.get('karar', 'BILINMIYOR')}")
                     yeni_sayisi += 1
+                    islenen_refler.add(ref)  # 🚀 YENİ: Başarıyla işlendi, hafızaya al
                 else:
                     logger.debug(f"Ref kodu yok, atlandı: '{konu[:30]}'")
 

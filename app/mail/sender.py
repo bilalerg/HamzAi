@@ -88,7 +88,7 @@ Referans      : {ref_kodu}
 Onaylamak için bu maili YANITLAYINIZ.
 İtiraz durumunda lütfen sebebini belirtiniz.
 
-HamzaAI Otomatik Bildirim Sistemi
+Profaix Otomatik Bildirim Sistemi
 """
 
     msg.attach(MIMEText(govde, 'plain', 'utf-8'))
@@ -122,14 +122,14 @@ def muhasebeciye_uyari_gonder(
     msg = MIMEMultipart()
     msg['From'] = MAIL_FROM
     msg['To'] = muhasebeci_mail
-    msg['Subject'] = f"⚠️ HamzaAI Uyarı: {konu}"
+    msg['Subject'] = f"⚠️ Profaix Uyarı: {konu}"
 
-    govde = f"""HamzaAI Uyarı Bildirimi
+    govde = f"""Profaix Uyarı Bildirimi
 
 {mesaj}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
-Bu mesaj HamzaAI tarafından otomatik gönderilmiştir.
+Bu mesaj Profaix tarafından otomatik gönderilmiştir.
 """
 
     msg.attach(MIMEText(govde, 'plain', 'utf-8'))
@@ -170,7 +170,7 @@ Araç Plaka  : {plaka}
 Tutar       : {f'{tutar:,.2f} TL' if tutar else 'Belirtilmedi'}
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
-HamzaAI Otomatik Bildirim Sistemi
+Profaix Otomatik Bildirim Sistemi
 """
 
     msg.attach(MIMEText(govde, 'plain', 'utf-8'))
