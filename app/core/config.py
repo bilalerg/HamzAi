@@ -8,13 +8,19 @@
 # NASIL ÇALIŞIR?
 # python-dotenv kütüphanesi .env dosyasını okur ve
 # os.getenv() ile bu değerlere ulaşırız.
+# Render'da Secret Files /etc/secrets/.env konumunda olur.
 
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
-# .env dosyasını yükle
-# Bu satır olmadan os.getenv() hiçbir şey bulamaz
-load_dotenv()
+# Render'da Secret Files /etc/secrets/.env konumunda
+# Local'de proje kökündeki .env dosyası
+secret_env = Path("/etc/secrets/.env")
+if secret_env.exists():
+    load_dotenv(secret_env)
+else:
+    load_dotenv()
 
 # ── ORTAM ──────────────────────────────────────────────────────────────
 ENV = os.getenv("ENV", "development")
