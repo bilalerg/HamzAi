@@ -1,16 +1,14 @@
 # listener.py — Gelen Kutusu Dinleyici
 #
-# Mailhog HTTP API'den Gmail IMAP'a geçildi.
-# IMAP → mail okumak için standart protokol.
-# Gmail IMAP: imap.gmail.com:993 (SSL)
-# Uygulama şifresi ile bağlanıyoruz — normal Gmail şifresi çalışmaz.
+# Gmail IMAP ile mailleri dinler.
+# İşlenen mail ID'leri DB'ye kaydedilir — restart sonrası tekrar işlenmez.
 
 import imaplib
 import email
 import time
 from email.header import decode_header
 from app.core.config import IMAP_HOST, IMAP_PORT, IMAP_USER, IMAP_PASSWORD, MAIL_USER
-from app.core.database import SessionLocal
+from app.core.database import SessionLocal, ProcessedMail
 from app.core.logger import logger
 from app.mail.parser import fabrika_cevabi_isle, ref_kodu_bul
 
@@ -19,15 +17,13 @@ from app.mail.parser import fabrika_cevabi_isle, ref_kodu_bul
 def imap_mailleri_al() -> list:
     """
     Gmail IMAP üzerinden SADECE OKUNMAMIŞ (UNSEEN) mailleri alır.
-    Bir mail (RFC822) ile çekildiğinde otomatik olarak "Okundu" statüsüne geçer.
+    fetch yapınca mail otomatik "Okundu" olur.
     """
     try:
-        # SSL ile Gmail IMAP'a bağlan
         mail = imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT)
         mail.login(IMAP_USER, IMAP_PASSWORD)
         mail.select("INBOX")
 
-        # SADECE OKUNMAMIŞ MAİLLERİ FİLTRELE
         durum, mesaj_idleri = mail.search(None, "UNSEEN")
 
         if durum != "OK" or not mesaj_idleri[0]:
@@ -35,13 +31,10 @@ def imap_mailleri_al() -> list:
             return []
 
         id_listesi = mesaj_idleri[0].split()
-
-        # Çok fazla okunmamış biriktiyse sadece son 20'yi al
         son_idler = id_listesi[-20:] if len(id_listesi) > 20 else id_listesi
 
         mailler = []
         for mid in son_idler:
-            # Bu satır çalıştığı an mail Gmail'de "Okundu" olarak işaretlenir
             durum, veri = mail.fetch(mid, "(RFC822)")
             if durum == "OK":
                 mailler.append({
@@ -61,18 +54,11 @@ def imap_mailleri_al() -> list:
 def mail_icerik_cikar(mail_verisi: dict) -> tuple:
     """
     Ham IMAP mail verisinden konu, gövde ve gönderen çıkarır.
-
-    NEDEN RFC822 FORMATI?
-    IMAP mailleri RFC822 standardında gelir.
-    Python'un email kütüphanesi bunu parse eder.
-    Konu encoding'i (UTF-8, ISO-8859-9 vs) otomatik çözülür.
-
     Döndürür: (konu, govde, gonderen)
     """
     try:
         msg = email.message_from_bytes(mail_verisi["ham"])
 
-        # Konu — encoding çöz
         konu_ham = msg.get("Subject", "")
         parcalar = decode_header(konu_ham)
         konu = ""
@@ -82,10 +68,8 @@ def mail_icerik_cikar(mail_verisi: dict) -> tuple:
             else:
                 konu += str(parca)
 
-        # Gönderen
         gonderen = msg.get("From", "")
 
-        # Gövde — multipart veya düz metin
         govde = ""
         if msg.is_multipart():
             for part in msg.walk():
@@ -104,27 +88,58 @@ def mail_icerik_cikar(mail_verisi: dict) -> tuple:
         return "", "", ""
 
 
-# ── FONKSİYON 3: ANA DÖNGÜ ──────────────────────────────────────────────
+# ── FONKSİYON 3: DB'DEN İŞLENMİŞ MAİLLERİ YÜKlE ────────────────────────
+def islenmis_mailleri_yukle(db) -> set:
+    """
+    DB'deki işlenmiş mail ID'lerini yükler.
+    Restart sonrası eski maillerin tekrar işlenmesini önler.
+    """
+    try:
+        kayitlar = db.query(ProcessedMail).all()
+        return {k.mail_id for k in kayitlar}
+    except Exception as e:
+        logger.error(f"İşlenmiş mailler yüklenemedi: {e}")
+        return set()
+
+
+# ── FONKSİYON 4: MAİL ID'Sİ DB'YE KAYDET ────────────────────────────────
+def mail_islendi_kaydet(db, mail_id: str, ref_kodu: str = None):
+    """
+    İşlenen mail ID'sini DB'ye kaydeder.
+    Bir sonraki çalışmada veya restart sonrası tekrar işlenmez.
+    """
+    try:
+        kayit = ProcessedMail(mail_id=mail_id, ref_kodu=ref_kodu)
+        db.add(kayit)
+        db.commit()
+    except Exception as e:
+        logger.error(f"Mail ID kaydedilemedi: {e}")
+        db.rollback()
+
+
+# ── FONKSİYON 5: ANA DÖNGÜ ──────────────────────────────────────────────
 def gelen_kutu_dinle(bekleme_suresi: int = 60):
     """
     Ana dinleme döngüsü — 7/24 çalışır.
 
     AKIŞ:
-    1. Gmail IMAP'tan mailleri al
-    2. Her mailde [Ref: HZ-XXXX] var mı bak
-    3. Kendi gönderdiğimiz mailleri atla
-    4. Fabrika reply'ını yakala → parser.py'e gönder
-    5. İşlenmiş mailleri tekrar işleme (set ile takip)
-    6. Bekle, tekrar başa dön
+    1. DB'den daha önce işlenmiş mail ID'lerini yükle
+    2. Gmail IMAP'tan yeni mailleri al
+    3. Her mailde [Ref: HZ-XXXX] var mı bak
+    4. Kendi gönderdiğimiz mailleri atla
+    5. Fabrika reply'ını yakala → parser.py'e gönder
+    6. İşlenen mail ID'sini DB'ye kaydet (restart güvenli)
+    7. Bekle, tekrar başa dön
     """
     logger.info(f"📬 Mail dinleyici başlatıldı (her {bekleme_suresi}sn kontrol)")
-
-    islenen_mailler = set()
-    islenen_refler = set() # 🚀 YENİ: Mükerrer fatura kesimini önlemek için hafıza
 
     while True:
         try:
             db = SessionLocal()
+
+            # DB'den işlenmiş mail ID'lerini yükle — restart güvenli
+            islenen_mailler = islenmis_mailleri_yukle(db)
+
             mailler = imap_mailleri_al()
 
             if not mailler:
@@ -138,31 +153,22 @@ def gelen_kutu_dinle(bekleme_suresi: int = 60):
             for mail in mailler:
                 mail_id = mail["id"]
 
-                # Daha önce işledik mi?
+                # DB'de kayıtlı mı? — restart sonrası da korumalı
                 if mail_id in islenen_mailler:
                     continue
 
-                # İçeriği çıkar
                 konu, govde, gonderen = mail_icerik_cikar(mail)
 
                 logger.debug(f"Mail kontrol: '{konu[:50]}' | Gönderen: {gonderen}")
 
-                # Kendi gönderdiğimiz mailleri atla
-                # MAIL_USER bizim Gmail adresimiz — biz gönderdikse işleme
+                # Kendi gönderdiğimiz orijinal mailleri atla, reply'ları işle
                 if MAIL_USER and MAIL_USER in gonderen and not konu.startswith("Re:"):
-                    islenen_mailler.add(mail_id)
+                    mail_islendi_kaydet(db, mail_id)
                     continue
 
-                # [Ref: HZ-XXXX] var mı?
                 ref = ref_kodu_bul(konu, govde)
 
                 if ref:
-                    # 🚀 YENİ KONTROL: Bu Ref kodu bu oturumda zaten faturalandırıldı mı?
-                    if ref in islenen_refler:
-                        logger.debug(f"⚠️ [{ref}] zaten bu oturumda işlendi, mükerrer mail atlanıyor.")
-                        islenen_mailler.add(mail_id)
-                        continue
-
                     logger.info(f"📨 Fabrika teyit maili yakalandı: [{ref}]")
 
                     sonuc = fabrika_cevabi_isle(
@@ -174,11 +180,11 @@ def gelen_kutu_dinle(bekleme_suresi: int = 60):
 
                     logger.info(f"✅ İşlendi: [{ref}] → {sonuc.get('karar', 'BILINMIYOR')}")
                     yeni_sayisi += 1
-                    islenen_refler.add(ref)  # 🚀 YENİ: Başarıyla işlendi, hafızaya al
                 else:
                     logger.debug(f"Ref kodu yok, atlandı: '{konu[:30]}'")
 
-                islenen_mailler.add(mail_id)
+                # Her durumda DB'ye kaydet
+                mail_islendi_kaydet(db, mail_id, ref)
 
             if yeni_sayisi > 0:
                 logger.info(f"✅ {yeni_sayisi} yeni fabrika maili işlendi")

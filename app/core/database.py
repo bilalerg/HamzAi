@@ -26,7 +26,6 @@ Base = declarative_base()
 
 
 # ── STATUS KODLARI ───────────────────────────────────────────────────────
-# Zirve kodları çıkarıldı, Paraşüt irsaliye kodları eklendi
 class TicketStatus(str, enum.Enum):
     ALINDI                    = "ALINDI"
     OCR_TAMAMLANDI            = "OCR_TAMAMLANDI"
@@ -86,7 +85,6 @@ class WeighTicket(Base):
 
 
 # ── TABLO 3: WAYBILLS ─────────────────────────────────────────────────────
-# Zirve yerine artık Paraşüt API ile irsaliye oluşturuluyor
 class Waybill(Base):
     __tablename__ = "waybills"
 
@@ -98,7 +96,7 @@ class Waybill(Base):
     teyit_geldi_at     = Column(DateTime, nullable=True)
     teyit_mail_icerik  = Column(Text, nullable=True)
     nlp_karar          = Column(String(20), nullable=True)
-    parasut_irsaliye_id = Column(String(100), nullable=True)  # Paraşüt'teki irsaliye ID'si
+    parasut_irsaliye_id = Column(String(100), nullable=True)
     status             = Column(Enum(TicketStatus), default=TicketStatus.IRSALIYE_OLUSTURULUYOR)
     ticket_id          = Column(Integer, ForeignKey("weigh_tickets.id"))
     created_at         = Column(DateTime, server_default=func.now())
@@ -163,16 +161,30 @@ class SystemLog(Base):
         return f"<SystemLog seviye={self.seviye} modul={self.modul}>"
 
 
+# ── TABLO 7: PROCESSED_MAILS ─────────────────────────────────────────────
+# Restart sonrası eski maillerin tekrar işlenmesini önler.
+# Listener her işlediği mailin ID'sini buraya kaydeder.
+# Sonraki çalışmada bu ID'ler DB'den yüklenir, tekrar işlenmez.
+class ProcessedMail(Base):
+    __tablename__ = "processed_mails"
+
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    mail_id    = Column(String(200), unique=True, nullable=False, index=True)
+    ref_kodu   = Column(String(20), nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+    def __repr__(self):
+        return f"<ProcessedMail mail_id={self.mail_id} ref={self.ref_kodu}>"
+
+
 # ── VERİTABANI BAŞLATMA ───────────────────────────────────────────────────
 def init_db():
-    # Tüm tabloları oluşturur, varsa dokunmaz
     logger.info("Veritabanı tabloları oluşturuluyor...")
     Base.metadata.create_all(bind=engine)
     logger.info("✅ Tüm tablolar hazır")
 
 
 def get_db():
-    # Her işlem için yeni session açar, bitince kapatır
     db = SessionLocal()
     try:
         yield db
