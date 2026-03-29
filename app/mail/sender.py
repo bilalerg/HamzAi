@@ -5,41 +5,29 @@
 # 2. Muhasebeciye uyarı maili gönderir
 # 3. Patron'a bildirim maili gönderir
 #
-# NEDEN SMTP?
-# IMAP → mail okumak için
-# SMTP → mail göndermek için
-# Gmail SMTP: smtp.gmail.com:587 (TLS)
-# Uygulama şifresi ile authentication yapılır.
+# NEDEN SMTP_SSL?
+# Render ücretsiz planda port 587 (STARTTLS) bloklanıyor.
+# Port 465 (SSL) daha güvenilir çalışır.
 
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from app.core.config import MAIL_HOST, MAIL_PORT, MAIL_FROM, MAIL_USER, MAIL_PASSWORD
+from app.core.config import MAIL_HOST, MAIL_FROM, MAIL_USER, MAIL_PASSWORD
 from app.core.logger import logger
 
 
 # ── YARDIMCI: SMTP BAĞLANTISI ───────────────────────────────────────────
 def smtp_baglan():
     """
-    Gmail SMTP sunucusuna TLS ile bağlanır.
-
-    NEDEN TLS (STARTTLS)?
-    Port 587 → önce düz bağlantı açılır, sonra STARTTLS ile şifrelenir.
-    Port 465 → direkt SSL (daha eski yöntem)
-    Gmail port 587 + STARTTLS kullanır — bu standart.
-
-    NEDEN AUTH?
-    Mailhog'da authentication gerekmiyordu — geliştirme aracıydı.
-    Gmail gerçek sunucu — uygulama şifresi ile login olmak zorunlu.
+    Gmail SMTP sunucusuna SSL ile bağlanır.
+    Port 465 + SMTP_SSL kullanılır — Render'da port 587 bloklanıyor.
     """
     try:
-        smtp = smtplib.SMTP(MAIL_HOST, MAIL_PORT)
-        smtp.ehlo()
-        smtp.starttls()  # TLS şifrelemesini başlat
+        smtp = smtplib.SMTP_SSL(MAIL_HOST, 465)
         smtp.ehlo()
         if MAIL_USER and MAIL_PASSWORD:
             smtp.login(MAIL_USER, MAIL_PASSWORD)
-        logger.debug(f"SMTP bağlantısı kuruldu: {MAIL_HOST}:{MAIL_PORT}")
+        logger.debug(f"SMTP bağlantısı kuruldu: {MAIL_HOST}:465")
         return smtp
     except Exception as e:
         logger.error(f"SMTP bağlantı hatası: {e}")
@@ -57,12 +45,6 @@ def fabrikaya_irsaliye_gonder(
 ) -> str:
     """
     Fabrikaya irsaliye teyit maili gönderir.
-
-    NEDEN REF KODU?
-    Fabrika reply atarken konu değiştirebilir, yeni mail açabilir.
-    [Ref: HZ-0001] kodu her durumda mail içinde kalır.
-    Biz gelen mailde bu kodu Regex ile arayıp ilgili irsaliyeyi buluruz.
-
     Döndürür: ref_kodu (DB'ye kaydetmek için)
     """
     ref_kodu = f"HZ-{waybill_id:04d}"
@@ -112,12 +94,6 @@ def muhasebeciye_uyari_gonder(
 ) -> bool:
     """
     Muhasebeciye uyarı maili gönderir.
-
-    Kullanım alanları:
-    - Yeni plaka tespit edildi
-    - Duplicate uyarısı
-    - OCR uyuşmazlığı
-    - Fabrika itirazı
     """
     msg = MIMEMultipart()
     msg['From'] = MAIL_FROM
