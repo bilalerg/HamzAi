@@ -38,13 +38,7 @@ def ref_kodu_bul(mail_konusu: str, mail_govdesi: str) -> str | None:
 def nlp_karar_ver(mail_govdesi: str) -> str:
     """
     Claude NLP ile mailin onay mı itiraz mı olduğunu belirler.
-
-    NEDEN CLAUDE?
-    Fabrika çok farklı şekillerde onay verebilir:
-    "Onaylıyorum" / "Tamam" / "OK" / "Evet" / "Kabul"
-    Regex bunu yapamaz — Claude yapabilir.
-
-    max_tokens=10: Sadece ONAY veya ITIRAZ bekliyoruz — 10 token yeterli.
+    max_tokens=10: Sadece ONAY veya ITIRAZ bekliyoruz.
     """
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
@@ -85,13 +79,6 @@ def fabrika_cevabi_isle(
 ) -> dict:
     """
     Fabrika cevabını uçtan uca işler.
-
-    AKIŞ:
-    1. Ref kodunu bul
-    2. DB'de ilgili waybill'i bul
-    3. NLP kararını al
-    4. ONAY → fatura_kes() çağır
-    5. İTİRAZ → muhasebeciye bildir
     """
 
     # ── ADIM 1: Ref kodunu bul ───────────────────────────────────────────
@@ -120,6 +107,13 @@ def fabrika_cevabi_isle(
         )
         return {"basarili": False, "hata": "waybill_bulunamadi"}
 
+    # ── ADIM 2.5: Mükerrer fatura kontrolü ───────────────────────────────
+    # Restart sonrası eski reply'lar tekrar işlenebilir.
+    # Waybill zaten TAMAMLANDI veya FATURA_KESILIYOR ise işleme.
+    if waybill.status in [TicketStatus.TAMAMLANDI, TicketStatus.FATURA_KESILIYOR]:
+        logger.warning(f"⚠️ [{ref_kodu}] zaten işlendi (status: {waybill.status}), mükerrer fatura kesilmiyor")
+        return {"basarili": False, "hata": "zaten_tamamlandi"}
+
     # ── ADIM 3: NLP kararı al ────────────────────────────────────────────
     karar = nlp_karar_ver(mail_govdesi)
 
@@ -132,7 +126,6 @@ def fabrika_cevabi_isle(
         waybill.status = TicketStatus.FATURA_KESILIYOR
         db.commit()
 
-        # Fatura kes — lazy import döngüsel bağımlılığı önler
         from app.parasut.fatura import fatura_kes
         fatura_sonuc = fatura_kes(waybill.id)
 
