@@ -5,33 +5,21 @@
 # 2. Muhasebeciye uyarı maili gönderir
 # 3. Patron'a bildirim maili gönderir
 #
-# NEDEN SMTP_SSL?
-# Render ücretsiz planda port 587 (STARTTLS) bloklanıyor.
-# Port 465 (SSL) daha güvenilir çalışır.
+# NEDEN RESEND?
+# Render ücretsiz planda SMTP portları bloklu.
+# Resend HTTP API kullanır — Render'da sorunsuz çalışır.
+# Ücretsiz planda ayda 3000 mail hakkı var.
 
-import smtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-from app.core.config import MAIL_HOST, MAIL_FROM, MAIL_USER, MAIL_PASSWORD
+import resend
+import os
 from app.core.logger import logger
 
+# Resend API key — .env'den alınır
+resend.api_key = os.getenv("RESEND_API_KEY")
 
-# ── YARDIMCI: SMTP BAĞLANTISI ───────────────────────────────────────────
-def smtp_baglan():
-    """
-    Gmail SMTP sunucusuna SSL ile bağlanır.
-    Port 465 + SMTP_SSL kullanılır — Render'da port 587 bloklanıyor.
-    """
-    try:
-        smtp = smtplib.SMTP_SSL(MAIL_HOST, 465)
-        smtp.ehlo()
-        if MAIL_USER and MAIL_PASSWORD:
-            smtp.login(MAIL_USER, MAIL_PASSWORD)
-        logger.debug(f"SMTP bağlantısı kuruldu: {MAIL_HOST}:465")
-        return smtp
-    except Exception as e:
-        logger.error(f"SMTP bağlantı hatası: {e}")
-        raise
+# Resend ücretsiz planda sadece onboarding@resend.dev adresinden gönderilebilir
+# Kendi domain'ini bağlarsan MAIL_FROM kullanılır
+MAIL_FROM = "onboarding@resend.dev"
 
 
 # ── FONKSİYON 1: FABRİKAYA İRSALİYE MAİLİ ──────────────────────────────
@@ -48,11 +36,6 @@ def fabrikaya_irsaliye_gonder(
     Döndürür: ref_kodu (DB'ye kaydetmek için)
     """
     ref_kodu = f"HZ-{waybill_id:04d}"
-
-    msg = MIMEMultipart()
-    msg['From'] = MAIL_FROM
-    msg['To'] = fabrika_mail
-    msg['Subject'] = f"İrsaliye Onayı [Ref: {ref_kodu}]"
 
     govde = f"""Sayın Yetkili,
 
@@ -73,12 +56,14 @@ Onaylamak için bu maili YANITLAYINIZ.
 Profaix Otomatik Bildirim Sistemi
 """
 
-    msg.attach(MIMEText(govde, 'plain', 'utf-8'))
-
     try:
-        smtp = smtp_baglan()
-        smtp.send_message(msg)
-        smtp.quit()
+        params = {
+            "from": MAIL_FROM,
+            "to": [fabrika_mail],
+            "subject": f"İrsaliye Onayı [Ref: {ref_kodu}]",
+            "text": govde,
+        }
+        resend.Emails.send(params)
         logger.info(f"✅ Fabrika maili gönderildi: {fabrika_mail} [Ref: {ref_kodu}]")
         return ref_kodu
     except Exception as e:
@@ -95,11 +80,6 @@ def muhasebeciye_uyari_gonder(
     """
     Muhasebeciye uyarı maili gönderir.
     """
-    msg = MIMEMultipart()
-    msg['From'] = MAIL_FROM
-    msg['To'] = muhasebeci_mail
-    msg['Subject'] = f"⚠️ Profaix Uyarı: {konu}"
-
     govde = f"""Profaix Uyarı Bildirimi
 
 {mesaj}
@@ -108,12 +88,14 @@ def muhasebeciye_uyari_gonder(
 Bu mesaj Profaix tarafından otomatik gönderilmiştir.
 """
 
-    msg.attach(MIMEText(govde, 'plain', 'utf-8'))
-
     try:
-        smtp = smtp_baglan()
-        smtp.send_message(msg)
-        smtp.quit()
+        params = {
+            "from": MAIL_FROM,
+            "to": [muhasebeci_mail],
+            "subject": f"⚠️ Profaix Uyarı: {konu}",
+            "text": govde,
+        }
+        resend.Emails.send(params)
         logger.info(f"✅ Muhasebeci uyarısı gönderildi: {konu}")
         return True
     except Exception as e:
@@ -131,11 +113,6 @@ def patrona_bildirim_gonder(
     """
     Fatura kesilince patrona bildirim gönderir.
     """
-    msg = MIMEMultipart()
-    msg['From'] = MAIL_FROM
-    msg['To'] = patron_mail
-    msg['Subject'] = f"✅ Fatura Kesildi: {fatura_no}"
-
     govde = f"""Fatura Bildirimi
 
 Aşağıdaki fatura başarıyla kesilmiştir.
@@ -149,12 +126,14 @@ Tutar       : {f'{tutar:,.2f} TL' if tutar else 'Belirtilmedi'}
 Profaix Otomatik Bildirim Sistemi
 """
 
-    msg.attach(MIMEText(govde, 'plain', 'utf-8'))
-
     try:
-        smtp = smtp_baglan()
-        smtp.send_message(msg)
-        smtp.quit()
+        params = {
+            "from": MAIL_FROM,
+            "to": [patron_mail],
+            "subject": f"✅ Fatura Kesildi: {fatura_no}",
+            "text": govde,
+        }
+        resend.Emails.send(params)
         logger.info(f"✅ Patron bildirimi gönderildi: {fatura_no}")
         return True
     except Exception as e:
