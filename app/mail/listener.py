@@ -16,10 +16,6 @@ from app.mail.parser import fabrika_cevabi_isle, ref_kodu_bul
 
 # ── FONKSİYON 1: IMAP'TAN MAİLLERİ AL ──────────────────────────────────
 def imap_mailleri_al() -> list:
-    """
-    Gmail IMAP üzerinden SADECE OKUNMAMIŞ (UNSEEN) mailleri alır.
-    fetch yapınca mail otomatik "Okundu" olur.
-    """
     try:
         mail = imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT)
         mail.login(IMAP_USER, IMAP_PASSWORD)
@@ -51,12 +47,22 @@ def imap_mailleri_al() -> list:
         return []
 
 
+# ── YARDIMCI: GÜVENLİ DECODE ─────────────────────────────────────────────
+def guvenli_decode(payload, charset):
+    """
+    Bilinmeyen veya geçersiz encoding'leri güvenli şekilde çözer.
+    unknown-8bit gibi non-standard encoding'ler için latin-1 kullanır.
+    """
+    if not charset or charset.lower() in ["unknown-8bit", "unknown", ""]:
+        charset = "latin-1"
+    try:
+        return payload.decode(charset, errors="ignore")
+    except (LookupError, UnicodeDecodeError):
+        return payload.decode("latin-1", errors="ignore")
+
+
 # ── FONKSİYON 2: MAİL İÇERİĞİNİ ÇIKAR ──────────────────────────────────
 def mail_icerik_cikar(mail_verisi: dict) -> tuple:
-    """
-    Ham IMAP mail verisinden konu, gövde ve gönderen çıkarır.
-    Döndürür: (konu, govde, gonderen)
-    """
     try:
         msg = email.message_from_bytes(mail_verisi["ham"])
 
@@ -65,7 +71,7 @@ def mail_icerik_cikar(mail_verisi: dict) -> tuple:
         konu = ""
         for parca, enc in parcalar:
             if isinstance(parca, bytes):
-                konu += parca.decode(enc or "utf-8", errors="ignore")
+                konu += guvenli_decode(parca, enc)
             else:
                 konu += str(parca)
 
@@ -76,11 +82,11 @@ def mail_icerik_cikar(mail_verisi: dict) -> tuple:
             for part in msg.walk():
                 if part.get_content_type() == "text/plain":
                     charset = part.get_content_charset() or "utf-8"
-                    govde = part.get_payload(decode=True).decode(charset, errors="ignore")
+                    govde = guvenli_decode(part.get_payload(decode=True), charset)
                     break
         else:
             charset = msg.get_content_charset() or "utf-8"
-            govde = msg.get_payload(decode=True).decode(charset, errors="ignore")
+            govde = guvenli_decode(msg.get_payload(decode=True), charset)
 
         return konu, govde, gonderen
 
@@ -89,12 +95,8 @@ def mail_icerik_cikar(mail_verisi: dict) -> tuple:
         return "", "", ""
 
 
-# ── FONKSİYON 3: DB'DEN İŞLENMİŞ MAİLLERİ YÜKlE ────────────────────────
+# ── FONKSİYON 3: DB'DEN İŞLENMİŞ MAİLLERİ YÜKLE ────────────────────────
 def islenmis_mailleri_yukle(db) -> set:
-    """
-    DB'deki işlenmiş mail ID'lerini yükler.
-    Restart sonrası eski maillerin tekrar işlenmesini önler.
-    """
     try:
         kayitlar = db.query(ProcessedMail).all()
         return {k.mail_id for k in kayitlar}
@@ -105,11 +107,13 @@ def islenmis_mailleri_yukle(db) -> set:
 
 # ── FONKSİYON 4: MAİL ID'Sİ DB'YE KAYDET ────────────────────────────────
 def mail_islendi_kaydet(db, mail_id: str, ref_kodu: str = None):
-    """
-    İşlenen mail ID'sini DB'ye kaydeder.
-    Bir sonraki çalışmada veya restart sonrası tekrar işlenmez.
-    """
     try:
+        # Zaten varsa ekleme — UniqueViolation önle
+        mevcut = db.query(ProcessedMail).filter(
+            ProcessedMail.mail_id == mail_id
+        ).first()
+        if mevcut:
+            return
         kayit = ProcessedMail(mail_id=mail_id, ref_kodu=ref_kodu)
         db.add(kayit)
         db.commit()
@@ -120,18 +124,6 @@ def mail_islendi_kaydet(db, mail_id: str, ref_kodu: str = None):
 
 # ── FONKSİYON 5: ANA DÖNGÜ ──────────────────────────────────────────────
 def gelen_kutu_dinle(bekleme_suresi: int = 60):
-    """
-    Ana dinleme döngüsü — 7/24 çalışır.
-
-    AKIŞ:
-    1. DB'den daha önce işlenmiş mail ID'lerini yükle
-    2. Gmail IMAP'tan yeni (UNSEEN) mailleri al
-    3. Sadece "Re:" ile başlayan mailleri işle — orijinal mailler atlanır
-    4. [Ref: HZ-XXXX] var mı bak
-    5. Fabrika reply'ını yakala → parser.py'e gönder
-    6. İşlenen mail ID'sini DB'ye kaydet (restart güvenli)
-    7. Bekle, tekrar başa dön
-    """
     logger.info(f"📬 Mail dinleyici başlatıldı (her {bekleme_suresi}sn kontrol)")
 
     while True:
@@ -159,8 +151,7 @@ def gelen_kutu_dinle(bekleme_suresi: int = 60):
 
                 logger.debug(f"Mail kontrol: '{konu[:50]}' | Gönderen: {gonderen}")
 
-                # Sadece "Re:" ile başlayan mailler fabrika reply'ı olabilir
-                # Orijinal mailler (irsaliye bildirimleri vb.) atlanır
+                # Sadece reply mailleri işle — orijinal mailler atlanır
                 if not konu.startswith("Re:") and not konu.startswith("RE:") and not konu.startswith("Ynt:"):
                     logger.debug(f"Reply değil, atlandı: '{konu[:40]}'")
                     mail_islendi_kaydet(db, mail_id)
