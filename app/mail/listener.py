@@ -2,6 +2,7 @@
 #
 # Gmail IMAP ile mailleri dinler.
 # İşlenen mail ID'leri DB'ye kaydedilir — restart sonrası tekrar işlenmez.
+# SADECE "Re:" ile başlayan mailler işlenir — orijinal mailler atlanır.
 
 import imaplib
 import email
@@ -124,9 +125,9 @@ def gelen_kutu_dinle(bekleme_suresi: int = 60):
 
     AKIŞ:
     1. DB'den daha önce işlenmiş mail ID'lerini yükle
-    2. Gmail IMAP'tan yeni mailleri al
-    3. Her mailde [Ref: HZ-XXXX] var mı bak
-    4. Kendi gönderdiğimiz mailleri atla
+    2. Gmail IMAP'tan yeni (UNSEEN) mailleri al
+    3. Sadece "Re:" ile başlayan mailleri işle — orijinal mailler atlanır
+    4. [Ref: HZ-XXXX] var mı bak
     5. Fabrika reply'ını yakala → parser.py'e gönder
     6. İşlenen mail ID'sini DB'ye kaydet (restart güvenli)
     7. Bekle, tekrar başa dön
@@ -137,9 +138,7 @@ def gelen_kutu_dinle(bekleme_suresi: int = 60):
         try:
             db = SessionLocal()
 
-            # DB'den işlenmiş mail ID'lerini yükle — restart güvenli
             islenen_mailler = islenmis_mailleri_yukle(db)
-
             mailler = imap_mailleri_al()
 
             if not mailler:
@@ -153,7 +152,6 @@ def gelen_kutu_dinle(bekleme_suresi: int = 60):
             for mail in mailler:
                 mail_id = mail["id"]
 
-                # DB'de kayıtlı mı? — restart sonrası da korumalı
                 if mail_id in islenen_mailler:
                     continue
 
@@ -161,8 +159,10 @@ def gelen_kutu_dinle(bekleme_suresi: int = 60):
 
                 logger.debug(f"Mail kontrol: '{konu[:50]}' | Gönderen: {gonderen}")
 
-                # Kendi gönderdiğimiz orijinal mailleri atla, reply'ları işle
-                if MAIL_USER and MAIL_USER in gonderen and not konu.startswith("Re:"):
+                # Sadece "Re:" ile başlayan mailler fabrika reply'ı olabilir
+                # Orijinal mailler (irsaliye bildirimleri vb.) atlanır
+                if not konu.startswith("Re:") and not konu.startswith("RE:") and not konu.startswith("Ynt:"):
+                    logger.debug(f"Reply değil, atlandı: '{konu[:40]}'")
                     mail_islendi_kaydet(db, mail_id)
                     continue
 
@@ -183,7 +183,6 @@ def gelen_kutu_dinle(bekleme_suresi: int = 60):
                 else:
                     logger.debug(f"Ref kodu yok, atlandı: '{konu[:30]}'")
 
-                # Her durumda DB'ye kaydet
                 mail_islendi_kaydet(db, mail_id, ref)
 
             if yeni_sayisi > 0:
