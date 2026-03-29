@@ -81,7 +81,6 @@ async def status():
 # ── ADMIN: DB TEMİZLE (sadece demo için) ──────────────────────────────────
 @app.get("/admin/reset-db")
 async def reset_db():
-    # Demo amaçlı — canlıya geçince bu endpoint silinecek
     from sqlalchemy import text
     with engine.connect() as conn:
         conn.execute(text('DELETE FROM invoices'))
@@ -89,6 +88,7 @@ async def reset_db():
         conn.execute(text('DELETE FROM alerts'))
         conn.execute(text('DELETE FROM weigh_tickets'))
         conn.execute(text('DELETE FROM vehicles'))
+        conn.execute(text('DELETE FROM processed_mails'))  # restart güvenliği için
         conn.commit()
     logger.info("🗑️ DB temizlendi (admin)")
     return {"status": "temizlendi"}
