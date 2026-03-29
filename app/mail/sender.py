@@ -9,17 +9,20 @@
 # Render ücretsiz planda SMTP portları bloklu.
 # Resend HTTP API kullanır — Render'da sorunsuz çalışır.
 # Ücretsiz planda ayda 3000 mail hakkı var.
+#
+# NEDEN REPLY_TO?
+# Resend ücretsiz planda from: onboarding@resend.dev zorunlu.
+# reply_to: bizim Gmail adresi sayesinde fabrika reply'ı Gmail'e düşer.
+# Listener Gmail'i dinlediği için reply'ı yakalar.
 
 import resend
 import os
 from app.core.logger import logger
 
-# Resend API key — .env'den alınır
 resend.api_key = os.getenv("RESEND_API_KEY")
 
-# Resend ücretsiz planda sadece onboarding@resend.dev adresinden gönderilebilir
-# Kendi domain'ini bağlarsan MAIL_FROM kullanılır
 MAIL_FROM = "onboarding@resend.dev"
+REPLY_TO = os.getenv("MAIL_USER", "")  # Reply'lar bu adrese düşer
 
 
 # ── FONKSİYON 1: FABRİKAYA İRSALİYE MAİLİ ──────────────────────────────
@@ -60,6 +63,7 @@ Profaix Otomatik Bildirim Sistemi
         params = {
             "from": MAIL_FROM,
             "to": [fabrika_mail],
+            "reply_to": REPLY_TO,  # Fabrika reply atınca Gmail'e düşer
             "subject": f"İrsaliye Onayı [Ref: {ref_kodu}]",
             "text": govde,
         }
@@ -111,7 +115,7 @@ def patrona_bildirim_gonder(
         tutar: float = None
 ) -> bool:
     """
-    Fatura kesilince patrona bildirim gönderir.
+    Fatura kesilince patrona bildirim gönderilir.
     """
     govde = f"""Fatura Bildirimi
 
