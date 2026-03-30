@@ -21,7 +21,7 @@ def imap_mailleri_al() -> list:
         mail.login(IMAP_USER, IMAP_PASSWORD)
         mail.select("INBOX")
 
-        durum, mesaj_idleri = mail.search(None, "UNSEEN")
+        durum, mesaj_idleri = mail.search(None, "ALL")
 
         if durum != "OK" or not mesaj_idleri[0]:
             mail.logout()
@@ -134,7 +134,7 @@ def gelen_kutu_dinle(bekleme_suresi: int = 60):
             mailler = imap_mailleri_al()
 
             if not mailler:
-                logger.info("Inbox boş veya bağlanamadı")
+                logger.debug("Inbox boş veya bağlanamadı")
                 db.close()
                 time.sleep(bekleme_suresi)
                 continue
@@ -149,11 +149,19 @@ def gelen_kutu_dinle(bekleme_suresi: int = 60):
 
                 konu, govde, gonderen = mail_icerik_cikar(mail)
 
-                logger.debug(f"Mail kontrol: '{konu[:50]}' | Gönderen: {gonderen}")
+                logger.info(f"Mail kontrol: '{konu[:50]}' | Gönderen: {gonderen}")
 
                 # Sadece reply mailleri işle — orijinal mailler atlanır
-                if not konu.startswith("Re:") and not konu.startswith("RE:") and not konu.startswith("Ynt:"):
-                    logger.debug(f"Reply değil, atlandı: '{konu[:40]}'")
+                konu_lower = konu.lower()
+                is_reply = (
+                    konu_lower.startswith("re:") or
+                    konu_lower.startswith("ynt:") or
+                    konu_lower.startswith("yw:") or
+                    konu_lower.startswith("sv:") or
+                    "re:" in konu_lower
+                )
+                if not is_reply:
+                    logger.info(f"Reply değil, atlandı: '{konu[:40]}'")
                     mail_islendi_kaydet(db, mail_id)
                     continue
 
@@ -172,7 +180,7 @@ def gelen_kutu_dinle(bekleme_suresi: int = 60):
                     logger.info(f"✅ İşlendi: [{ref}] → {sonuc.get('karar', 'BILINMIYOR')}")
                     yeni_sayisi += 1
                 else:
-                    logger.debug(f"Ref kodu yok, atlandı: '{konu[:30]}'")
+                    logger.info(f"Ref kodu yok, atlandı: '{konu[:30]}'")
 
                 mail_islendi_kaydet(db, mail_id, ref)
 
@@ -184,5 +192,5 @@ def gelen_kutu_dinle(bekleme_suresi: int = 60):
         except Exception as e:
             logger.error(f"Listener hatası: {e}")
 
-        logger.debug(f"⏳ {bekleme_suresi}sn bekleniyor...")
+        logger.info(f"⏳ {bekleme_suresi}sn bekleniyor...")
         time.sleep(bekleme_suresi)
