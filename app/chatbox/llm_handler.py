@@ -2,24 +2,75 @@
 #
 # SORUMLULUK:
 # 1. Kullanıcıdan isim alır (ilk mesajda)
-# 2. Konuşma geçmişini bellekte tutar — Claude önceki soruları hatırlar
+# 2. Session'ları DB'de tutar — restart'ta kaybolmaz
 # 3. DB'den güncel veri çeker ve Claude'a context olarak verir
 # 4. Cevabı döndürür
 
+import json
+import re
 import anthropic
 from datetime import date
 from app.core.config import ANTHROPIC_API_KEY
 from app.core.logger import logger
 
-# Kullanıcı numarası → isim
-kullanici_isimleri = {}
-
-# Kullanıcı numarası → konuşma geçmişi (messages listesi)
-# Her eleman: {"role": "user"/"assistant", "content": "..."}
-konusma_gecmisleri = {}
-
-# Bellekte tutulacak max mesaj sayısı (çift olmalı: user+assistant)
 MAX_GECMIS = 20
+
+# İsim olmadığına dair belirteçler — bunlar gelirse isim değil soru olarak işle
+SORU_BELIRTECLERI = [
+    "?", "kaç", "var mı", "nedir", "nerede", "nasıl", "ne zaman",
+    "hangi", "toplam", "bugün", "fatura", "plaka", "irsaliye", "ton"
+]
+
+
+def _isim_mi(metin: str) -> bool:
+    """Gelen metnin isim mi yoksa soru mu olduğunu belirler."""
+    metin_lower = metin.lower().strip()
+    # Soru belirteci içeriyorsa isim değil
+    for belirtec in SORU_BELIRTECLERI:
+        if belirtec in metin_lower:
+            return False
+    # 3 kelimeden uzunsa muhtemelen isim değil
+    if len(metin.split()) > 3:
+        return False
+    # Rakam içeriyorsa isim değil
+    if re.search(r'\d', metin):
+        return False
+    return True
+
+
+def _session_yukle(db, session_id: str):
+    """DB'den session yükler. Yoksa None döner."""
+    from app.core.database import ChatSession
+    return db.query(ChatSession).filter(
+        ChatSession.session_id == session_id
+    ).first()
+
+
+def _session_kaydet(db, session_id: str, isim: str, gecmis: list):
+    """Session'ı DB'ye kaydeder veya günceller."""
+    from app.core.database import ChatSession
+    try:
+        session = db.query(ChatSession).filter(
+            ChatSession.session_id == session_id
+        ).first()
+
+        gecmis_json = json.dumps(gecmis, ensure_ascii=False)
+
+        if session:
+            session.isim = isim
+            session.gecmis = gecmis_json
+        else:
+            session = ChatSession(
+                session_id=session_id,
+                isim=isim,
+                gecmis=gecmis_json
+            )
+            db.add(session)
+
+        db.commit()
+    except Exception as e:
+        logger.error(f"Session kaydedilemedi: {e}")
+        db.rollback()
 
 
 def db_context_hazirla(db) -> str:
@@ -78,7 +129,7 @@ def db_context_hazirla(db) -> str:
         if son_fatura:
             son_fatura_bilgi = f"Fatura No: {son_fatura.fatura_no} | Paraşüt ID: {son_fatura.parasut_id}"
 
-        context = f"""
+        return f"""
 === PROFAIX SİSTEM VERİLERİ ===
 Tarih: {bugun.strftime('%d.%m.%Y')}
 
@@ -100,8 +151,6 @@ SON 10 FATURA:
 SON FATURA:
 - {son_fatura_bilgi}
 """
-        return context
-
     except Exception as e:
         logger.error(f"DB context hatası: {e}")
         return "DB verisi alınamadı."
@@ -110,75 +159,71 @@ SON FATURA:
 def soru_cevapla(mesaj: str, db, gonderen: str = "") -> str:
     """
     Kullanıcının mesajını işler ve cevap döndürür.
-
-    AKIŞ:
-    1. İlk mesaj → isim sor
-    2. İsim henüz verilmemiş → ismi kaydet, hoş geldin mesajı
-    3. İsim var → konuşma geçmişine ekle → DB context + geçmiş → Claude → cevap
+    Session bilgileri DB'de tutulur — restart'ta kaybolmaz.
     """
 
-    # ── ADIM 1: İlk kez yazıyor → isim sor ─────────────────────────────
-    if gonderen not in kullanici_isimleri:
-        kullanici_isimleri[gonderen] = None
-        konusma_gecmisleri[gonderen] = []
+    # ── Session yükle ────────────────────────────────────────────────────
+    session = _session_yukle(db, gonderen)
+
+    # ── İlk kez yazıyor → isim sor ──────────────────────────────────────
+    if session is None:
+        _session_kaydet(db, gonderen, isim=None, gecmis=[])
         return "Merhaba! Ben Profaix asistanıyım 🤖\n\nSize nasıl hitap etmemi istersiniz?"
 
-    # ── ADIM 2: İsim henüz kaydedilmemiş → kaydet ───────────────────────
-    if kullanici_isimleri[gonderen] is None:
-        isim = mesaj.strip()
-        isim = isim.lower().replace("ben ", "").replace(" ben", "").replace("benim", "").strip().title()
-        kullanici_isimleri[gonderen] = isim
-        return (
-            f"Merhaba {isim}! 👋\n\n"
-            f"Profaix sistemine hoş geldiniz. Size nasıl yardımcı olabilirim?\n\n"
-            f"Sorabilecekleriniz:\n"
-            f"• Bugün kaç ton geldi?\n"
-            f"• Hangi plakalar geldi?\n"
-            f"• Plaka bazlı ton dökümü\n"
-            f"• Bekleyen irsaliyeler var mı?\n"
-            f"• Son fatura / tüm faturalar\n"
-            f"• Bugün toplam kaç fatura kesildi?"
-        )
+    # ── İsim henüz kaydedilmemiş ─────────────────────────────────────────
+    if session.isim is None:
+        if _isim_mi(mesaj):
+            # Geçerli isim — kaydet
+            isim = mesaj.strip()
+            isim = isim.lower().replace("ben ", "").replace(" ben", "").replace("benim", "").strip().title()
+            _session_kaydet(db, gonderen, isim=isim, gecmis=[])
+            return (
+                f"Merhaba {isim}! 👋\n\n"
+                f"Profaix sistemine hoş geldiniz. Size nasıl yardımcı olabilirim?\n\n"
+                f"Sorabilecekleriniz:\n"
+                f"• Bugün kaç ton geldi?\n"
+                f"• Hangi plakalar geldi?\n"
+                f"• Plaka bazlı ton dökümü\n"
+                f"• Bekleyen irsaliyeler var mı?\n"
+                f"• Son fatura / tüm faturalar\n"
+                f"• Bugün toplam kaç fatura kesildi?"
+            )
+        else:
+            # Soru gibi görünüyor — isim sormadan direkt cevapla, ismi "Kullanıcı" yap
+            _session_kaydet(db, gonderen, isim="Kullanıcı", gecmis=[])
+            session = _session_yukle(db, gonderen)
 
-    # ── ADIM 3: Normal akış ──────────────────────────────────────────────
-    isim = kullanici_isimleri[gonderen]
+    # ── Normal akış ──────────────────────────────────────────────────────
+    isim = session.isim or "Kullanıcı"
+    gecmis = json.loads(session.gecmis) if session.gecmis else []
     db_context = db_context_hazirla(db)
 
-    # Sistem promptu — zengin kimlik ve bağlam
     sistem_promptu = f"""Sen Profaix'in akıllı muhasebe asistanısın. Hurda metal işletmesi için kantar takip ve muhasebe otomasyon sisteminde çalışıyorsun.
 
 Kullanıcının adı: {isim}
 
 KİMLİĞİN:
 - Hurda sektörünü iyi bilirsin: kantar fişi, irsaliye, e-fatura, Paraşüt, fabrika onayı süreçleri sana yabancı değil
-- Sayıları anlıklı yorumlarsın: "21 ton gelmiş, dünden %15 fazla" gibi bağlamsal yorumlar yapabilirsin
+- Sayıları yorumlarsın: plakalar arası karşılaştırma, günlük toplam gibi bağlamsal bilgiler verebilirsin
 - Kullanıcıyla sıcak ama profesyonel konuşursun
 - Önceki mesajları hatırlarsın ve konuşmayı sürdürürsün
 
 DAVRANIŞ KURALLARI:
-- {isim} diye hitap et
-- WhatsApp/web formatında yaz: kısa paragraflar, gerektiğinde emoji
-- Eğer kullanıcı "peki ya dün?" veya "en çok hangisi?" gibi bağlamsal soru sorarsa, önceki konuşmadan anlayarak cevapla
+- {isim} diye hitap et ama her cümlede tekrarlama
+- Kısa ve net cevap ver — gereksiz "Başka bir şey sorar mısın?" kalıplarını kullanma
+- Bağlamsal soruları ("peki ya dün?", "en çok hangisi?") önceki konuşmadan anlayarak cevapla
 - Sistemde olmayan bilgiyi uydurma, "bu bilgi sistemde yok" de
-- Sayısal soruları net ve hızlı cevapla, detay istenince detaylandır
+- Emoji kullan ama abartma — her cümlede emoji olmasın
 - Fatura kesmek için birim fiyat bilgisi gerekir, bu bilgi sistemde yoksa belirt
-- Eğer kullanıcı teşekkür ederse kısa ve samimi karşılık ver
-- Eğer selam/merhaba yazarsa sıcak karşıla ve ne sormak istediğini sor
 
 GÜNCEL SİSTEM VERİLERİ:
 {db_context}"""
 
-    # Konuşma geçmişine kullanıcı mesajını ekle
-    gecmis = konusma_gecmisleri[gonderen]
     gecmis.append({"role": "user", "content": mesaj})
 
-    # Geçmiş çok uzadıysa en eski mesajları at (ilk 2'yi koru: bağlamı kaybetme)
-    # MAX_GECMIS aşıldıysa en eski user+assistant çiftini sil
     if len(gecmis) > MAX_GECMIS:
         gecmis = gecmis[-MAX_GECMIS:]
-        konusma_gecmisleri[gonderen] = gecmis
 
-    # ── Claude'a gönder ──────────────────────────────────────────────────
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
     try:
@@ -186,20 +231,20 @@ GÜNCEL SİSTEM VERİLERİ:
             model="claude-sonnet-4-5",
             max_tokens=600,
             system=sistem_promptu,
-            messages=gecmis  # Tüm konuşma geçmişi gönderiliyor
+            messages=gecmis
         )
 
         cevap = response.content[0].text.strip()
-
-        # Asistanın cevabını da geçmişe ekle — bir sonraki turda Claude hatırlasın
         gecmis.append({"role": "assistant", "content": cevap})
+
+        # Session'ı DB'ye kaydet
+        _session_kaydet(db, gonderen, isim=isim, gecmis=gecmis)
 
         logger.info(f"🤖 LLM cevap ({isim}): {cevap[:60]}...")
         return cevap
 
     except Exception as e:
         logger.error(f"Claude API hatası: {e}")
-        # Hata durumunda son eklenen user mesajını geçmişten çıkar
         if gecmis and gecmis[-1]["role"] == "user":
             gecmis.pop()
         return "❌ Şu an cevap veremiyorum, lütfen tekrar deneyin."

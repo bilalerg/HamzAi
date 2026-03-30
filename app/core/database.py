@@ -177,6 +177,23 @@ class ProcessedMail(Base):
         return f"<ProcessedMail mail_id={self.mail_id} ref={self.ref_kodu}>"
 
 
+# ── TABLO 8: CHAT_SESSIONS ────────────────────────────────────────────────
+# Web ve WhatsApp chatbot session'larını DB'de tutar.
+# Restart sonrası kullanıcı ismi ve konuşma geçmişi kaybolmaz.
+class ChatSession(Base):
+    __tablename__ = "chat_sessions"
+
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String(100), unique=True, nullable=False, index=True)
+    isim       = Column(String(100), nullable=True)
+    gecmis     = Column(Text, nullable=True)  # JSON string olarak saklanır
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    def __repr__(self):
+        return f"<ChatSession session_id={self.session_id} isim={self.isim}>"
+
+
 # ── VERİTABANI BAŞLATMA ───────────────────────────────────────────────────
 def init_db():
     logger.info("Veritabanı tabloları oluşturuluyor...")
