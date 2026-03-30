@@ -3,6 +3,7 @@
 import asyncio
 import tempfile
 import os
+import re
 import httpx
 from fastapi import APIRouter, Request, Form, BackgroundTasks
 from fastapi.responses import Response
@@ -13,6 +14,10 @@ from app.core.database import SessionLocal
 from app.chatbox.wp_sender import tirciya_bildir
 
 router = APIRouter()
+
+# Birim fiyat beklenen şoförler — telefon → waybill_id
+# Şoför fiyat yazana kadar burada bekler
+fiyat_bekleniyor = {}
 
 
 # ── YARDIMCI: FOTOĞRAFI İNDİR ────────────────────────────────────────────
@@ -26,11 +31,29 @@ async def fotografi_indir(media_url: str, account_sid: str, auth_token: str) -> 
         return response.content
 
 
+# ── YARDIMCI: METİNDEN BİRİM FİYAT ÇIKAR ────────────────────────────────
+def birim_fiyat_cikar(metin: str) -> float | None:
+    """
+    "4500", "4.500", "4500 tl", "4500 lira" gibi formatları parse eder.
+    Geçerli fiyat değilse None döner.
+    """
+    metin = metin.strip().lower()
+    metin = metin.replace("tl", "").replace("lira", "").replace("₺", "").strip()
+    metin = metin.replace(".", "").replace(",", ".")
+    try:
+        fiyat = float(metin)
+        if fiyat > 0:
+            return fiyat
+    except:
+        pass
+    return None
+
+
 # ── ANA WEBHOOK: WHATSAPP MESAJI GELDİ ───────────────────────────────────
 @router.post("/webhook/whatsapp")
 async def whatsapp_webhook(
         request: Request,
-        background_tasks: BackgroundTasks,  # <-- EKLENDİ: Arka plan görevleri için
+        background_tasks: BackgroundTasks,
         From: str = Form(default=""),
         Body: str = Form(default=""),
         NumMedia: str = Form(default="0"),
@@ -41,6 +64,7 @@ async def whatsapp_webhook(
 
     resp = MessagingResponse()
 
+    # ── Fotoğraf geldi → fiş işle ────────────────────────────────────────
     if int(NumMedia) > 0 and MediaContentType0.startswith("image/"):
         logger.info(f"📸 Fotoğraf tespit edildi: {MediaContentType0}")
 
@@ -60,19 +84,36 @@ async def whatsapp_webhook(
 
             logger.info(f"Fotoğraf kaydedildi: {tmp_path} ({os.path.getsize(tmp_path)} bytes)")
 
-            # <-- DÜZELTME 1: Twilio senkron olduğu için threadpool'a attık (Sistemi kilitlemez)
             await run_in_threadpool(tirciya_bildir, From, "✅ Fişiniz alındı, analiz ediliyor...")
-
-            # <-- DÜZELTME 2: Ağır OCR ve Paraşüt işlemlerini background_tasks'a verdik
             background_tasks.add_task(fis_isle, tmp_path, From)
 
         except Exception as e:
             logger.error(f"Fotoğraf işleme hatası: {e}")
             resp.message("❌ Bir hata oluştu, lütfen tekrar deneyin.")
 
+    # ── Metin geldi → birim fiyat mı yoksa normal mesaj mı? ──────────────
     elif Body:
         logger.info(f"Metin mesajı: {Body}")
-        resp.message("Merhaba! Kantar fişi fotoğrafı gönderin, gerisini hallederim. 🤖")
+
+        # Bu şoförden birim fiyat bekleniyor mu?
+        if From in fiyat_bekleniyor:
+            fiyat = birim_fiyat_cikar(Body)
+
+            if fiyat is not None:
+                # Geçerli fiyat geldi — fatura kes
+                waybill_id = fiyat_bekleniyor.pop(From)
+                logger.info(f"💰 Birim fiyat alındı: {fiyat} TL | waybill_id={waybill_id}")
+                await run_in_threadpool(tirciya_bildir, From, f"💰 Birim fiyat alındı: {fiyat:,.0f} TL\nFatura kesiliyor...")
+                background_tasks.add_task(fatura_kes_gorev, waybill_id, fiyat, From)
+            else:
+                # Geçersiz fiyat — tekrar sor
+                tirciya_bildir(From,
+                    "⚠️ Geçersiz fiyat formatı.\n"
+                    "Lütfen sadece rakam yazın.\n"
+                    "Örnek: 4500"
+                )
+        else:
+            resp.message("Merhaba! Kantar fişi fotoğrafı gönderin, gerisini hallederim. 🤖")
 
     else:
         logger.warning("Boş mesaj geldi")
@@ -81,14 +122,12 @@ async def whatsapp_webhook(
 
 
 # ── ARKA PLAN: FİŞ İŞLE ──────────────────────────────────────────────────
-# <-- DÜZELTME 3: "async def" başındaki "async" kelimesini sildik!
-# Çünkü içindeki veritabanı, OCR ve Paraşüt işlemleri zaten senkron.
 def fis_isle(foto_path: str, gonderen: str):
     db = SessionLocal()
     try:
         from app.ocr.reader import fis_oku, fis_db_kaydet
         from app.ocr.plaka_kontrol import plaka_kontrol_et, PlakaSonuc
-        from app.parasut.irsaliye import irsaliye_olustur  # <-- Paraşüt entegrasyonu eklendi
+        from app.parasut.irsaliye import irsaliye_olustur
 
         logger.info(f"OCR başlatılıyor: {foto_path}")
         sonuc = fis_oku(foto_path)
@@ -116,21 +155,26 @@ def fis_isle(foto_path: str, gonderen: str):
             f"İrsaliye oluşturuluyor..."
         )
 
-        # <-- DÜZELTME 4: Paraşüt e-İrsaliye adımını tetikledik!
-        logger.info(f"Paraşüt irsaliye adımı başlatılıyor: ticket_id={ticket.id}")
         irsaliye_sonuc = irsaliye_olustur(ticket.id)
 
-        if irsaliye_sonuc.get("basarili"):
-            logger.info("✅ İrsaliye başarıyla oluşturuldu.")
-            tirciya_bildir(
-                gonderen,
-                f"✅ İrsaliye Paraşüt'te oluşturuldu!\n"
-                f"📄 İrsaliye No: {irsaliye_sonuc.get('irsaliye_no')}\n\n"
-                f"Fabrika onayı bekleniyor..."
-            )
-        else:
+        if not irsaliye_sonuc.get("basarili"):
             logger.error(f"❌ İrsaliye oluşturulamadı: {irsaliye_sonuc.get('hata')}")
-            tirciya_bildir(gonderen, f"❌ İrsaliye oluşturulamadı: Lütfen muhasebeye bilgi verin.")
+            tirciya_bildir(gonderen, "❌ İrsaliye oluşturulamadı. Lütfen muhasebeye bilgi verin.")
+            return
+
+        waybill_id = irsaliye_sonuc.get("waybill_id")
+        logger.info(f"✅ İrsaliye oluşturuldu: waybill_id={waybill_id}")
+
+        # Birim fiyat bekleme listesine ekle
+        fiyat_bekleniyor[gonderen] = waybill_id
+
+        tirciya_bildir(
+            gonderen,
+            f"✅ İrsaliye Paraşüt'te oluşturuldu!\n"
+            f"📄 İrsaliye No: {irsaliye_sonuc.get('irsaliye_no')}\n\n"
+            f"💰 Fatura kesmek için birim fiyatı yazın (TL/kg):\n"
+            f"Örnek: 4500"
+        )
 
     except Exception as e:
         logger.error(f"Fiş işleme hatası: {e}")
@@ -141,3 +185,30 @@ def fis_isle(foto_path: str, gonderen: str):
             os.remove(foto_path)
         except:
             pass
+
+
+# ── ARKA PLAN: FATURA KES ─────────────────────────────────────────────────
+def fatura_kes_gorev(waybill_id: int, birim_fiyat: float, gonderen: str):
+    """Birim fiyat alındıktan sonra fatura keser."""
+    try:
+        from app.parasut.fatura import fatura_kes
+        fatura_sonuc = fatura_kes(waybill_id, birim_fiyat=birim_fiyat)
+
+        if fatura_sonuc.get("basarili"):
+            logger.info(f"✅ Fatura kesildi: {fatura_sonuc.get('fatura_no')}")
+            tirciya_bildir(
+                gonderen,
+                f"✅ Fatura kesildi!\n"
+                f"🧾 Fatura No: {fatura_sonuc.get('fatura_no')}\n"
+                f"💰 Birim Fiyat: {birim_fiyat:,.0f} TL/kg\n"
+                f"✅ İşlem tamamlandı!"
+            )
+        else:
+            logger.error(f"❌ Fatura kesilemedi: {fatura_sonuc.get('hata')}")
+            tirciya_bildir(gonderen, "❌ Fatura kesilemedi. Lütfen muhasebeye bilgi verin.")
+            # Hata durumunda tekrar fiyat beklemeye al
+            fiyat_bekleniyor[gonderen] = waybill_id
+
+    except Exception as e:
+        logger.error(f"Fatura kesme hatası: {e}")
+        tirciya_bildir(gonderen, "❌ Fatura kesme hatası. Lütfen muhasebeye bilgi verin.")
