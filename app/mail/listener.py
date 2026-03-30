@@ -134,7 +134,7 @@ def gelen_kutu_dinle(bekleme_suresi: int = 60):
             mailler = imap_mailleri_al()
 
             if not mailler:
-                logger.debug("Inbox boş veya bağlanamadı")
+                logger.info("Inbox boş veya bağlanamadı")
                 db.close()
                 time.sleep(bekleme_suresi)
                 continue

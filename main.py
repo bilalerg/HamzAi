@@ -151,7 +151,16 @@ async def mail_listener_baslat():
     import threading
     from app.mail.listener import gelen_kutu_dinle
 
-    thread = threading.Thread(target=gelen_kutu_dinle, args=(60,), daemon=True)
+    def calistir():
+        import time
+        while True:
+            try:
+                gelen_kutu_dinle(bekleme_suresi=60)
+            except Exception as e:
+                logger.error(f"Mail listener çöktü, yeniden başlatılıyor: {e}")
+                time.sleep(10)
+
+    thread = threading.Thread(target=calistir, daemon=True)
     thread.start()
     logger.info("📬 Mail dinleyici bağımsız bir kanalda (Thread) başlatıldı.")
 
