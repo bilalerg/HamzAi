@@ -1,35 +1,46 @@
 # listener.py — Gelen Kutusu Dinleyici
-#
-# Gmail IMAP ile mailleri dinler.
-# İşlenen mail ID'leri DB'ye kaydedilir — restart sonrası tekrar işlenmez.
-# SADECE "Re:" ile başlayan mailler işlenir — orijinal mailler atlanır.
 
 import imaplib
 import email
 import time
+from datetime import date
 from email.header import decode_header
 from app.core.config import IMAP_HOST, IMAP_PORT, IMAP_USER, IMAP_PASSWORD, MAIL_USER
 from app.core.database import SessionLocal, ProcessedMail
 from app.core.logger import logger
 from app.mail.parser import fabrika_cevabi_isle, ref_kodu_bul
 
+# IMAP SINCE formatı için İngilizce ay isimleri — locale'den bağımsız
+# Türkçe sistemde strftime "%b" → "Oca", "Şub" gibi döner, IMAP kabul etmez
+_AY_ISIMLERI = {
+    1: "Jan", 2: "Feb", 3: "Mar", 4: "Apr",
+    5: "May", 6: "Jun", 7: "Jul", 8: "Aug",
+    9: "Sep", 10: "Oct", 11: "Nov", 12: "Dec"
+}
 
-# ── FONKSİYON 1: IMAP'TAN MAİLLERİ AL ──────────────────────────────────
+
+def bugun_imap_formatinda() -> str:
+    """Bugünün tarihini IMAP SINCE formatında döndürür: 30-Mar-2026"""
+    bugun = date.today()
+    return f"{bugun.day:02d}-{_AY_ISIMLERI[bugun.month]}-{bugun.year}"
+
+
 def imap_mailleri_al() -> list:
     try:
         mail = imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT)
         mail.login(IMAP_USER, IMAP_PASSWORD)
         mail.select("INBOX")
 
-        from datetime import date
-        bugun = date.today().strftime("%d-%b-%Y")
-        durum, mesaj_idleri = mail.search(None, f'(SINCE "{bugun}")')
+        bugun = bugun_imap_formatinda()
+        logger.info(f"IMAP SINCE filtresi: {bugun}")
+        durum, mesaj_idleri = mail.search(None, f'SINCE "{bugun}"')
 
         if durum != "OK" or not mesaj_idleri[0]:
             mail.logout()
             return []
 
         id_listesi = mesaj_idleri[0].split()
+        logger.info(f"Bugün {len(id_listesi)} mail bulundu")
         son_idler = id_listesi[-20:] if len(id_listesi) > 20 else id_listesi
 
         mailler = []
@@ -49,12 +60,7 @@ def imap_mailleri_al() -> list:
         return []
 
 
-# ── YARDIMCI: GÜVENLİ DECODE ─────────────────────────────────────────────
 def guvenli_decode(payload, charset):
-    """
-    Bilinmeyen veya geçersiz encoding'leri güvenli şekilde çözer.
-    unknown-8bit gibi non-standard encoding'ler için latin-1 kullanır.
-    """
     if not charset or charset.lower() in ["unknown-8bit", "unknown", ""]:
         charset = "latin-1"
     try:
@@ -63,7 +69,6 @@ def guvenli_decode(payload, charset):
         return payload.decode("latin-1", errors="ignore")
 
 
-# ── FONKSİYON 2: MAİL İÇERİĞİNİ ÇIKAR ──────────────────────────────────
 def mail_icerik_cikar(mail_verisi: dict) -> tuple:
     try:
         msg = email.message_from_bytes(mail_verisi["ham"])
@@ -97,7 +102,6 @@ def mail_icerik_cikar(mail_verisi: dict) -> tuple:
         return "", "", ""
 
 
-# ── FONKSİYON 3: DB'DEN İŞLENMİŞ MAİLLERİ YÜKLE ────────────────────────
 def islenmis_mailleri_yukle(db) -> set:
     try:
         kayitlar = db.query(ProcessedMail).all()
@@ -107,10 +111,8 @@ def islenmis_mailleri_yukle(db) -> set:
         return set()
 
 
-# ── FONKSİYON 4: MAİL ID'Sİ DB'YE KAYDET ────────────────────────────────
 def mail_islendi_kaydet(db, mail_id: str, ref_kodu: str = None):
     try:
-        # Zaten varsa ekleme — UniqueViolation önle
         mevcut = db.query(ProcessedMail).filter(
             ProcessedMail.mail_id == mail_id
         ).first()
@@ -124,19 +126,17 @@ def mail_islendi_kaydet(db, mail_id: str, ref_kodu: str = None):
         db.rollback()
 
 
-# ── FONKSİYON 5: ANA DÖNGÜ ──────────────────────────────────────────────
 def gelen_kutu_dinle(bekleme_suresi: int = 60):
     logger.info(f"📬 Mail dinleyici başlatıldı (her {bekleme_suresi}sn kontrol)")
 
     while True:
         try:
             db = SessionLocal()
-
             islenen_mailler = islenmis_mailleri_yukle(db)
             mailler = imap_mailleri_al()
 
             if not mailler:
-                logger.debug("Inbox boş veya bağlanamadı")
+                logger.info("Inbox boş veya bugün mail yok")
                 db.close()
                 time.sleep(bekleme_suresi)
                 continue
@@ -150,10 +150,8 @@ def gelen_kutu_dinle(bekleme_suresi: int = 60):
                     continue
 
                 konu, govde, gonderen = mail_icerik_cikar(mail)
-
                 logger.info(f"Mail kontrol: '{konu[:50]}' | Gönderen: {gonderen}")
 
-                # Sadece reply mailleri işle — orijinal mailler atlanır
                 konu_lower = konu.lower()
                 is_reply = (
                     konu_lower.startswith("re:") or
@@ -162,6 +160,7 @@ def gelen_kutu_dinle(bekleme_suresi: int = 60):
                     konu_lower.startswith("sv:") or
                     "re:" in konu_lower
                 )
+
                 if not is_reply:
                     logger.info(f"Reply değil, atlandı: '{konu[:40]}'")
                     mail_islendi_kaydet(db, mail_id)
@@ -171,14 +170,12 @@ def gelen_kutu_dinle(bekleme_suresi: int = 60):
 
                 if ref:
                     logger.info(f"📨 Fabrika teyit maili yakalandı: [{ref}]")
-
                     sonuc = fabrika_cevabi_isle(
                         mail_konusu=konu,
                         mail_govdesi=govde,
                         muhasebeci_mail=MAIL_USER,
                         db=db
                     )
-
                     logger.info(f"✅ İşlendi: [{ref}] → {sonuc.get('karar', 'BILINMIYOR')}")
                     yeni_sayisi += 1
                 else:
