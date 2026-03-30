@@ -21,7 +21,9 @@ def imap_mailleri_al() -> list:
         mail.login(IMAP_USER, IMAP_PASSWORD)
         mail.select("INBOX")
 
-        durum, mesaj_idleri = mail.search(None, "ALL")
+        from datetime import date
+        bugun = date.today().strftime("%d-%b-%Y")
+        durum, mesaj_idleri = mail.search(None, f'(SINCE "{bugun}")')
 
         if durum != "OK" or not mesaj_idleri[0]:
             mail.logout()
