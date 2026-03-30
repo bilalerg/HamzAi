@@ -18,7 +18,7 @@ async def lifespan(app: FastAPI):
     validate_config()
     init_db()
     await startup_recovery()
-    asyncio.create_task(mail_listener_baslat())
+    # asyncio.create_task(mail_listener_baslat())  # Demo için devre dışı
     logger.info(f"✅ Profaix hazır — Ortam: {ENV}")
     yield
     logger.info("Profaix kapanıyor...")
@@ -146,23 +146,23 @@ async def startup_recovery():
         db.close()
 
 
-# ── MAIL LİSTENER ────────────────────────────────────────────────────────
-async def mail_listener_baslat():
-    import threading
-    from app.mail.listener import gelen_kutu_dinle
-
-    def calistir():
-        import time
-        while True:
-            try:
-                gelen_kutu_dinle(bekleme_suresi=60)
-            except Exception as e:
-                logger.error(f"Mail listener çöktü, yeniden başlatılıyor: {e}")
-                time.sleep(10)
-
-    thread = threading.Thread(target=calistir, daemon=True)
-    thread.start()
-    logger.info("📬 Mail dinleyici bağımsız bir kanalda (Thread) başlatıldı.")
+# ── MAIL LİSTENER — Demo için devre dışı ─────────────────────────────────
+# async def mail_listener_baslat():
+#     import threading
+#     from app.mail.listener import gelen_kutu_dinle
+#
+#     def calistir():
+#         import time
+#         while True:
+#             try:
+#                 gelen_kutu_dinle(bekleme_suresi=60)
+#             except Exception as e:
+#                 logger.error(f"Mail listener çöktü, yeniden başlatılıyor: {e}")
+#                 time.sleep(10)
+#
+#     thread = threading.Thread(target=calistir, daemon=True)
+#     thread.start()
+#     logger.info("📬 Mail dinleyici bağımsız bir kanalda (Thread) başlatıldı.")
 
 
 # ── CHAT HTML ARAYÜZÜ ─────────────────────────────────────────────────────
@@ -201,7 +201,6 @@ CHAT_HTML = """<!DOCTYPE html>
     overflow: hidden;
   }
 
-  /* ── HEADER ── */
   .header {
     padding: 0 36px;
     height: 60px;
@@ -280,7 +279,6 @@ CHAT_HTML = """<!DOCTYPE html>
     letter-spacing: 0.2px;
   }
 
-  /* ── MESSAGES ── */
   .messages {
     flex: 1;
     overflow-y: auto;
@@ -295,7 +293,6 @@ CHAT_HTML = """<!DOCTYPE html>
   .messages::-webkit-scrollbar-track { background: transparent; }
   .messages::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 4px; }
 
-  /* ── WELCOME ── */
   .welcome {
     display: flex;
     flex-direction: column;
@@ -373,7 +370,6 @@ CHAT_HTML = """<!DOCTYPE html>
     box-shadow: var(--shadow);
   }
 
-  /* ── BUBBLES ── */
   .message {
     display: flex;
     flex-direction: column;
@@ -422,7 +418,6 @@ CHAT_HTML = """<!DOCTYPE html>
     box-shadow: var(--shadow);
   }
 
-  /* ── TYPING ── */
   .typing-wrap {
     display: flex;
     flex-direction: column;
@@ -458,7 +453,6 @@ CHAT_HTML = """<!DOCTYPE html>
     30% { transform: translateY(-5px); opacity: 1; }
   }
 
-  /* ── INPUT ── */
   .input-area {
     padding: 14px 36px 18px;
     border-top: 1px solid var(--border);
