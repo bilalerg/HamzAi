@@ -112,7 +112,7 @@ def db_context_hazirla(db) -> str:
         ).limit(10).all()
 
         fatura_listesi = "\n".join([
-            f"  • Fatura No: {f.fatura_no} | Paraşüt ID: {f.parasut_id} | Tarih: {f.created_at.strftime('%d.%m.%Y') if f.created_at else '-'}"
+            f"  • Fatura No: {f.fatura_no} | Tutar: {f.tutar:,} TL | Tarih: {f.created_at.strftime('%d.%m.%Y') if f.created_at else '-'}"
             for f in tum_faturalar
         ]) if tum_faturalar else "  Henüz fatura yok"
 
