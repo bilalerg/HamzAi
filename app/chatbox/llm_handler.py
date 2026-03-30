@@ -1,10 +1,4 @@
 # llm_handler.py — Profaix WhatsApp & Web Chatbot
-#
-# SORUMLULUK:
-# 1. Kullanıcıdan isim alır (ilk mesajda)
-# 2. Session'ları DB'de tutar — restart'ta kaybolmaz
-# 3. DB'den güncel veri çeker ve Claude'a context olarak verir
-# 4. Cevabı döndürür
 
 import json
 import re
@@ -15,7 +9,6 @@ from app.core.logger import logger
 
 MAX_GECMIS = 20
 
-# İsim olmadığına dair belirteçler — bunlar gelirse isim değil soru olarak işle
 SORU_BELIRTECLERI = [
     "?", "kaç", "var mı", "nedir", "nerede", "nasıl", "ne zaman",
     "hangi", "toplam", "bugün", "fatura", "plaka", "irsaliye", "ton"
@@ -23,23 +16,18 @@ SORU_BELIRTECLERI = [
 
 
 def _isim_mi(metin: str) -> bool:
-    """Gelen metnin isim mi yoksa soru mu olduğunu belirler."""
     metin_lower = metin.lower().strip()
-    # Soru belirteci içeriyorsa isim değil
     for belirtec in SORU_BELIRTECLERI:
         if belirtec in metin_lower:
             return False
-    # 3 kelimeden uzunsa muhtemelen isim değil
     if len(metin.split()) > 3:
         return False
-    # Rakam içeriyorsa isim değil
     if re.search(r'\d', metin):
         return False
     return True
 
 
 def _session_yukle(db, session_id: str):
-    """DB'den session yükler. Yoksa None döner."""
     from app.core.database import ChatSession
     return db.query(ChatSession).filter(
         ChatSession.session_id == session_id
@@ -47,26 +35,18 @@ def _session_yukle(db, session_id: str):
 
 
 def _session_kaydet(db, session_id: str, isim: str, gecmis: list):
-    """Session'ı DB'ye kaydeder veya günceller."""
     from app.core.database import ChatSession
     try:
         session = db.query(ChatSession).filter(
             ChatSession.session_id == session_id
         ).first()
-
         gecmis_json = json.dumps(gecmis, ensure_ascii=False)
-
         if session:
             session.isim = isim
             session.gecmis = gecmis_json
         else:
-            session = ChatSession(
-                session_id=session_id,
-                isim=isim,
-                gecmis=gecmis_json
-            )
+            session = ChatSession(session_id=session_id, isim=isim, gecmis=gecmis_json)
             db.add(session)
-
         db.commit()
     except Exception as e:
         logger.error(f"Session kaydedilemedi: {e}")
@@ -74,7 +54,7 @@ def _session_kaydet(db, session_id: str, isim: str, gecmis: list):
 
 
 def db_context_hazirla(db) -> str:
-    from app.core.database import WeighTicket, Waybill, Invoice, TicketStatus
+    from app.core.database import WeighTicket, Waybill, Invoice, Alert, TicketStatus
     from sqlalchemy import func
 
     bugun = date.today()
@@ -127,7 +107,18 @@ def db_context_hazirla(db) -> str:
         son_fatura = tum_faturalar[0] if tum_faturalar else None
         son_fatura_bilgi = "Henüz fatura yok"
         if son_fatura:
-            son_fatura_bilgi = f"Fatura No: {son_fatura.fatura_no} | Paraşüt ID: {son_fatura.parasut_id}"
+            son_fatura_bilgi = f"Fatura No: {son_fatura.fatura_no} | Tutar: {son_fatura.tutar:,} TL"
+
+        # Bugünkü duplicate uyarılar
+        bugun_duplicateler = db.query(Alert).filter(
+            Alert.tur == "DUPLICATE",
+            func.date(Alert.created_at) == bugun
+        ).all()
+
+        duplicate_listesi = "\n".join([
+            f"  • {a.mesaj}"
+            for a in bugun_duplicateler
+        ]) if bugun_duplicateler else "  Bugün mükerrer fiş yok"
 
         return f"""
 === PROFAIX SİSTEM VERİLERİ ===
@@ -150,6 +141,9 @@ SON 10 FATURA:
 
 SON FATURA:
 - {son_fatura_bilgi}
+
+BUGÜN TESPİT EDİLEN MÜKERRER FİŞLER:
+{duplicate_listesi}
 """
     except Exception as e:
         logger.error(f"DB context hatası: {e}")
@@ -157,43 +151,22 @@ SON FATURA:
 
 
 def soru_cevapla(mesaj: str, db, gonderen: str = "") -> str:
-    """
-    Kullanıcının mesajını işler ve cevap döndürür.
-    Session bilgileri DB'de tutulur — restart'ta kaybolmaz.
-    """
-
-    # ── Session yükle ────────────────────────────────────────────────────
     session = _session_yukle(db, gonderen)
 
-    # ── İlk kez yazıyor → isim sor ──────────────────────────────────────
     if session is None:
         _session_kaydet(db, gonderen, isim=None, gecmis=[])
         return "Merhaba! Ben Profaix asistanıyım 🤖\n\nSize nasıl hitap etmemi istersiniz?"
 
-    # ── İsim henüz kaydedilmemiş ─────────────────────────────────────────
     if session.isim is None:
         if _isim_mi(mesaj):
-            # Geçerli isim — kaydet
             isim = mesaj.strip()
             isim = isim.lower().replace("ben ", "").replace(" ben", "").replace("benim", "").strip().title()
             _session_kaydet(db, gonderen, isim=isim, gecmis=[])
-            return (
-                f"Merhaba {isim}! 👋\n\n"
-                f"Profaix sistemine hoş geldiniz. Size nasıl yardımcı olabilirim?\n\n"
-                f"Sorabilecekleriniz:\n"
-                f"• Bugün kaç ton geldi?\n"
-                f"• Hangi plakalar geldi?\n"
-                f"• Plaka bazlı ton dökümü\n"
-                f"• Bekleyen irsaliyeler var mı?\n"
-                f"• Son fatura / tüm faturalar\n"
-                f"• Bugün toplam kaç fatura kesildi?"
-            )
+            return f"Merhaba {isim}! 👋\n\nProfaix sistemine hoş geldiniz. Size nasıl yardımcı olabilirim?"
         else:
-            # Soru gibi görünüyor — isim sormadan direkt cevapla, ismi "Kullanıcı" yap
             _session_kaydet(db, gonderen, isim="Kullanıcı", gecmis=[])
             session = _session_yukle(db, gonderen)
 
-    # ── Normal akış ──────────────────────────────────────────────────────
     isim = session.isim or "Kullanıcı"
     gecmis = json.loads(session.gecmis) if session.gecmis else []
     db_context = db_context_hazirla(db)
@@ -203,18 +176,17 @@ def soru_cevapla(mesaj: str, db, gonderen: str = "") -> str:
 Kullanıcının adı: {isim}
 
 KİMLİĞİN:
-- Hurda sektörünü iyi bilirsin: kantar fişi, irsaliye, e-fatura, Paraşüt, fabrika onayı süreçleri sana yabancı değil
+- Hurda sektörünü iyi bilirsin: kantar fişi, irsaliye, e-fatura, Paraşüt süreçleri sana yabancı değil
 - Sayıları yorumlarsın: plakalar arası karşılaştırma, günlük toplam gibi bağlamsal bilgiler verebilirsin
 - Kullanıcıyla sıcak ama profesyonel konuşursun
 - Önceki mesajları hatırlarsın ve konuşmayı sürdürürsün
 
 DAVRANIŞ KURALLARI:
 - {isim} diye hitap et ama her cümlede tekrarlama
-- Kısa ve net cevap ver — gereksiz "Başka bir şey sorar mısın?" kalıplarını kullanma
-- Bağlamsal soruları ("peki ya dün?", "en çok hangisi?") önceki konuşmadan anlayarak cevapla
+- Kısa ve net cevap ver
+- Bağlamsal soruları önceki konuşmadan anlayarak cevapla
 - Sistemde olmayan bilgiyi uydurma, "bu bilgi sistemde yok" de
-- Emoji kullan ama abartma — her cümlede emoji olmasın
-- Fatura kesmek için birim fiyat bilgisi gerekir, bu bilgi sistemde yoksa belirt
+- Emoji kullan ama abartma
 
 GÜNCEL SİSTEM VERİLERİ:
 {db_context}"""
@@ -236,8 +208,6 @@ GÜNCEL SİSTEM VERİLERİ:
 
         cevap = response.content[0].text.strip()
         gecmis.append({"role": "assistant", "content": cevap})
-
-        # Session'ı DB'ye kaydet
         _session_kaydet(db, gonderen, isim=isim, gecmis=gecmis)
 
         logger.info(f"🤖 LLM cevap ({isim}): {cevap[:60]}...")
