@@ -65,6 +65,7 @@ class WeighTicket(Base):
     id               = Column(Integer, primary_key=True, autoincrement=True)
     foto_path        = Column(String(500), nullable=True)
     plaka            = Column(String(20), nullable=True, index=True)
+    fis_no           = Column(String(50), nullable=True, index=True)
     agirlik_kg       = Column(Integer, nullable=True)
     malzeme          = Column(String(100), nullable=True)
     fis_tarihi       = Column(DateTime, nullable=True)

@@ -1,7 +1,8 @@
-# plaka_kontrol.py — Plaka Kontrol Sistemi
+# plaka_kontrol.py — Fiş ve Plaka Kontrol Sistemi
 #
 # SORUMLULUK:
-# Gelen plakanın daha önce görülüp görülmediğini kontrol eder.
+# 1. Fiş no'ya göre duplicate kontrolü yapar (aynı fiş iki kez işlenmez)
+# 2. Yeni plaka tespiti yapar — muhasebeciye bildirim gönderir
 # 3 sonuç döndürür: YENİ, NORMAL, DUPLICATE
 
 from datetime import datetime, date
@@ -18,7 +19,6 @@ class PlakaSonuc(Enum):
 
 
 def uyari_olustur(tur: str, mesaj: str, ticket_id: int, db) -> Alert:
-    # Alerts tablosuna uyarı yazar — WP gelince buradan okunup gönderilecek
     alert = Alert(
         tur=tur,
         mesaj=mesaj,
@@ -32,16 +32,14 @@ def uyari_olustur(tur: str, mesaj: str, ticket_id: int, db) -> Alert:
     return alert
 
 
-def plaka_kontrol_et(plaka: str, ticket_id: int, db) -> PlakaSonuc:
+def plaka_kontrol_et(plaka: str, ticket_id: int, db, fis_no: str = None) -> PlakaSonuc:
     """
-    Plakanın durumunu kontrol eder ve gerekli işlemleri yapar.
+    Fiş no'ya göre duplicate kontrolü yapar, plaka yeniyse bildirir.
 
     ADIMLAR:
-    1. vehicles tablosunda plaka var mı? → Yeni mi değil mi?
-    2. Yeni ise → vehicles'a ekle + uyarı oluştur + muhasebeciye bildir
-    3. Değil ise → bugün daha önce işlem gördü mü?
-    4. Duplicate ise → uyarı oluştur + muhasebeciye bildir
-    5. Sonucu döndür
+    1. Fiş no varsa → daha önce işlenmiş mi kontrol et (DUPLICATE)
+    2. Plaka yeniyse → vehicles'a ekle + muhasebeciye bildir
+    3. Normal akış
     """
 
     if not plaka:
@@ -50,12 +48,48 @@ def plaka_kontrol_et(plaka: str, ticket_id: int, db) -> PlakaSonuc:
 
     plaka = plaka.upper().strip()
 
-    # ── ADIM 1: Bu plaka daha önce görülmüş mü? ─────────────────────────
+    # ── ADIM 1: FİŞ NO DUPLICATE KONTROLÜ ──────────────────────────────
+    # Fiş no her fişe özgündür — aynı fiş no tekrar gelirse duplicate
+    if fis_no:
+        fis_no = str(fis_no).strip()
+        mevcut_fis = db.query(WeighTicket).filter(
+            WeighTicket.fis_no == fis_no,
+            WeighTicket.id != ticket_id  # Kendisini sayma
+        ).first()
+
+        if mevcut_fis:
+            logger.warning(f"⚠️ Duplicate fiş no: {fis_no} (önceki ticket_id={mevcut_fis.id})")
+
+            uyari_olustur(
+                tur="DUPLICATE",
+                mesaj=f"Aynı fiş numarası tekrar geldi: {fis_no} (önceki işlem ID: {mevcut_fis.id})",
+                ticket_id=ticket_id,
+                db=db
+            )
+
+            muhasebeciye_bildir(
+                f"⚠️ Duplicate fiş tespit edildi!\n"
+                f"📋 Fiş No: {fis_no}\n"
+                f"🚗 Plaka: {plaka}\n"
+                f"Bu fiş daha önce işlendi!\n"
+                f"Önceki ticket ID: {mevcut_fis.id}\n"
+                f"Yeni ticket ID: {ticket_id}"
+            )
+
+            ticket = db.query(WeighTicket).filter(WeighTicket.id == ticket_id).first()
+            if ticket:
+                ticket.status = TicketStatus.PLAKA_KONTROL_BEKLENIYOR
+                db.commit()
+
+            return PlakaSonuc.DUPLICATE
+    else:
+        logger.warning(f"Fiş no okunamadı, plaka bazlı kontrol yapılıyor: {plaka}")
+
+    # ── ADIM 2: YENİ PLAKA KONTROLÜ ─────────────────────────────────────
     mevcut_arac = db.query(Vehicle).filter(
         Vehicle.plaka == plaka
     ).first()
 
-    # ── ADIM 2: YENİ PLAKA ──────────────────────────────────────────────
     if not mevcut_arac:
         logger.info(f"🆕 Yeni plaka tespit edildi: {plaka}")
 
@@ -71,48 +105,10 @@ def plaka_kontrol_et(plaka: str, ticket_id: int, db) -> PlakaSonuc:
             db=db
         )
 
-        # Muhasebeciye WP bildirimi gönder
         muhasebeciye_bildir(f"🆕 Yeni araç sisteme eklendi: {plaka}\nTicket ID: {ticket_id}")
 
         return PlakaSonuc.YENI
 
-    # ── ADIM 3: BUGÜN DAHA ÖNCE GELDİ Mİ? ──────────────────────────────
-    bugun_baslangic = datetime.combine(date.today(), datetime.min.time())
-
-    bugunki_islem = db.query(WeighTicket).filter(
-        WeighTicket.plaka == plaka,
-        WeighTicket.created_at >= bugun_baslangic,
-        WeighTicket.id != ticket_id  # Kendisini sayma!
-    ).first()
-
-    # ── ADIM 4: DUPLICATE ───────────────────────────────────────────────
-    if bugunki_islem:
-        logger.warning(f"⚠️ Duplicate tespit edildi: {plaka} bugün daha önce gelmiş (ticket_id={bugunki_islem.id})")
-
-        uyari_olustur(
-            tur="DUPLICATE",
-            mesaj=f"Bu araç bugün daha önce geldi: {plaka} (önceki işlem ID: {bugunki_islem.id})",
-            ticket_id=ticket_id,
-            db=db
-        )
-
-        # Muhasebeciye WP bildirimi gönder
-        muhasebeciye_bildir(
-            f"⚠️ Duplicate fiş tespit edildi!\n"
-            f"🚗 Plaka: {plaka}\n"
-            f"Bu araç bugün daha önce geldi.\n"
-            f"Önceki işlem ID: {bugunki_islem.id}\n"
-            f"Yeni ticket ID: {ticket_id}"
-        )
-
-        # Status güncelle — muhasebeci onayı bekleniyor
-        ticket = db.query(WeighTicket).filter(WeighTicket.id == ticket_id).first()
-        if ticket:
-            ticket.status = TicketStatus.PLAKA_KONTROL_BEKLENIYOR
-            db.commit()
-
-        return PlakaSonuc.DUPLICATE
-
-    # ── ADIM 5: NORMAL AKIŞ ─────────────────────────────────────────────
-    logger.info(f"✅ Plaka kontrolü geçti: {plaka} — normal akış")
+    # ── ADIM 3: NORMAL AKIŞ ─────────────────────────────────────────────
+    logger.info(f"✅ Fiş kontrolü geçti: plaka={plaka} fis_no={fis_no} — normal akış")
     return PlakaSonuc.NORMAL

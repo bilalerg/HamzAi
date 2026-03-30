@@ -140,7 +140,7 @@ def fis_isle(foto_path: str, gonderen: str):
         ticket = fis_db_kaydet(sonuc, foto_path, db)
         logger.info(f"Fiş kaydedildi: ticket_id={ticket.id}")
 
-        plaka_sonuc = plaka_kontrol_et(sonuc.plaka, ticket.id, db)
+        plaka_sonuc = plaka_kontrol_et(sonuc.plaka, ticket.id, db, fis_no=sonuc.fis_no)
 
         if plaka_sonuc == PlakaSonuc.DUPLICATE:
             tirciya_bildir(gonderen, f"⚠️ Bu araç bugün daha önce geldi: {sonuc.plaka}")
