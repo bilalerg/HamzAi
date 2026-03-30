@@ -1,32 +1,34 @@
-# llm_handler.py — Profaix WhatsApp Chatbot
+# llm_handler.py — Profaix WhatsApp & Web Chatbot
 #
 # SORUMLULUK:
 # 1. Kullanıcıdan isim alır (ilk mesajda)
-# 2. DB'den güncel veri çeker (plaka bazlı ton, fatura listesi, bekleyenler)
-# 3. Claude'a soru + DB context gönderir
-# 4. Cevabı WhatsApp'a iletir
+# 2. Konuşma geçmişini bellekte tutar — Claude önceki soruları hatırlar
+# 3. DB'den güncel veri çeker ve Claude'a context olarak verir
+# 4. Cevabı döndürür
 
 import anthropic
 from datetime import date
 from app.core.config import ANTHROPIC_API_KEY
 from app.core.logger import logger
 
-# Kullanıcı numarası → isim eşleşmesi bellekte tutulur
+# Kullanıcı numarası → isim
 kullanici_isimleri = {}
+
+# Kullanıcı numarası → konuşma geçmişi (messages listesi)
+# Her eleman: {"role": "user"/"assistant", "content": "..."}
+konusma_gecmisleri = {}
+
+# Bellekte tutulacak max mesaj sayısı (çift olmalı: user+assistant)
+MAX_GECMIS = 20
 
 
 def db_context_hazirla(db) -> str:
-    """
-    DB'den güncel veriyi çekip Claude'a context olarak verir.
-    Plaka bazlı ton dökümü, fatura listesi, bekleyenler dahil.
-    """
     from app.core.database import WeighTicket, Waybill, Invoice, TicketStatus
     from sqlalchemy import func
 
     bugun = date.today()
 
     try:
-        # ── Bugünkü fişler ────────────────────────────────────────────
         bugunun_fisleri = db.query(WeighTicket).filter(
             func.date(WeighTicket.created_at) == bugun
         ).all()
@@ -35,7 +37,6 @@ def db_context_hazirla(db) -> str:
         bugun_toplam_ton = bugun_toplam_kg / 1000
         bugun_arac_sayisi = len(bugunun_fisleri)
 
-        # Plaka bazlı ton dökümü
         plaka_dokumu = {}
         for t in bugunun_fisleri:
             if t.plaka:
@@ -46,7 +47,6 @@ def db_context_hazirla(db) -> str:
             for plaka, kg in plaka_dokumu.items()
         ]) if plaka_dokumu else "  Henüz araç gelmedi"
 
-        # ── Bekleyen irsaliyeler ──────────────────────────────────────
         bekleyen_waybills = db.query(Waybill).filter(
             Waybill.status == TicketStatus.FABRIKA_BEKLENIYOR
         ).all()
@@ -56,7 +56,6 @@ def db_context_hazirla(db) -> str:
             for w in bekleyen_waybills
         ]) if bekleyen_waybills else "  Bekleyen irsaliye yok"
 
-        # ── Tüm faturalar ─────────────────────────────────────────────
         tum_faturalar = db.query(Invoice).order_by(
             Invoice.created_at.desc()
         ).limit(10).all()
@@ -66,19 +65,14 @@ def db_context_hazirla(db) -> str:
             for f in tum_faturalar
         ]) if tum_faturalar else "  Henüz fatura yok"
 
-        # ── Bugünkü faturalar ─────────────────────────────────────────
         bugun_faturalar = db.query(Invoice).filter(
             func.date(Invoice.created_at) == bugun
         ).all()
 
-        bugun_fatura_sayisi = len(bugun_faturalar)
-
-        # ── Tamamlanan işlemler ───────────────────────────────────────
         tamamlananlar = db.query(WeighTicket).filter(
             WeighTicket.status == TicketStatus.TAMAMLANDI
         ).count()
 
-        # ── Son fatura ────────────────────────────────────────────────
         son_fatura = tum_faturalar[0] if tum_faturalar else None
         son_fatura_bilgi = "Henüz fatura yok"
         if son_fatura:
@@ -91,13 +85,13 @@ Tarih: {bugun.strftime('%d.%m.%Y')}
 BUGÜNKÜ GENEL DURUM:
 - Toplam araç sayısı: {bugun_arac_sayisi}
 - Toplam ağırlık: {bugun_toplam_ton:.2f} ton ({bugun_toplam_kg:,} kg)
-- Bugün kesilen fatura sayısı: {bugun_fatura_sayisi}
+- Bugün kesilen fatura sayısı: {len(bugun_faturalar)}
 - Toplam tamamlanan işlem: {tamamlananlar}
 
 PLAKA BAZLI TON DÖKÜMÜ (BUGÜN):
 {plaka_listesi}
 
-FABRIKA ONAYI BEKLEYEN İRSALİYELER:
+FABRİKA ONAYI BEKLEYEN İRSALİYELER:
 {bekleyen_listesi}
 
 SON 10 FATURA:
@@ -115,19 +109,21 @@ SON FATURA:
 
 def soru_cevapla(mesaj: str, db, gonderen: str = "") -> str:
     """
-    Kullanıcının mesajını Claude'a gönderir, cevap döndürür.
+    Kullanıcının mesajını işler ve cevap döndürür.
 
     AKIŞ:
-    1. Kullanıcı ilk kez yazıyorsa → isim sor
-    2. İsim henüz verilmemişse → ismi kaydet
-    3. İsim varsa → DB context + soru → Claude → cevap
+    1. İlk mesaj → isim sor
+    2. İsim henüz verilmemiş → ismi kaydet, hoş geldin mesajı
+    3. İsim var → konuşma geçmişine ekle → DB context + geçmiş → Claude → cevap
     """
 
-    # ── ADIM 1: İsim kontrolü ────────────────────────────────────────────
+    # ── ADIM 1: İlk kez yazıyor → isim sor ─────────────────────────────
     if gonderen not in kullanici_isimleri:
         kullanici_isimleri[gonderen] = None
-        return "Merhaba! Ben Profaix asistanıyım 🤖\n\nSize nasıl hitap etmemi istersiniz? (İsminizi yazabilirsiniz)"
+        konusma_gecmisleri[gonderen] = []
+        return "Merhaba! Ben Profaix asistanıyım 🤖\n\nSize nasıl hitap etmemi istersiniz?"
 
+    # ── ADIM 2: İsim henüz kaydedilmemiş → kaydet ───────────────────────
     if kullanici_isimleri[gonderen] is None:
         isim = mesaj.strip()
         isim = isim.lower().replace("ben ", "").replace(" ben", "").replace("benim", "").strip().title()
@@ -144,47 +140,66 @@ def soru_cevapla(mesaj: str, db, gonderen: str = "") -> str:
             f"• Bugün toplam kaç fatura kesildi?"
         )
 
-    # ── ADIM 2: DB context hazırla ───────────────────────────────────────
+    # ── ADIM 3: Normal akış ──────────────────────────────────────────────
     isim = kullanici_isimleri[gonderen]
     db_context = db_context_hazirla(db)
 
-    # ── ADIM 3: Claude'a gönder ──────────────────────────────────────────
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    # Sistem promptu — zengin kimlik ve bağlam
+    sistem_promptu = f"""Sen Profaix'in akıllı muhasebe asistanısın. Hurda metal işletmesi için kantar takip ve muhasebe otomasyon sisteminde çalışıyorsun.
 
-    sistem_promptu = f"""Sen Profaix'in WhatsApp asistanısın. Hurda işletmesi için kantar takip sistemidir.
 Kullanıcının adı: {isim}
 
-Görevin:
-- Kullanıcının sorularını Türkçe, kısa ve net cevapla
-- Aşağıdaki sistem verisini kullanarak cevap ver
-- Bilmediğin bir şeyi söyleme, "sistemde bu bilgi yok" de
-- WhatsApp formatında yaz (kısa, emoji kullan)
-- {isim} diye hitap et (Bey/Hanım ekleme, sadece isim)
-- Liste istenirse madde madde göster
-- Detay istenirse detaylı, özet istenirse kısa cevap ver
+KİMLİĞİN:
+- Hurda sektörünü iyi bilirsin: kantar fişi, irsaliye, e-fatura, Paraşüt, fabrika onayı süreçleri sana yabancı değil
+- Sayıları anlıklı yorumlarsın: "21 ton gelmiş, dünden %15 fazla" gibi bağlamsal yorumlar yapabilirsin
+- Kullanıcıyla sıcak ama profesyonel konuşursun
+- Önceki mesajları hatırlarsın ve konuşmayı sürdürürsün
 
-{db_context}
+DAVRANIŞ KURALLARI:
+- {isim} diye hitap et
+- WhatsApp/web formatında yaz: kısa paragraflar, gerektiğinde emoji
+- Eğer kullanıcı "peki ya dün?" veya "en çok hangisi?" gibi bağlamsal soru sorarsa, önceki konuşmadan anlayarak cevapla
+- Sistemde olmayan bilgiyi uydurma, "bu bilgi sistemde yok" de
+- Sayısal soruları net ve hızlı cevapla, detay istenince detaylandır
+- Fatura kesmek için birim fiyat bilgisi gerekir, bu bilgi sistemde yoksa belirt
+- Eğer kullanıcı teşekkür ederse kısa ve samimi karşılık ver
+- Eğer selam/merhaba yazarsa sıcak karşıla ve ne sormak istediğini sor
 
-Önemli kurallar:
-- Fatura kesmek için birim fiyat bilgisi lazım
-- Sadece sistemdeki verilerle cevap ver
-- Paraşüt ID ve Fatura No aynı şey — ikisini de gösterebilirsin
-"""
+GÜNCEL SİSTEM VERİLERİ:
+{db_context}"""
+
+    # Konuşma geçmişine kullanıcı mesajını ekle
+    gecmis = konusma_gecmisleri[gonderen]
+    gecmis.append({"role": "user", "content": mesaj})
+
+    # Geçmiş çok uzadıysa en eski mesajları at (ilk 2'yi koru: bağlamı kaybetme)
+    # MAX_GECMIS aşıldıysa en eski user+assistant çiftini sil
+    if len(gecmis) > MAX_GECMIS:
+        gecmis = gecmis[-MAX_GECMIS:]
+        konusma_gecmisleri[gonderen] = gecmis
+
+    # ── Claude'a gönder ──────────────────────────────────────────────────
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
     try:
         response = client.messages.create(
             model="claude-sonnet-4-5",
-            max_tokens=500,
+            max_tokens=600,
             system=sistem_promptu,
-            messages=[
-                {"role": "user", "content": mesaj}
-            ]
+            messages=gecmis  # Tüm konuşma geçmişi gönderiliyor
         )
 
         cevap = response.content[0].text.strip()
-        logger.info(f"🤖 LLM cevap: {cevap[:50]}...")
+
+        # Asistanın cevabını da geçmişe ekle — bir sonraki turda Claude hatırlasın
+        gecmis.append({"role": "assistant", "content": cevap})
+
+        logger.info(f"🤖 LLM cevap ({isim}): {cevap[:60]}...")
         return cevap
 
     except Exception as e:
         logger.error(f"Claude API hatası: {e}")
+        # Hata durumunda son eklenen user mesajını geçmişten çıkar
+        if gecmis and gecmis[-1]["role"] == "user":
+            gecmis.pop()
         return "❌ Şu an cevap veremiyorum, lütfen tekrar deneyin."
