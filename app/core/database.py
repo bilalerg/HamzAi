@@ -66,7 +66,9 @@ class WeighTicket(Base):
     foto_path        = Column(String(500), nullable=True)
     plaka            = Column(String(20), nullable=True, index=True)
     fis_no           = Column(String(50), nullable=True, index=True)
-    agirlik_kg       = Column(Integer, nullable=True)
+    agirlik_kg       = Column(Integer, nullable=True)  # Net ağırlık (fire düşülmüş)
+    net_tartim_kg    = Column(Integer, nullable=True)  # Ham net tartım
+    fire_kg          = Column(Integer, default=0, nullable=True)
     malzeme          = Column(String(100), nullable=True)
     fis_tarihi       = Column(DateTime, nullable=True)
     ocr_ham_cikti    = Column(Text, nullable=True)

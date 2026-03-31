@@ -74,7 +74,9 @@ def db_context_hazirla(db) -> str:
         # Fiş tarihi bazlı araç listesi
         fis_listesi = "\n".join([
             f"  • {t.fis_tarihi.strftime('%d.%m.%Y') if t.fis_tarihi else t.created_at.strftime('%d.%m.%Y')} — "
-            f"{t.plaka}: {(t.agirlik_kg or 0)/1000:.2f} ton ({t.agirlik_kg:,} kg)"
+            f"{t.plaka}: net {(t.agirlik_kg or 0)/1000:.2f} ton"
+            + (f" | fire: {t.fire_kg:,} kg" if t.fire_kg else "")
+            + (f" | net tartım: {t.net_tartim_kg:,} kg" if t.net_tartim_kg else "")
             for t in tum_fisler
         ]) if tum_fisler else "  Henüz araç gelmedi"
 

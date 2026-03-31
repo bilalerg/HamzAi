@@ -161,6 +161,8 @@ def fis_db_kaydet(fis: FisVerisi, foto_path: str, db) -> object:
         plaka=fis.plaka,
         fis_no=fis.fis_no,
         agirlik_kg=fis.net_agirlik_kg,   # Fire düşülmüş net ağırlık
+        net_tartim_kg=fis.net_tartim_kg,  # Ham net tartım
+        fire_kg=fis.fire_kg or 0,         # Fire miktarı
         fis_tarihi=fis_tarihi,
         malzeme="hurda",
         ocr_ham_cikti=fis.claude_ham_cikti,
