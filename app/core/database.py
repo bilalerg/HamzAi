@@ -119,6 +119,7 @@ class Invoice(Base):
     id               = Column(Integer, primary_key=True, autoincrement=True)
     fatura_no        = Column(String(50), nullable=True, unique=True)
     tutar            = Column(BigInteger, nullable=True)
+    birim_fiyat      = Column(Integer, nullable=True)
     parasut_id       = Column(String(100), nullable=True)
     parasut_response = Column(Text, nullable=True)
     status           = Column(Enum(TicketStatus), default=TicketStatus.FATURA_KESILIYOR)

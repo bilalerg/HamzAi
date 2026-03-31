@@ -104,6 +104,7 @@ def fatura_kes(waybill_id: int, birim_fiyat: float = 0) -> dict:
             fatura_no=str(fatura_no),
             parasut_id=str(parasut_id),
             tutar=int(toplam_tutar),
+            birim_fiyat=int(birim_fiyat),
             parasut_response=str(sonuc),
             status=TicketStatus.TAMAMLANDI,
             waybill_id=waybill_id

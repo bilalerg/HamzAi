@@ -98,7 +98,9 @@ def db_context_hazirla(db) -> str:
         ).limit(10).all()
 
         fatura_listesi = "\n".join([
-            f"  • Fatura No: {f.fatura_no} | Tutar: {f.tutar:,} TL | Tarih: {f.created_at.strftime('%d.%m.%Y') if f.created_at else '-'}"
+            f"  • Fatura No: {f.fatura_no} | Tutar: {f.tutar:,} TL"
+            + (f" | Birim: {f.birim_fiyat:,} TL/kg" if f.birim_fiyat else "")
+            + f" | Tarih: {f.created_at.strftime('%d.%m.%Y') if f.created_at else '-'}"
             for f in tum_faturalar
         ]) if tum_faturalar else "  Henüz fatura yok"
 
@@ -113,7 +115,7 @@ def db_context_hazirla(db) -> str:
         son_fatura = tum_faturalar[0] if tum_faturalar else None
         son_fatura_bilgi = "Henüz fatura yok"
         if son_fatura:
-            son_fatura_bilgi = f"Fatura No: {son_fatura.fatura_no} | Tutar: {son_fatura.tutar:,} TL"
+            son_fatura_bilgi = f"Fatura No: {son_fatura.fatura_no} | Tutar: {son_fatura.tutar:,} TL" + (f" | Birim: {son_fatura.birim_fiyat:,} TL/kg" if son_fatura.birim_fiyat else "")
 
         bugun_duplicateler = db.query(Alert).filter(
             Alert.tur == "DUPLICATE",
