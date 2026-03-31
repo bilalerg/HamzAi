@@ -56,27 +56,31 @@ def _session_kaydet(db, session_id: str, isim: str, gecmis: list):
 def db_context_hazirla(db) -> str:
     from app.core.database import WeighTicket, Waybill, Invoice, Alert, TicketStatus
     from sqlalchemy import func
+    from datetime import date
 
     bugun = date.today()
 
     try:
-        bugunun_fisleri = db.query(WeighTicket).filter(
-            func.date(WeighTicket.created_at) == bugun
-        ).all()
+        # Tüm fişler — tarih filtresi yok, fiş tarihi ile birlikte gösterilecek
+        tum_fisler = db.query(WeighTicket).order_by(
+            WeighTicket.fis_tarihi.desc(),
+            WeighTicket.created_at.desc()
+        ).limit(50).all()
 
-        bugun_toplam_kg = sum(t.agirlik_kg or 0 for t in bugunun_fisleri)
-        bugun_toplam_ton = bugun_toplam_kg / 1000
-        bugun_arac_sayisi = len(bugunun_fisleri)
+        toplam_kg = sum(t.agirlik_kg or 0 for t in tum_fisler)
+        toplam_ton = toplam_kg / 1000
+        arac_sayisi = len(tum_fisler)
 
-        plaka_dokumu = {}
-        for t in bugunun_fisleri:
-            if t.plaka:
-                plaka_dokumu[t.plaka] = plaka_dokumu.get(t.plaka, 0) + (t.agirlik_kg or 0)
+        # Fiş tarihi bazlı araç listesi
+        fis_listesi = "\n".join([
+            f"  • {t.fis_tarihi.strftime('%d.%m.%Y') if t.fis_tarihi else t.created_at.strftime('%d.%m.%Y')} — "
+            f"{t.plaka}: {(t.agirlik_kg or 0)/1000:.2f} ton ({t.agirlik_kg:,} kg)"
+            for t in tum_fisler
+        ]) if tum_fisler else "  Henüz araç gelmedi"
 
-        plaka_listesi = "\n".join([
-            f"  • {plaka}: {kg/1000:.2f} ton ({kg:,} kg)"
-            for plaka, kg in plaka_dokumu.items()
-        ]) if plaka_dokumu else "  Henüz araç gelmedi"
+        # Bugün sisteme giren fişler (created_at bugün)
+        bugun_eklenen = [t for t in tum_fisler if t.created_at and t.created_at.date() == bugun]
+        bugun_kg = sum(t.agirlik_kg or 0 for t in bugun_eklenen)
 
         bekleyen_waybills = db.query(Waybill).filter(
             Waybill.status == TicketStatus.FABRIKA_BEKLENIYOR
@@ -109,7 +113,6 @@ def db_context_hazirla(db) -> str:
         if son_fatura:
             son_fatura_bilgi = f"Fatura No: {son_fatura.fatura_no} | Tutar: {son_fatura.tutar:,} TL"
 
-        # Bugünkü duplicate uyarılar
         bugun_duplicateler = db.query(Alert).filter(
             Alert.tur == "DUPLICATE",
             func.date(Alert.created_at) == bugun
@@ -122,16 +125,17 @@ def db_context_hazirla(db) -> str:
 
         return f"""
 === PROFAIX SİSTEM VERİLERİ ===
-Tarih: {bugun.strftime('%d.%m.%Y')}
+Bugün: {bugun.strftime('%d.%m.%Y')}
 
-BUGÜNKÜ GENEL DURUM:
-- Toplam araç sayısı: {bugun_arac_sayisi}
-- Toplam ağırlık: {bugun_toplam_ton:.2f} ton ({bugun_toplam_kg:,} kg)
-- Bugün kesilen fatura sayısı: {len(bugun_faturalar)}
+GENEL DURUM:
+- Toplam araç sayısı (sistemdeki): {arac_sayisi}
+- Toplam ağırlık (sistemdeki): {toplam_ton:.2f} ton ({toplam_kg:,} kg)
+- Bugün sisteme eklenen: {len(bugun_eklenen)} araç / {bugun_kg/1000:.2f} ton
+- Bugün kesilen fatura: {len(bugun_faturalar)}
 - Toplam tamamlanan işlem: {tamamlananlar}
 
-PLAKA BAZLI TON DÖKÜMÜ (BUGÜN):
-{plaka_listesi}
+ARAÇLAR (FİŞ TARİHİ BAZLI):
+{fis_listesi}
 
 FABRİKA ONAYI BEKLEYEN İRSALİYELER:
 {bekleyen_listesi}
@@ -177,15 +181,15 @@ Kullanıcının adı: {isim}
 
 KİMLİĞİN:
 - Hurda sektörünü iyi bilirsin: kantar fişi, irsaliye, e-fatura, Paraşüt süreçleri sana yabancı değil
-- Sayıları yorumlarsın: plakalar arası karşılaştırma, günlük toplam gibi bağlamsal bilgiler verebilirsin
+- Sayıları yorumlarsın ve bağlamsal bilgiler verebilirsin
 - Kullanıcıyla sıcak ama profesyonel konuşursun
-- Önceki mesajları hatırlarsın ve konuşmayı sürdürürsün
+- Önceki mesajları hatırlarsın
 
 DAVRANIŞ KURALLARI:
 - {isim} diye hitap et ama her cümlede tekrarlama
 - Kısa ve net cevap ver
-- Bağlamsal soruları önceki konuşmadan anlayarak cevapla
-- Sistemde olmayan bilgiyi uydurma, "bu bilgi sistemde yok" de
+- "Bugün kaç ton geldi?" sorusunda fişlerin üzerindeki giriş tarihine göre cevap ver
+- Sistemde olmayan bilgiyi uydurma
 - Emoji kullan ama abartma
 
 GÜNCEL SİSTEM VERİLERİ:
