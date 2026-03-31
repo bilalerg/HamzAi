@@ -61,7 +61,6 @@ def db_context_hazirla(db) -> str:
     bugun = date.today()
 
     try:
-        # Tüm fişler — tarih filtresi yok, fiş tarihi ile birlikte gösterilecek
         tum_fisler = db.query(WeighTicket).order_by(
             WeighTicket.fis_tarihi.desc(),
             WeighTicket.created_at.desc()
@@ -71,16 +70,15 @@ def db_context_hazirla(db) -> str:
         toplam_ton = toplam_kg / 1000
         arac_sayisi = len(tum_fisler)
 
-        # Fiş tarihi bazlı araç listesi
+        # Fiş tarihi bazlı araç listesi — fiş no dahil
         fis_listesi = "\n".join([
             f"  • {t.fis_tarihi.strftime('%d.%m.%Y') if t.fis_tarihi else t.created_at.strftime('%d.%m.%Y')} — "
-            f"{t.plaka}: net {(t.agirlik_kg or 0)/1000:.2f} ton"
+            f"{t.plaka} (Fiş No: {t.fis_no or '-'}): net {(t.agirlik_kg or 0)/1000:.2f} ton"
             + (f" | fire: {t.fire_kg:,} kg" if t.fire_kg else "")
             + (f" | net tartım: {t.net_tartim_kg:,} kg" if t.net_tartim_kg else "")
             for t in tum_fisler
         ]) if tum_fisler else "  Henüz araç gelmedi"
 
-        # Bugün sisteme giren fişler (created_at bugün)
         bugun_eklenen = [t for t in tum_fisler if t.created_at and t.created_at.date() == bugun]
         bugun_kg = sum(t.agirlik_kg or 0 for t in bugun_eklenen)
 
