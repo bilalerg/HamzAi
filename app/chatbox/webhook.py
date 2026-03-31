@@ -34,12 +34,32 @@ async def fotografi_indir(media_url: str, account_sid: str, auth_token: str) -> 
 # ── YARDIMCI: METİNDEN BİRİM FİYAT ÇIKAR ────────────────────────────────
 def birim_fiyat_cikar(metin: str) -> float | None:
     """
-    "4500", "4.500", "4500 tl", "4500 lira" gibi formatları parse eder.
-    Geçerli fiyat değilse None döner.
+    Birim fiyat parse eder. Kurallar:
+    - "14850"    → 14850.0  (tam sayı)
+    - "14.85"    → 14.85    (ondalıklı, TL kuruş)
+    - "14,85"    → 14.85    (virgüllü ondalıklı)
+    - "14.850"   → 14850.0  (nokta binlik ayraç — 3 hane sonra)
+    - "14850 tl" → 14850.0
     """
     metin = metin.strip().lower()
     metin = metin.replace("tl", "").replace("lira", "").replace("₺", "").strip()
-    metin = metin.replace(".", "").replace(",", ".")
+
+    # Virgülü noktaya çevir
+    metin = metin.replace(",", ".")
+
+    # Nokta sayısına göre karar ver
+    nokta_sayisi = metin.count(".")
+    if nokta_sayisi == 1:
+        # Tek nokta: ondalık mı binlik mi?
+        parca = metin.split(".")
+        if len(parca[1]) == 3:
+            # "14.850" → binlik ayraç → 14850
+            metin = metin.replace(".", "")
+        # else: "14.85" → ondalıklı, olduğu gibi bırak
+    elif nokta_sayisi > 1:
+        # Birden fazla nokta: binlik ayraç, hepsini kaldır
+        metin = metin.replace(".", "")
+
     try:
         fiyat = float(metin)
         if fiyat > 0:
