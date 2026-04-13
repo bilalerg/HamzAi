@@ -405,6 +405,18 @@ CHAT_HTML = """<!DOCTYPE html>
     imgWrap.className = 'img-bubble';
     const img = document.createElement('img');
     img.src = src;
+    img.style.cursor = 'pointer';
+    img.title = 'Büyütmek için tıkla';
+    img.onclick = () => {
+      const overlay = document.createElement('div');
+      overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);display:flex;align-items:center;justify-content:center;z-index:999;cursor:pointer;';
+      const bigImg = document.createElement('img');
+      bigImg.src = src;
+      bigImg.style.cssText = 'max-width:90%;max-height:90%;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,0.5);';
+      overlay.appendChild(bigImg);
+      overlay.onclick = () => overlay.remove();
+      document.body.appendChild(overlay);
+    };
     imgWrap.appendChild(img);
     wrap.appendChild(meta);
     wrap.appendChild(imgWrap);
