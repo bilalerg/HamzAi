@@ -134,11 +134,12 @@ async def upload_fis(file: UploadFile = File(...), session_id: str = "web_user")
 
         # İrsaliye oluştur
         from app.parasut.irsaliye import irsaliye_olustur
-        waybill = irsaliye_olustur(ticket.id, db)
+        sonuc = irsaliye_olustur(ticket.id)
 
-        if not waybill:
+        if not sonuc.get("basarili"):
             return JSONResponse({"cevap": "❌ İrsaliye oluşturulamadı, tekrar deneyin."})
 
+        waybill_id = sonuc["waybill_id"]
         # Session'a waybill_id kaydet — birim fiyat için
         from app.chatbox.llm_handler import _session_yukle, _session_kaydet
         session = _session_yukle(db, session_id)
@@ -149,7 +150,7 @@ async def upload_fis(file: UploadFile = File(...), session_id: str = "web_user")
             gecmis = json.loads(session.gecmis)
 
         # Bekleyen fiyat bilgisini session'a ekle
-        bekleyen_mesaj = f"[SİSTEM: waybill_id={waybill.id} için birim fiyat bekleniyor]"
+        bekleyen_mesaj = f"[SİSTEM: waybill_id={waybill_id} için birim fiyat bekleniyor]"
         gecmis.append({"role": "assistant", "content": bekleyen_mesaj})
         _session_kaydet(db, session_id, isim, gecmis)
 
@@ -168,7 +169,7 @@ async def upload_fis(file: UploadFile = File(...), session_id: str = "web_user")
             f"💰 Birim fiyatı yazın (TL/kg):\nÖrnek: 14.85 veya 14850"
         )
 
-        return JSONResponse({"cevap": cevap, "bekliyor": "birim_fiyat", "waybill_id": waybill.id})
+        return JSONResponse({"cevap": cevap, "bekliyor": "birim_fiyat", "waybill_id": waybill_id})
 
     except Exception as e:
         logger.error(f"Upload hatası: {e}")
