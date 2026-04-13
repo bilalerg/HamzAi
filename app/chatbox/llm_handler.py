@@ -179,6 +179,8 @@ Kullanıcı: {isim}
 - Fişlerin giriş tarihine göre sorgula
 - Sistemde olmayan bilgiyi uydurma
 - Emoji kullan ama abartma
+- Kullanıcı sol alttaki 📎 butonuyla fiş fotoğrafı yükleyebilir, sistem otomatik OCR yapıp irsaliye ve fatura keser
+
 
 VERİLER:
 {db_context}"""
