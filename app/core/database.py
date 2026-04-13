@@ -11,21 +11,11 @@ import enum
 from app.core.config import DATABASE_URL
 from app.core.logger import logger
 
-# Engine — veritabanına fiziksel bağlantı
-engine = create_engine(
-    DATABASE_URL,
-    pool_pre_ping=True,
-    echo=False
-)
-
-# Session — her işlem için açılan oturum
+engine = create_engine(DATABASE_URL, pool_pre_ping=True, echo=False)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-# Base — tüm modeller buradan türer
 Base = declarative_base()
 
 
-# ── STATUS KODLARI ───────────────────────────────────────────────────────
 class TicketStatus(str, enum.Enum):
     ALINDI                    = "ALINDI"
     OCR_TAMAMLANDI            = "OCR_TAMAMLANDI"
@@ -41,35 +31,29 @@ class TicketStatus(str, enum.Enum):
     HATA                      = "HATA"
 
 
-# ── TABLO 1: VEHICLES ────────────────────────────────────────────────────
 class Vehicle(Base):
     __tablename__ = "vehicles"
-
     id         = Column(Integer, primary_key=True, autoincrement=True)
     plaka      = Column(String(20), unique=True, nullable=False, index=True)
     aktif      = Column(Integer, default=1)
     notlar     = Column(Text, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
-
     tickets = relationship("WeighTicket", back_populates="vehicle")
-
-    def __repr__(self):
-        return f"<Vehicle plaka={self.plaka}>"
+    def __repr__(self): return f"<Vehicle plaka={self.plaka}>"
 
 
-# ── TABLO 2: WEIGH_TICKETS ────────────────────────────────────────────────
 class WeighTicket(Base):
     __tablename__ = "weigh_tickets"
-
     id               = Column(Integer, primary_key=True, autoincrement=True)
     foto_path        = Column(String(500), nullable=True)
     plaka            = Column(String(20), nullable=True, index=True)
     fis_no           = Column(String(50), nullable=True, index=True)
-    agirlik_kg       = Column(Integer, nullable=True)  # Net ağırlık (fire düşülmüş)
-    net_tartim_kg    = Column(Integer, nullable=True)  # Ham net tartım
+    agirlik_kg       = Column(Integer, nullable=True)
+    net_tartim_kg    = Column(Integer, nullable=True)
     fire_kg          = Column(Integer, default=0, nullable=True)
     malzeme          = Column(String(100), nullable=True)
+    malzemeler       = Column(Text, nullable=True)  # JSON: {"BONUS": 7700, "KARMA": 6000}
     fis_tarihi       = Column(DateTime, nullable=True)
     ocr_ham_cikti    = Column(Text, nullable=True)
     tesseract_agirlik = Column(Integer, nullable=True)
@@ -79,18 +63,13 @@ class WeighTicket(Base):
     vehicle_id       = Column(Integer, ForeignKey("vehicles.id"), nullable=True)
     created_at       = Column(DateTime, server_default=func.now())
     updated_at       = Column(DateTime, server_default=func.now(), onupdate=func.now())
-
     vehicle = relationship("Vehicle", back_populates="tickets")
     waybill = relationship("Waybill", back_populates="ticket", uselist=False)
-
-    def __repr__(self):
-        return f"<WeighTicket id={self.id} plaka={self.plaka} status={self.status}>"
+    def __repr__(self): return f"<WeighTicket id={self.id} plaka={self.plaka} status={self.status}>"
 
 
-# ── TABLO 3: WAYBILLS ─────────────────────────────────────────────────────
 class Waybill(Base):
     __tablename__ = "waybills"
-
     id                 = Column(Integer, primary_key=True, autoincrement=True)
     irsaliye_no        = Column(String(50), nullable=True, unique=True)
     ref_kodu           = Column(String(20), nullable=True, unique=True, index=True)
@@ -104,39 +83,30 @@ class Waybill(Base):
     ticket_id          = Column(Integer, ForeignKey("weigh_tickets.id"))
     created_at         = Column(DateTime, server_default=func.now())
     updated_at         = Column(DateTime, server_default=func.now(), onupdate=func.now())
-
     ticket  = relationship("WeighTicket", back_populates="waybill")
     invoice = relationship("Invoice", back_populates="waybill", uselist=False)
-
-    def __repr__(self):
-        return f"<Waybill irsaliye_no={self.irsaliye_no} ref={self.ref_kodu}>"
+    def __repr__(self): return f"<Waybill irsaliye_no={self.irsaliye_no}>"
 
 
-# ── TABLO 4: INVOICES ─────────────────────────────────────────────────────
 class Invoice(Base):
     __tablename__ = "invoices"
-
     id               = Column(Integer, primary_key=True, autoincrement=True)
     fatura_no        = Column(String(50), nullable=True, unique=True)
     tutar            = Column(BigInteger, nullable=True)
     birim_fiyat      = Column(Integer, nullable=True)
+    malzeme_fiyatlari = Column(Text, nullable=True)  # JSON: {"BONUS": 16, "KARMA": 14}
     parasut_id       = Column(String(100), nullable=True)
     parasut_response = Column(Text, nullable=True)
     status           = Column(Enum(TicketStatus), default=TicketStatus.FATURA_KESILIYOR)
     waybill_id       = Column(Integer, ForeignKey("waybills.id"))
     created_at       = Column(DateTime, server_default=func.now())
     updated_at       = Column(DateTime, server_default=func.now(), onupdate=func.now())
-
     waybill = relationship("Waybill", back_populates="invoice")
-
-    def __repr__(self):
-        return f"<Invoice fatura_no={self.fatura_no} tutar={self.tutar}>"
+    def __repr__(self): return f"<Invoice fatura_no={self.fatura_no} tutar={self.tutar}>"
 
 
-# ── TABLO 5: ALERTS ───────────────────────────────────────────────────────
 class Alert(Base):
     __tablename__ = "alerts"
-
     id           = Column(Integer, primary_key=True, autoincrement=True)
     tur          = Column(String(50), nullable=False)
     mesaj        = Column(Text, nullable=False)
@@ -144,15 +114,11 @@ class Alert(Base):
     gonderildi_mi = Column(Integer, default=0)
     cevap        = Column(Text, nullable=True)
     created_at   = Column(DateTime, server_default=func.now())
-
-    def __repr__(self):
-        return f"<Alert tur={self.tur} gonderildi={self.gonderildi_mi}>"
+    def __repr__(self): return f"<Alert tur={self.tur}>"
 
 
-# ── TABLO 6: SYSTEM_LOGS ──────────────────────────────────────────────────
 class SystemLog(Base):
     __tablename__ = "system_logs"
-
     id        = Column(Integer, primary_key=True, autoincrement=True)
     seviye    = Column(String(10), nullable=False)
     modul     = Column(String(50), nullable=True)
@@ -161,44 +127,25 @@ class SystemLog(Base):
     sure_ms   = Column(Integer, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
 
-    def __repr__(self):
-        return f"<SystemLog seviye={self.seviye} modul={self.modul}>"
 
-
-# ── TABLO 7: PROCESSED_MAILS ─────────────────────────────────────────────
-# Restart sonrası eski maillerin tekrar işlenmesini önler.
-# Listener her işlediği mailin ID'sini buraya kaydeder.
-# Sonraki çalışmada bu ID'ler DB'den yüklenir, tekrar işlenmez.
 class ProcessedMail(Base):
     __tablename__ = "processed_mails"
-
     id         = Column(Integer, primary_key=True, autoincrement=True)
     mail_id    = Column(String(200), unique=True, nullable=False, index=True)
     ref_kodu   = Column(String(20), nullable=True)
     created_at = Column(DateTime, server_default=func.now())
 
-    def __repr__(self):
-        return f"<ProcessedMail mail_id={self.mail_id} ref={self.ref_kodu}>"
 
-
-# ── TABLO 8: CHAT_SESSIONS ────────────────────────────────────────────────
-# Web ve WhatsApp chatbot session'larını DB'de tutar.
-# Restart sonrası kullanıcı ismi ve konuşma geçmişi kaybolmaz.
 class ChatSession(Base):
     __tablename__ = "chat_sessions"
-
     id         = Column(Integer, primary_key=True, autoincrement=True)
     session_id = Column(String(100), unique=True, nullable=False, index=True)
     isim       = Column(String(100), nullable=True)
-    gecmis     = Column(Text, nullable=True)  # JSON string olarak saklanır
+    gecmis     = Column(Text, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
-    def __repr__(self):
-        return f"<ChatSession session_id={self.session_id} isim={self.isim}>"
 
-
-# ── VERİTABANI BAŞLATMA ───────────────────────────────────────────────────
 def init_db():
     logger.info("Veritabanı tabloları oluşturuluyor...")
     Base.metadata.create_all(bind=engine)

@@ -3,11 +3,9 @@
 import anthropic
 import base64
 import json
-import re
-from PIL import Image
 from pathlib import Path
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Optional, Dict
 
 from app.core.config import ANTHROPIC_API_KEY
 from app.core.logger import logger
@@ -25,9 +23,8 @@ class FisVerisi:
     firma: Optional[str] = None
     irsaliye_no: Optional[str] = None
     kantar_no: Optional[str] = None
+    malzemeler: Optional[Dict[str, int]] = None  # {"BONUS": 7700, "KARMA": 6000}
 
-    tesseract_agirlik: Optional[int] = None
-    ocr_uyusma: Optional[bool] = None
     claude_ham_cikti: Optional[str] = None
     hata: Optional[str] = None
 
@@ -57,7 +54,14 @@ Fişten aşağıdaki bilgileri çıkar ve SADECE JSON formatında döndür, baş
   "tarih": "GG.AA.YYYY formatında giriş tarihi",
   "firma": "firma adı",
   "irsaliye_no": "irsaliye numarası",
-  "kantar_no": "kantar numarası"
+  "kantar_no": "kantar numarası",
+  "malzemeler": {
+    "DKP": 0,
+    "TOPSİS": 0,
+    "BONUS": 0,
+    "1.GRUP": 0,
+    "KARMA": 0
+  }
 }
 
 Önemli kurallar:
@@ -65,6 +69,10 @@ Fişten aşağıdaki bilgileri çıkar ve SADECE JSON formatında döndür, baş
 - "Fire" satırındaki değeri fire_kg olarak al (yoksa 0 yaz)
 - "Fis No" veya "Yukleme / Bosaltma Fis No" satırındaki numarayı fis_no olarak al
 - Plaka için "Araç Plakası" satırına bak
+- malzemeler: Fişin "Malzeme Tanısı" bölümündeki her malzeme grubunu ve karşısındaki Net değerini oku
+  - Değer 0 ise 0 yaz, yoksa null değil 0 yaz
+  - Fişte olmayan malzeme grubu varsa 0 yaz
+  - Malzeme adını fişte yazan şekilde yaz (büyük harf)
 - Eğer bir bilgi fişte yoksa null yaz"""
 
     response = client.messages.create(
@@ -110,7 +118,12 @@ Fişten aşağıdaki bilgileri çıkar ve SADECE JSON formatında döndür, baş
         if net_agirlik < 0:
             net_agirlik = int(net_tartim)
 
+        # Malzemeleri filtrele — sadece sıfırdan büyük olanlar
+        malzemeler_ham = veri.get("malzemeler") or {}
+        malzemeler = {k: int(v) for k, v in malzemeler_ham.items() if v and int(v) > 0}
+
         logger.info(f"Net Tartım: {net_tartim} kg | Fire: {fire} kg | Net Ağırlık: {net_agirlik} kg")
+        logger.info(f"Malzemeler: {malzemeler}")
 
         return FisVerisi(
             plaka=veri.get("plaka"),
@@ -122,6 +135,7 @@ Fişten aşağıdaki bilgileri çıkar ve SADECE JSON formatında döndür, baş
             firma=veri.get("firma"),
             irsaliye_no=veri.get("irsaliye_no"),
             kantar_no=veri.get("kantar_no"),
+            malzemeler=malzemeler if malzemeler else None,
             claude_ham_cikti=claude_cevap
         )
 
@@ -161,6 +175,7 @@ def fis_db_kaydet(fis: FisVerisi, foto_path: str, db) -> object:
         fire_kg=fis.fire_kg or 0,
         fis_tarihi=fis_tarihi,
         malzeme="hurda",
+        malzemeler=json.dumps(fis.malzemeler, ensure_ascii=False) if fis.malzemeler else None,
         ocr_ham_cikti=fis.claude_ham_cikti,
         status=TicketStatus.OCR_TAMAMLANDI if not fis.hata else TicketStatus.HATA,
         hata_mesaji=fis.hata
@@ -170,6 +185,6 @@ def fis_db_kaydet(fis: FisVerisi, foto_path: str, db) -> object:
     db.commit()
     db.refresh(ticket)
 
-    logger.info(f"✅ Fiş DB'ye kaydedildi: ticket_id={ticket.id} plaka={ticket.plaka} fis_no={ticket.fis_no} agirlik={ticket.agirlik_kg}kg")
+    logger.info(f"✅ Fiş DB'ye kaydedildi: ticket_id={ticket.id} plaka={ticket.plaka} fis_no={ticket.fis_no} agirlik={ticket.agirlik_kg}kg malzemeler={fis.malzemeler}")
 
     return ticket
