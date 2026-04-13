@@ -7,7 +7,7 @@ from datetime import date
 from app.core.config import ANTHROPIC_API_KEY
 from app.core.logger import logger
 
-MAX_GECMIS = 20
+MAX_GECMIS = 10  # 20'den 10'a düşürüldü
 
 SORU_BELIRTECLERI = [
     "?", "kaç", "var mı", "nedir", "nerede", "nasıl", "ne zaman",
@@ -64,13 +64,12 @@ def db_context_hazirla(db) -> str:
         tum_fisler = db.query(WeighTicket).order_by(
             WeighTicket.fis_tarihi.desc(),
             WeighTicket.created_at.desc()
-        ).limit(50).all()
+        ).limit(20).all()  # 50'den 20'ye düşürüldü
 
         toplam_kg = sum(t.agirlik_kg or 0 for t in tum_fisler)
         toplam_ton = toplam_kg / 1000
         arac_sayisi = len(tum_fisler)
 
-        # Fiş tarihi bazlı araç listesi — fiş no dahil
         fis_listesi = "\n".join([
             f"  • {t.fis_tarihi.strftime('%d.%m.%Y') if t.fis_tarihi else t.created_at.strftime('%d.%m.%Y')} — "
             f"{t.plaka} (Fiş No: {t.fis_no or '-'}): net {(t.agirlik_kg or 0)/1000:.2f} ton"
@@ -130,26 +129,22 @@ def db_context_hazirla(db) -> str:
 Bugün: {bugun.strftime('%d.%m.%Y')}
 
 GENEL DURUM:
-- Toplam araç sayısı (sistemdeki): {arac_sayisi}
-- Toplam ağırlık (sistemdeki): {toplam_ton:.2f} ton ({toplam_kg:,} kg)
-- Bugün sisteme eklenen: {len(bugun_eklenen)} araç / {bugun_kg/1000:.2f} ton
-- Bugün kesilen fatura: {len(bugun_faturalar)}
-- Toplam tamamlanan işlem: {tamamlananlar}
+- Toplam araç: {arac_sayisi} | Toplam: {toplam_ton:.2f} ton
+- Bugün eklenen: {len(bugun_eklenen)} araç / {bugun_kg/1000:.2f} ton
+- Bugün fatura: {len(bugun_faturalar)} | Tamamlanan: {tamamlananlar}
 
-ARAÇLAR (FİŞ TARİHİ BAZLI):
+ARAÇLAR:
 {fis_listesi}
 
-FABRİKA ONAYI BEKLEYEN İRSALİYELER:
+BEKLEYEN İRSALİYELER:
 {bekleyen_listesi}
 
 SON 10 FATURA:
 {fatura_listesi}
 
-SON FATURA:
-- {son_fatura_bilgi}
+SON FATURA: {son_fatura_bilgi}
 
-BUGÜN TESPİT EDİLEN MÜKERRER FİŞLER:
-{duplicate_listesi}
+MÜKERRER FİŞLER: {duplicate_listesi}
 """
     except Exception as e:
         logger.error(f"DB context hatası: {e}")
@@ -177,24 +172,15 @@ def soru_cevapla(mesaj: str, db, gonderen: str = "") -> str:
     gecmis = json.loads(session.gecmis) if session.gecmis else []
     db_context = db_context_hazirla(db)
 
-    sistem_promptu = f"""Sen Profaix'in akıllı muhasebe asistanısın. Hurda metal işletmesi için kantar takip ve muhasebe otomasyon sisteminde çalışıyorsun.
+    sistem_promptu = f"""Sen Profaix'in muhasebe asistanısın. Hurda metal kantar takip sistemi.
 
-Kullanıcının adı: {isim}
-
-KİMLİĞİN:
-- Hurda sektörünü iyi bilirsin: kantar fişi, irsaliye, e-fatura, Paraşüt süreçleri sana yabancı değil
-- Sayıları yorumlarsın ve bağlamsal bilgiler verebilirsin
-- Kullanıcıyla sıcak ama profesyonel konuşursun
-- Önceki mesajları hatırlarsın
-
-DAVRANIŞ KURALLARI:
-- {isim} diye hitap et ama her cümlede tekrarlama
+Kullanıcı: {isim}
 - Kısa ve net cevap ver
-- "Bugün kaç ton geldi?" sorusunda fişlerin üzerindeki giriş tarihine göre cevap ver
+- Fişlerin giriş tarihine göre sorgula
 - Sistemde olmayan bilgiyi uydurma
 - Emoji kullan ama abartma
 
-GÜNCEL SİSTEM VERİLERİ:
+VERİLER:
 {db_context}"""
 
     gecmis.append({"role": "user", "content": mesaj})
@@ -207,7 +193,7 @@ GÜNCEL SİSTEM VERİLERİ:
     try:
         response = client.messages.create(
             model="claude-sonnet-4-5",
-            max_tokens=600,
+            max_tokens=500,
             system=sistem_promptu,
             messages=gecmis
         )

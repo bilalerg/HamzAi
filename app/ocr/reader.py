@@ -17,10 +17,10 @@ from app.core.logger import logger
 class FisVerisi:
     """Kantar fişinden çıkarılan veriler"""
     plaka: Optional[str] = None
-    fis_no: Optional[str] = None        # Fiş numarası — duplicate kontrolü için
-    net_agirlik_kg: Optional[int] = None  # Net Tartım - Fire
-    net_tartim_kg: Optional[int] = None   # Ham net tartım (fire düşülmeden)
-    fire_kg: Optional[int] = None         # Fire miktarı
+    fis_no: Optional[str] = None
+    net_agirlik_kg: Optional[int] = None
+    net_tartim_kg: Optional[int] = None
+    fire_kg: Optional[int] = None
     tarih: Optional[str] = None
     firma: Optional[str] = None
     irsaliye_no: Optional[str] = None
@@ -68,7 +68,7 @@ Fişten aşağıdaki bilgileri çıkar ve SADECE JSON formatında döndür, baş
 - Eğer bir bilgi fişte yoksa null yaz"""
 
     response = client.messages.create(
-        model="claude-opus-4-5",
+        model="claude-sonnet-4-5",
         max_tokens=1024,
         messages=[
             {
@@ -106,10 +106,9 @@ Fişten aşağıdaki bilgileri çıkar ve SADECE JSON formatında döndür, baş
         net_tartim = veri.get("net_tartim_kg") or 0
         fire = veri.get("fire_kg") or 0
 
-        # Gerçek net ağırlık = Net Tartım - Fire
         net_agirlik = int(net_tartim) - int(fire)
         if net_agirlik < 0:
-            net_agirlik = int(net_tartim)  # Fire mantıksızsa net tartımı kullan
+            net_agirlik = int(net_tartim)
 
         logger.info(f"Net Tartım: {net_tartim} kg | Fire: {fire} kg | Net Ağırlık: {net_agirlik} kg")
 
@@ -132,13 +131,10 @@ Fişten aşağıdaki bilgileri çıkar ve SADECE JSON formatında döndür, baş
 
 
 def fis_oku(fotograf_yolu: str) -> FisVerisi:
-    """Ana OCR fonksiyonu — dışarıdan çağrılacak tek nokta."""
     logger.info(f"Fiş okuma başladı: {fotograf_yolu}")
     fis = claude_fis_oku(fotograf_yolu)
-
     if fis.hata:
         logger.error(f"Claude okuma hatası: {fis.hata}")
-
     return fis
 
 
@@ -160,9 +156,9 @@ def fis_db_kaydet(fis: FisVerisi, foto_path: str, db) -> object:
         foto_path=foto_path,
         plaka=fis.plaka,
         fis_no=fis.fis_no,
-        agirlik_kg=fis.net_agirlik_kg,   # Fire düşülmüş net ağırlık
-        net_tartim_kg=fis.net_tartim_kg,  # Ham net tartım
-        fire_kg=fis.fire_kg or 0,         # Fire miktarı
+        agirlik_kg=fis.net_agirlik_kg,
+        net_tartim_kg=fis.net_tartim_kg,
+        fire_kg=fis.fire_kg or 0,
         fis_tarihi=fis_tarihi,
         malzeme="hurda",
         ocr_ham_cikti=fis.claude_ham_cikti,
