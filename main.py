@@ -107,8 +107,9 @@ async def upload_fis(file: UploadFile = File(...), session_id: str = "web_user")
                          f"Mükerrer kayıt tespit edildi, işlem yapılmadı."
             })
 
+        # İrsaliye oluştur — beklet=True ile FABRIKA_BEKLENIYOR statüsünde beklet
         from app.parasut.irsaliye import irsaliye_olustur
-        sonuc = irsaliye_olustur(ticket.id)
+        sonuc = irsaliye_olustur(ticket.id, beklet=True)
 
         if not sonuc.get("basarili"):
             return JSONResponse({"cevap": "❌ İrsaliye oluşturulamadı, tekrar deneyin."})
@@ -119,61 +120,33 @@ async def upload_fis(file: UploadFile = File(...), session_id: str = "web_user")
         if plaka_sonuc == PlakaSonuc.YENI:
             yeni_plaka_uyari = "\n🆕 Bu plaka sisteme ilk kez eklendi."
 
-        # Malzeme listesi — sıfırdan büyük olanlar
         malzemeler = fis.malzemeler or {}
-
-        # Malzeme bilgisini mesaja ekle
         malzeme_ozet = ""
         if malzemeler:
             malzeme_ozet = "\n\n📦 Malzeme Grupları:\n"
             for isim, kg in malzemeler.items():
                 malzeme_ozet += f"  • {isim}: {kg:,} kg ({kg/1000:.2f} ton)\n"
 
-        if malzemeler:
-            # İlk malzeme için fiyat sor
-            malzeme_listesi = list(malzemeler.keys())
-            ilk_malzeme = malzeme_listesi[0]
-            ilk_kg = malzemeler[ilk_malzeme]
+        cevap = (
+            f"✅ Fiş okundu, irsaliye Paraşüt'te oluşturuldu!\n\n"
+            f"🚗 Plaka: {fis.plaka}\n"
+            f"📋 Fiş No: {fis.fis_no or '-'}\n"
+            f"⚖️ Net Ağırlık: {fis.net_agirlik_kg:,} kg ({fis.net_agirlik_kg/1000:.2f} ton)\n"
+            f"🔥 Fire: {fis.fire_kg or 0:,} kg\n"
+            f"📅 Fiş Tarihi: {fis.tarih or '-'}\n"
+            f"🏭 Firma: {fis.firma or '-'}"
+            f"{yeni_plaka_uyari}"
+            f"{malzeme_ozet}\n"
+            f"⏳ İrsaliye onay bekliyor.\n"
+            f"Faturaya geçmek için aşağıdaki butona tıklayın veya 'onayla' yazın."
+        )
 
-            cevap = (
-                f"✅ Fiş başarıyla okundu ve irsaliye oluşturuldu!\n\n"
-                f"🚗 Plaka: {fis.plaka}\n"
-                f"📋 Fiş No: {fis.fis_no or '-'}\n"
-                f"⚖️ Net Ağırlık: {fis.net_agirlik_kg:,} kg ({fis.net_agirlik_kg/1000:.2f} ton)\n"
-                f"🔥 Fire: {fis.fire_kg or 0:,} kg\n"
-                f"📅 Fiş Tarihi: {fis.tarih or '-'}"
-                f"{yeni_plaka_uyari}"
-                f"{malzeme_ozet}\n"
-                f"💰 {ilk_malzeme} fiyatı nedir? ({ilk_kg:,} kg / {ilk_kg/1000:.2f} ton)\n"
-                f"Örnek: 14.85 veya 14850"
-            )
-
-            return JSONResponse({
-                "cevap": cevap,
-                "bekliyor": "malzeme_fiyat",
-                "waybill_id": waybill_id,
-                "malzemeler": malzemeler,
-                "malzeme_listesi": malzeme_listesi,
-                "malzeme_index": 0,
-                "toplanan_fiyatlar": {}
-            })
-        else:
-            # Malzeme yoksa tek birim fiyat sor
-            cevap = (
-                f"✅ Fiş başarıyla okundu ve irsaliye oluşturuldu!\n\n"
-                f"🚗 Plaka: {fis.plaka}\n"
-                f"📋 Fiş No: {fis.fis_no or '-'}\n"
-                f"⚖️ Net Ağırlık: {fis.net_agirlik_kg:,} kg ({fis.net_agirlik_kg/1000:.2f} ton)\n"
-                f"🔥 Fire: {fis.fire_kg or 0:,} kg\n"
-                f"📅 Fiş Tarihi: {fis.tarih or '-'}"
-                f"{yeni_plaka_uyari}\n\n"
-                f"💰 Birim fiyatı yazın (TL/kg):\nÖrnek: 14.85 veya 14850"
-            )
-            return JSONResponse({
-                "cevap": cevap,
-                "bekliyor": "birim_fiyat",
-                "waybill_id": waybill_id
-            })
+        return JSONResponse({
+            "cevap": cevap,
+            "bekliyor": "irsaliye_onay",
+            "waybill_id": waybill_id,
+            "malzemeler": malzemeler,
+        })
 
     except Exception as e:
         logger.error(f"Upload hatası: {e}")
@@ -182,15 +155,51 @@ async def upload_fis(file: UploadFile = File(...), session_id: str = "web_user")
         db.close()
 
 
+@app.post("/api/irsaliye-onayla")
+async def irsaliye_onayla_endpoint(request: Request):
+    """İrsaliyeyi onaylar, malzeme fiyat akışına geçer."""
+    data = await request.json()
+    waybill_id = data.get("waybill_id")
+    malzemeler = data.get("malzemeler", {})
+
+    db = SessionLocal()
+    try:
+        from app.parasut.irsaliye import irsaliye_onayla
+        sonuc = irsaliye_onayla(waybill_id)
+        if not sonuc.get("basarili"):
+            return JSONResponse({"cevap": f"❌ Onay başarısız: {sonuc.get('hata')}"})
+
+        # Malzeme varsa ilk fiyatı sor, yoksa tek birim fiyat sor
+        if malzemeler:
+            malzeme_listesi = list(malzemeler.keys())
+            ilk_malzeme = malzeme_listesi[0]
+            ilk_kg = malzemeler[ilk_malzeme]
+            return JSONResponse({
+                "cevap": f"✅ İrsaliye onaylandı!\n\n"
+                         f"💰 {ilk_malzeme} fiyatı nedir? ({ilk_kg:,} kg / {ilk_kg/1000:.2f} ton)\n"
+                         f"Örnek: 14.85 veya 14850",
+                "bekliyor": "malzeme_fiyat",
+                "waybill_id": waybill_id,
+                "malzemeler": malzemeler,
+                "malzeme_listesi": malzeme_listesi,
+                "malzeme_index": 0,
+                "toplanan_fiyatlar": {}
+            })
+        else:
+            return JSONResponse({
+                "cevap": "✅ İrsaliye onaylandı!\n\n💰 Birim fiyatı yazın (TL/kg):\nÖrnek: 14.85 veya 14850",
+                "bekliyor": "birim_fiyat",
+                "waybill_id": waybill_id
+            })
+    finally:
+        db.close()
+
+
 @app.post("/api/fiyat")
 async def fiyat_gir(request: Request):
-    """Malzeme bazlı veya tek birim fiyat alıp fatura keser."""
     data = await request.json()
     waybill_id = data.get("waybill_id")
     fiyat_str = data.get("fiyat", "").strip()
-    session_id = data.get("session_id", "web_user")
-
-    # Malzeme bazlı fiyatlama için ek alanlar
     malzeme_listesi = data.get("malzeme_listesi", [])
     malzeme_index = data.get("malzeme_index", 0)
     toplanan_fiyatlar = data.get("toplanan_fiyatlar", {})
@@ -206,17 +215,13 @@ async def fiyat_gir(request: Request):
             return JSONResponse({"cevap": "❌ Geçersiz fiyat. Örnek: 14.85 veya 14850"})
 
         if malzeme_listesi:
-            # Malzeme bazlı fiyatlama
             mevcut_malzeme = malzeme_listesi[malzeme_index]
             toplanan_fiyatlar[mevcut_malzeme] = birim_fiyat
-
             sonraki_index = malzeme_index + 1
 
             if sonraki_index < len(malzeme_listesi):
-                # Sonraki malzeme için fiyat sor
                 sonraki_malzeme = malzeme_listesi[sonraki_index]
                 sonraki_kg = malzemeler.get(sonraki_malzeme, 0)
-
                 return JSONResponse({
                     "cevap": f"✅ {mevcut_malzeme}: {birim_fiyat:,} TL/kg kaydedildi.\n\n"
                              f"💰 {sonraki_malzeme} fiyatı nedir? ({sonraki_kg:,} kg / {sonraki_kg/1000:.2f} ton)\n"
@@ -229,7 +234,6 @@ async def fiyat_gir(request: Request):
                     "toplanan_fiyatlar": toplanan_fiyatlar
                 })
             else:
-                # Tüm fiyatlar toplandı — onay özeti göster
                 ozet = "📋 Fiyat Özeti:\n"
                 toplam_tutar = 0
                 for malzeme_adi, fiyat in toplanan_fiyatlar.items():
@@ -237,9 +241,7 @@ async def fiyat_gir(request: Request):
                     tutar = kg * fiyat
                     toplam_tutar += tutar
                     ozet += f"  • {malzeme_adi}: {kg:,} kg × {fiyat:,} TL/kg = {int(tutar):,} TL\n"
-
                 ozet += f"\n💵 TOPLAM: {int(toplam_tutar):,} TL\n\nFatura kesilsin mi? (evet/hayır)"
-
                 return JSONResponse({
                     "cevap": ozet,
                     "bekliyor": "onay",
@@ -249,11 +251,9 @@ async def fiyat_gir(request: Request):
                     "toplam_tutar": toplam_tutar
                 })
         else:
-            # Tek birim fiyat — direkt fatura kes
             sonuc = fatura_kes(waybill_id, birim_fiyat)
             if not sonuc.get("basarili"):
                 return JSONResponse({"cevap": f"❌ Fatura kesilemedi: {sonuc.get('hata')}"})
-
             toplam = sonuc.get("toplam_tutar", 0)
             return JSONResponse({
                 "cevap": f"✅ Fatura kesildi!\n\n"
@@ -272,7 +272,6 @@ async def fiyat_gir(request: Request):
 
 @app.post("/api/onay")
 async def fatura_onayla(request: Request):
-    """Malzeme bazlı fiyat onayı sonrası fatura keser."""
     data = await request.json()
     waybill_id = data.get("waybill_id")
     toplanan_fiyatlar = data.get("toplanan_fiyatlar", {})
@@ -285,13 +284,7 @@ async def fatura_onayla(request: Request):
     db = SessionLocal()
     try:
         from app.parasut.fatura import fatura_kes
-
-        # Toplam tutarı hesapla
-        toplam_tutar = sum(
-            malzemeler.get(m, 0) * f for m, f in toplanan_fiyatlar.items()
-        )
-
-        # Ağırlık ağırlıklı ortalama birim fiyat hesapla
+        toplam_tutar = sum(malzemeler.get(m, 0) * f for m, f in toplanan_fiyatlar.items())
         toplam_kg = sum(malzemeler.get(m, 0) for m in toplanan_fiyatlar)
         ort_fiyat = toplam_tutar / toplam_kg if toplam_kg > 0 else 0
 
@@ -299,7 +292,6 @@ async def fatura_onayla(request: Request):
         if not sonuc.get("basarili"):
             return JSONResponse({"cevap": f"❌ Fatura kesilemedi: {sonuc.get('hata')}"})
 
-        # Malzeme fiyatlarını DB'ye kaydet
         from app.core.database import Invoice
         invoice = db.query(Invoice).filter(Invoice.waybill_id == waybill_id).first()
         if invoice:
@@ -309,12 +301,10 @@ async def fatura_onayla(request: Request):
         ozet = "✅ Fatura kesildi!\n\n"
         for malzeme_adi, fiyat in toplanan_fiyatlar.items():
             kg = malzemeler.get(malzeme_adi, 0)
-            tutar = kg * fiyat
-            ozet += f"  • {malzeme_adi}: {int(tutar):,} TL\n"
+            ozet += f"  • {malzeme_adi}: {int(kg * fiyat):,} TL\n"
         ozet += f"\n💵 Toplam: {int(toplam_tutar):,} TL\n"
         ozet += f"🧾 Fatura No: {sonuc.get('fatura_no', '-')}\n"
         ozet += "Fatura Paraşüt'e kaydedildi."
-
         return JSONResponse({"cevap": ozet})
 
     except Exception as e:
@@ -406,6 +396,8 @@ CHAT_HTML = """<!DOCTYPE html>
   .bubble{padding:12px 16px;font-size:13.5px;line-height:1.75;white-space:pre-wrap;word-break:break-word;font-weight:400;}
   .message.user .bubble{background:var(--user-bg);color:#fff;border-radius:14px 14px 3px 14px;box-shadow:0 2px 10px rgba(45,90,61,0.2);}
   .message.bot .bubble{background:var(--surface);color:var(--text);border-radius:3px 14px 14px 14px;border:1px solid var(--border);box-shadow:var(--shadow);}
+  .onay-btn{margin-top:10px;padding:10px 20px;background:var(--accent);color:#fff;border:none;border-radius:9px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer;width:100%;transition:background 0.15s;}
+  .onay-btn:hover{background:#245030;}
   .img-bubble{background:var(--user-bg);padding:6px;border-radius:14px 14px 3px 14px;box-shadow:0 2px 10px rgba(45,90,61,0.2);display:inline-block;}
   .img-bubble img{max-width:220px;max-height:180px;border-radius:9px;display:block;}
   .typing-wrap{display:flex;flex-direction:column;max-width:68%;align-self:flex-start;animation:pop 0.25s cubic-bezier(0.34,1.56,0.64,1);}
@@ -482,13 +474,7 @@ CHAT_HTML = """<!DOCTYPE html>
   const messagesEl = document.getElementById('messages');
   const inputEl    = document.getElementById('input');
   const sendBtn    = document.getElementById('sendBtn');
-
-  // Fiyat toplama durumu
   let bekleyenDurum = null;
-  // bekleyenDurum = {
-  //   tip: 'birim_fiyat' | 'malzeme_fiyat' | 'onay',
-  //   waybill_id, malzemeler, malzeme_listesi, malzeme_index, toplanan_fiyatlar, toplam_tutar
-  // }
 
   function autoResize(el) {
     el.style.height = 'auto';
@@ -512,7 +498,7 @@ CHAT_HTML = """<!DOCTYPE html>
     return new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
   }
 
-  function addMessage(text, type) {
+  function addMessage(text, type, extraBtn) {
     removeWelcome();
     const wrap = document.createElement('div');
     wrap.className = 'message ' + type;
@@ -522,6 +508,7 @@ CHAT_HTML = """<!DOCTYPE html>
     const bubble = document.createElement('div');
     bubble.className = 'bubble';
     bubble.textContent = text;
+    if (extraBtn) bubble.appendChild(extraBtn);
     wrap.appendChild(meta);
     wrap.appendChild(bubble);
     messagesEl.appendChild(wrap);
@@ -586,6 +573,8 @@ CHAT_HTML = """<!DOCTYPE html>
       inputEl.placeholder = 'Mesajınızı yazın veya fiş fotoğrafı yükleyin…';
     } else if (bekleyenDurum.tip === 'onay') {
       inputEl.placeholder = 'evet veya hayır yazın…';
+    } else if (bekleyenDurum.tip === 'irsaliye_onay') {
+      inputEl.placeholder = 'onayla yazın veya butona tıklayın…';
     } else {
       inputEl.placeholder = 'Fiyat yazın (örn: 14.85 veya 14850)…';
     }
@@ -639,9 +628,22 @@ CHAT_HTML = """<!DOCTYPE html>
       const res = await fetch('/api/upload', { method: 'POST', body: formData });
       const data = await res.json();
       removeTyping();
-      addMessage(data.cevap, 'bot');
 
-      if (data.bekliyor) {
+      if (data.bekliyor === 'irsaliye_onay') {
+        // Onayla butonu ekle
+        const btn = document.createElement('button');
+        btn.className = 'onay-btn';
+        btn.textContent = '✅ İrsaliyeyi Onayla ve Faturaya Geç';
+        btn.onclick = () => irsaliyeOnayla(data.waybill_id, data.malzemeler, btn);
+        addMessage(data.cevap, 'bot', btn);
+        bekleyenDurum = {
+          tip: 'irsaliye_onay',
+          waybill_id: data.waybill_id,
+          malzemeler: data.malzemeler || {}
+        };
+        setPlaceholder();
+      } else if (data.bekliyor) {
+        addMessage(data.cevap, 'bot');
         bekleyenDurum = {
           tip: data.bekliyor,
           waybill_id: data.waybill_id,
@@ -652,8 +654,10 @@ CHAT_HTML = """<!DOCTYPE html>
           toplam_tutar: data.toplam_tutar || 0
         };
         setPlaceholder();
-        inputEl.focus();
+      } else {
+        addMessage(data.cevap, 'bot');
       }
+      inputEl.focus();
     } catch {
       removeTyping();
       addMessage('❌ Yükleme hatası, tekrar deneyin.', 'bot');
@@ -663,8 +667,58 @@ CHAT_HTML = """<!DOCTYPE html>
     }
   }
 
+  async function irsaliyeOnayla(waybillId, malzemeler, btn) {
+    if (btn) btn.disabled = true;
+    showTyping();
+    try {
+      const res = await fetch('/api/irsaliye-onayla', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ waybill_id: waybillId, malzemeler: malzemeler, session_id: SESSION_ID })
+      });
+      const data = await res.json();
+      removeTyping();
+      addMessage(data.cevap, 'bot');
+
+      if (data.bekliyor) {
+        bekleyenDurum = {
+          tip: data.bekliyor,
+          waybill_id: data.waybill_id,
+          malzemeler: data.malzemeler || malzemeler,
+          malzeme_listesi: data.malzeme_listesi || [],
+          malzeme_index: data.malzeme_index || 0,
+          toplanan_fiyatlar: data.toplanan_fiyatlar || {},
+          toplam_tutar: 0
+        };
+        setPlaceholder();
+      } else {
+        bekleyenDurum = null;
+        setPlaceholder();
+      }
+    } catch {
+      removeTyping();
+      addMessage('❌ Onay hatası, tekrar deneyin.', 'bot');
+    }
+    inputEl.focus();
+  }
+
   async function gondGiris(deger) {
     if (!deger || !bekleyenDurum) return;
+
+    // irsaliye_onay durumunda "onayla" yazılırsa butona bastı gibi işle
+    if (bekleyenDurum.tip === 'irsaliye_onay') {
+      if (['onayla', 'evet', 'e', 'ok', 'tamam'].includes(deger.toLowerCase())) {
+        addMessage(deger, 'user');
+        inputEl.value = '';
+        inputEl.style.height = 'auto';
+        await irsaliyeOnayla(bekleyenDurum.waybill_id, bekleyenDurum.malzemeler, null);
+        return;
+      } else {
+        addMessage('ℹ️ İrsaliyeyi onaylamak için "onayla" yazın veya butona tıklayın.', 'bot');
+        inputEl.value = '';
+        return;
+      }
+    }
 
     addMessage(deger, 'user');
     inputEl.value = '';
@@ -676,7 +730,6 @@ CHAT_HTML = """<!DOCTYPE html>
       let res, data;
 
       if (bekleyenDurum.tip === 'onay') {
-        // Onay endpoint'i
         res = await fetch('/api/onay', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -693,9 +746,7 @@ CHAT_HTML = """<!DOCTYPE html>
         addMessage(data.cevap, 'bot');
         bekleyenDurum = null;
         setPlaceholder();
-
       } else {
-        // Fiyat endpoint'i
         res = await fetch('/api/fiyat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
