@@ -53,6 +53,7 @@ class WeighTicket(Base):
     net_tartim_kg    = Column(Integer, nullable=True)
     fire_kg          = Column(Integer, default=0, nullable=True)
     malzeme          = Column(String(100), nullable=True)
+    firma            = Column(String(200), nullable=True)
     malzemeler       = Column(Text, nullable=True)  # JSON: {"BONUS": 7700, "KARMA": 6000}
     fis_tarihi       = Column(DateTime, nullable=True)
     ocr_ham_cikti    = Column(Text, nullable=True)
