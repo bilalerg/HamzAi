@@ -165,9 +165,16 @@ async def irsaliye_onayla_endpoint(request: Request):
     db = SessionLocal()
     try:
         from app.parasut.irsaliye import irsaliye_onayla
+        from app.core.database import Waybill, WeighTicket
         sonuc = irsaliye_onayla(waybill_id)
         if not sonuc.get("basarili"):
             return JSONResponse({"cevap": f"❌ Onay başarısız: {sonuc.get('hata')}"})
+
+        # Plaka bilgisini çek
+        waybill = db.query(Waybill).filter(Waybill.id == waybill_id).first()
+        ticket = db.query(WeighTicket).filter(WeighTicket.id == waybill.ticket_id).first() if waybill else None
+        plaka = ticket.plaka if ticket else "-"
+        agirlik = f"{ticket.agirlik_kg:,} kg" if ticket and ticket.agirlik_kg else "-"
 
         # Malzeme varsa ilk fiyatı sor, yoksa tek birim fiyat sor
         if malzemeler:
@@ -175,7 +182,7 @@ async def irsaliye_onayla_endpoint(request: Request):
             ilk_malzeme = malzeme_listesi[0]
             ilk_kg = malzemeler[ilk_malzeme]
             return JSONResponse({
-                "cevap": f"✅ İrsaliye onaylandı!\n\n"
+                "cevap": f"✅ İrsaliye onaylandı!\n🚗 Plaka: {plaka} | ⚖️ {agirlik}\n\n"
                          f"💰 {ilk_malzeme} fiyatı nedir? ({ilk_kg:,} kg / {ilk_kg/1000:.2f} ton)\n"
                          f"Örnek: 14.85 veya 14850",
                 "bekliyor": "malzeme_fiyat",
@@ -187,7 +194,7 @@ async def irsaliye_onayla_endpoint(request: Request):
             })
         else:
             return JSONResponse({
-                "cevap": "✅ İrsaliye onaylandı!\n\n💰 Birim fiyatı yazın (TL/kg):\nÖrnek: 14.85 veya 14850",
+                "cevap": f"✅ İrsaliye onaylandı!\n🚗 Plaka: {plaka} | ⚖️ {agirlik}\n\n💰 Birim fiyatı yazın (TL/kg):\nÖrnek: 14.85 veya 14850",
                 "bekliyor": "birim_fiyat",
                 "waybill_id": waybill_id
             })

@@ -46,15 +46,20 @@ def irsaliye_olustur(ticket_id: int, beklet: bool = False) -> dict:
         tarih_str = _tarih_formatla(ticket.fis_tarihi)
         contact_id = _contact_id_bul(ticket.firma)
 
+        # Attributes — plakayı vehicle_plate_number olarak gönder
+        attributes = {
+            "description": f"Kantar Fişi — {ticket.plaka} — {ticket.agirlik_kg} kg",
+            "issue_date": tarih_str,
+            "inflow": False,
+            "currency": "TRL",
+        }
+        if ticket.plaka:
+            attributes["vehicle_plate_number"] = ticket.plaka
+
         istek_verisi = {
             "data": {
                 "type": "shipment_documents",
-                "attributes": {
-                    "description": f"Kantar Fişi — {ticket.plaka} — {ticket.agirlik_kg} kg",
-                    "issue_date": tarih_str,
-                    "inflow": False,
-                    "currency": "TRL"
-                },
+                "attributes": attributes,
                 "relationships": {
                     "contact": {
                         "data": {"type": "contacts", "id": contact_id}
@@ -81,7 +86,6 @@ def irsaliye_olustur(ticket_id: int, beklet: bool = False) -> dict:
         parasut_id = sonuc["data"]["id"]
         logger.info(f"✅ Paraşüt irsaliye oluşturuldu: parasut_id={parasut_id}")
 
-        # beklet=True ise fabrika onayı beklenecek, False ise direkt tamamlandı
         yeni_status = TicketStatus.FABRIKA_BEKLENIYOR if beklet else TicketStatus.IRSALIYE_TAMAMLANDI
 
         waybill = Waybill(
