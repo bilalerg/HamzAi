@@ -7,7 +7,7 @@ from datetime import date
 from app.core.config import ANTHROPIC_API_KEY
 from app.core.logger import logger
 
-MAX_GECMIS = 10  # 20'den 10'a düşürüldü
+MAX_GECMIS = 10
 
 SORU_BELIRTECLERI = [
     "?", "kaç", "var mı", "nedir", "nerede", "nasıl", "ne zaman",
@@ -64,7 +64,7 @@ def db_context_hazirla(db) -> str:
         tum_fisler = db.query(WeighTicket).order_by(
             WeighTicket.fis_tarihi.desc(),
             WeighTicket.created_at.desc()
-        ).limit(20).all()  # 50'den 20'ye düşürüldü
+        ).limit(20).all()
 
         toplam_kg = sum(t.agirlik_kg or 0 for t in tum_fisler)
         toplam_ton = toplam_kg / 1000
@@ -75,6 +75,7 @@ def db_context_hazirla(db) -> str:
             f"{t.plaka} (Fiş No: {t.fis_no or '-'}): net {(t.agirlik_kg or 0)/1000:.2f} ton"
             + (f" | fire: {t.fire_kg:,} kg" if t.fire_kg else "")
             + (f" | net tartım: {t.net_tartim_kg:,} kg" if t.net_tartim_kg else "")
+            + (f" | firma: {t.firma}" if t.firma else "")
             for t in tum_fisler
         ]) if tum_fisler else "  Henüz araç gelmedi"
 
@@ -86,7 +87,11 @@ def db_context_hazirla(db) -> str:
         ).all()
 
         bekleyen_listesi = "\n".join([
-            f"  • Ref: {w.ref_kodu} | İrsaliye: {w.parasut_irsaliye_id}"
+            f"  • Plaka: {w.ticket.plaka if w.ticket else '-'} | "
+            f"Ağırlık: {(w.ticket.agirlik_kg or 0)/1000:.2f} ton | "
+            f"Firma: {w.ticket.firma if w.ticket else '-'} | "
+            f"İrsaliye: {w.parasut_irsaliye_id} | "
+            f"waybill_id: {w.id}"
             for w in bekleyen_waybills
         ]) if bekleyen_waybills else "  Bekleyen irsaliye yok"
 
