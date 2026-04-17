@@ -290,28 +290,19 @@ async def fatura_onayla(request: Request):
 
     db = SessionLocal()
     try:
-        from app.parasut.fatura import fatura_kes
-        toplam_tutar = sum(malzemeler.get(m, 0) * f for m, f in toplanan_fiyatlar.items())
-        toplam_kg = sum(malzemeler.get(m, 0) for m in toplanan_fiyatlar)
-        ort_fiyat = toplam_tutar / toplam_kg if toplam_kg > 0 else 0
-
-        sonuc = fatura_kes(waybill_id, ort_fiyat)
+        from app.parasut.fatura import fatura_kes_malzemeli
+        sonuc = fatura_kes_malzemeli(waybill_id, malzemeler, toplanan_fiyatlar)
         if not sonuc.get("basarili"):
             return JSONResponse({"cevap": f"❌ Fatura kesilemedi: {sonuc.get('hata')}"})
 
-        from app.core.database import Invoice
-        invoice = db.query(Invoice).filter(Invoice.waybill_id == waybill_id).first()
-        if invoice:
-            invoice.malzeme_fiyatlari = _json.dumps(toplanan_fiyatlar, ensure_ascii=False)
-            db.commit()
-
+        toplam_tutar = sonuc.get("toplam_tutar", 0)
         ozet = "✅ Fatura kesildi!\n\n"
         for malzeme_adi, fiyat in toplanan_fiyatlar.items():
             kg = malzemeler.get(malzeme_adi, 0)
-            ozet += f"  • {malzeme_adi}: {int(kg * fiyat):,} TL\n"
+            ozet += f"  • {malzeme_adi}: {kg:,} kg × {fiyat:,} TL/kg = {int(kg * fiyat):,} TL\n"
         ozet += f"\n💵 Toplam: {int(toplam_tutar):,} TL\n"
         ozet += f"🧾 Fatura No: {sonuc.get('fatura_no', '-')}\n"
-        ozet += "Fatura Paraşüt'e kaydedildi."
+        ozet += "Fatura Paraşüt'e kaydedildi. (Malzemeler ayrı kalem olarak işlendi)"
         return JSONResponse({"cevap": ozet})
 
     except Exception as e:
