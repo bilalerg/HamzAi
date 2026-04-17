@@ -107,15 +107,6 @@ async def upload_fis(file: UploadFile = File(...), session_id: str = "web_user")
                          f"Mükerrer kayıt tespit edildi, işlem yapılmadı."
             })
 
-        # İrsaliye oluştur — beklet=True ile FABRIKA_BEKLENIYOR statüsünde beklet
-        from app.parasut.irsaliye import irsaliye_olustur
-        sonuc = irsaliye_olustur(ticket.id, beklet=True)
-
-        if not sonuc.get("basarili"):
-            return JSONResponse({"cevap": "❌ İrsaliye oluşturulamadı, tekrar deneyin."})
-
-        waybill_id = sonuc["waybill_id"]
-
         yeni_plaka_uyari = ""
         if plaka_sonuc == PlakaSonuc.YENI:
             yeni_plaka_uyari = "\n🆕 Bu plaka sisteme ilk kez eklendi."
@@ -128,29 +119,74 @@ async def upload_fis(file: UploadFile = File(...), session_id: str = "web_user")
                 malzeme_ozet += f"  • {isim}: {kg:,} kg ({kg/1000:.2f} ton)\n"
 
         cevap = (
-            f"✅ Fiş okundu, irsaliye Paraşüt'te oluşturuldu!\n\n"
+            f"✅ Fiş okundu!\n\n"
             f"🚗 Plaka: {fis.plaka}\n"
             f"📋 Fiş No: {fis.fis_no or '-'}\n"
             f"⚖️ Net Ağırlık: {fis.net_agirlik_kg:,} kg ({fis.net_agirlik_kg/1000:.2f} ton)\n"
             f"🔥 Fire: {fis.fire_kg or 0:,} kg\n"
             f"📅 Fiş Tarihi: {fis.tarih or '-'}\n"
-            f"🏭 Firma: {fis.firma or '-'}"
+            f"🏭 OCR Firma: {fis.firma or '-'}"
             f"{yeni_plaka_uyari}"
             f"{malzeme_ozet}\n"
-            f"⏳ İrsaliye onay bekliyor.\n"
-            f"Faturaya geçmek için aşağıdaki butona tıklayın veya 'onayla' yazın."
+            f"🏭 Bu fiş hangi fabrikaya ait?"
         )
+
+        from app.core.config import PARASUT_CONTACT_IDS
+        firma_listesi = list(PARASUT_CONTACT_IDS.keys())
 
         return JSONResponse({
             "cevap": cevap,
-            "bekliyor": "irsaliye_onay",
-            "waybill_id": waybill_id,
+            "bekliyor": "firma_sec",
+            "ticket_id": ticket.id,
             "malzemeler": malzemeler,
+            "firma_listesi": firma_listesi,
         })
 
     except Exception as e:
         logger.error(f"Upload hatası: {e}")
         return JSONResponse({"cevap": f"❌ Hata oluştu: {str(e)}"})
+    finally:
+        db.close()
+
+
+@app.post("/api/firma-sec")
+async def firma_sec(request: Request):
+    """Kullanıcının seçtiği firmaya göre irsaliye oluşturur."""
+    data = await request.json()
+    ticket_id = data.get("ticket_id")
+    secilen_firma = data.get("firma")
+    malzemeler = data.get("malzemeler", {})
+
+    db = SessionLocal()
+    try:
+        from app.core.database import WeighTicket
+        from app.core.config import PARASUT_CONTACT_IDS
+
+        # Ticket'ta firma adını güncelle
+        ticket = db.query(WeighTicket).filter(WeighTicket.id == ticket_id).first()
+        if not ticket:
+            return JSONResponse({"cevap": "❌ Fiş bulunamadı."})
+
+        ticket.firma = secilen_firma
+        db.commit()
+
+        # İrsaliye oluştur
+        from app.parasut.irsaliye import irsaliye_olustur
+        sonuc = irsaliye_olustur(ticket_id, beklet=True)
+
+        if not sonuc.get("basarili"):
+            return JSONResponse({"cevap": "❌ İrsaliye oluşturulamadı, tekrar deneyin."})
+
+        waybill_id = sonuc["waybill_id"]
+
+        return JSONResponse({
+            "cevap": f"✅ {secilen_firma} seçildi, irsaliye Paraşüt'te oluşturuldu!\n\n"
+                     f"⏳ İrsaliye onay bekliyor.\n"
+                     f"Faturaya geçmek için 'Onayla' butonuna tıklayın.",
+            "bekliyor": "irsaliye_onay",
+            "waybill_id": waybill_id,
+            "malzemeler": malzemeler,
+        })
     finally:
         db.close()
 
@@ -396,6 +432,8 @@ CHAT_HTML = """<!DOCTYPE html>
   .message.bot .bubble{background:var(--surface);color:var(--text);border-radius:3px 14px 14px 14px;border:1px solid var(--border);box-shadow:var(--shadow);}
   .onay-btn{margin-top:10px;padding:10px 20px;background:var(--accent);color:#fff;border:none;border-radius:9px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer;width:100%;transition:background 0.15s;}
   .onay-btn:hover{background:#245030;}
+  .firma-btn{margin-top:6px;padding:9px 16px;background:var(--surface);color:var(--accent);border:1.5px solid #c5d9ca;border-radius:9px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer;width:100%;transition:all 0.15s;text-align:left;}
+  .firma-btn:hover{background:var(--accent-lt);border-color:var(--accent);}
   .img-bubble{background:var(--user-bg);padding:6px;border-radius:14px 14px 3px 14px;box-shadow:0 2px 10px rgba(45,90,61,0.2);display:inline-block;}
   .img-bubble img{max-width:220px;max-height:180px;border-radius:9px;display:block;}
   .typing-wrap{display:flex;flex-direction:column;max-width:68%;align-self:flex-start;animation:pop 0.25s cubic-bezier(0.34,1.56,0.64,1);}
@@ -569,6 +607,8 @@ CHAT_HTML = """<!DOCTYPE html>
   function setPlaceholder() {
     if (!bekleyenDurum) {
       inputEl.placeholder = 'Mesajınızı yazın veya fiş fotoğrafı yükleyin…';
+    } else if (bekleyenDurum.tip === 'firma_sec') {
+      inputEl.placeholder = 'Yukarıdaki butonlardan fabrika seçin…';
     } else if (bekleyenDurum.tip === 'onay') {
       inputEl.placeholder = 'evet veya hayır yazın…';
     } else if (bekleyenDurum.tip === 'irsaliye_onay') {
@@ -627,7 +667,25 @@ CHAT_HTML = """<!DOCTYPE html>
       const data = await res.json();
       removeTyping();
 
-      if (data.bekliyor === 'irsaliye_onay') {
+      if (data.bekliyor === 'firma_sec') {
+        // Firma seçim butonları ekle
+        const wrap = document.createElement('div');
+        (data.firma_listesi || []).forEach(firma => {
+          const btn = document.createElement('button');
+          btn.className = 'firma-btn';
+          btn.textContent = '🏭 ' + firma;
+          btn.onclick = () => firmaSecildi(data.ticket_id, firma, data.malzemeler, wrap);
+          wrap.appendChild(btn);
+        });
+        addMessage(data.cevap, 'bot', wrap);
+        bekleyenDurum = {
+          tip: 'firma_sec',
+          ticket_id: data.ticket_id,
+          malzemeler: data.malzemeler || {},
+          firma_listesi: data.firma_listesi || []
+        };
+        setPlaceholder();
+      } else if (data.bekliyor === 'irsaliye_onay') {
         // Onayla butonu ekle
         const btn = document.createElement('button');
         btn.className = 'onay-btn';
@@ -663,6 +721,43 @@ CHAT_HTML = """<!DOCTYPE html>
       sendBtn.disabled = false;
       input.value = '';
     }
+  }
+
+  async function firmaSecildi(ticketId, firma, malzemeler, wrap) {
+    if (wrap) Array.from(wrap.querySelectorAll('button')).forEach(b => b.disabled = true);
+    addMessage('🏭 ' + firma, 'user');
+    showTyping();
+    try {
+      const res = await fetch('/api/firma-sec', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticket_id: ticketId, firma: firma, malzemeler: malzemeler, session_id: SESSION_ID })
+      });
+      const data = await res.json();
+      removeTyping();
+
+      if (data.bekliyor === 'irsaliye_onay') {
+        const btn = document.createElement('button');
+        btn.className = 'onay-btn';
+        btn.textContent = '✅ İrsaliyeyi Onayla ve Faturaya Geç';
+        btn.onclick = () => irsaliyeOnayla(data.waybill_id, data.malzemeler, btn);
+        addMessage(data.cevap, 'bot', btn);
+        bekleyenDurum = {
+          tip: 'irsaliye_onay',
+          waybill_id: data.waybill_id,
+          malzemeler: data.malzemeler || malzemeler
+        };
+        setPlaceholder();
+      } else {
+        addMessage(data.cevap, 'bot');
+        bekleyenDurum = null;
+        setPlaceholder();
+      }
+    } catch {
+      removeTyping();
+      addMessage('❌ Hata oluştu, tekrar deneyin.', 'bot');
+    }
+    inputEl.focus();
   }
 
   async function irsaliyeOnayla(waybillId, malzemeler, btn) {
