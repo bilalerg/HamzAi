@@ -23,7 +23,7 @@ class FisVerisi:
     firma: Optional[str] = None
     irsaliye_no: Optional[str] = None
     kantar_no: Optional[str] = None
-    malzemeler: Optional[Dict[str, int]] = None  # {"BONUS": 7700, "KARMA": 6000}
+    malzemeler: Optional[Dict[str, int]] = None
 
     claude_ham_cikti: Optional[str] = None
     hata: Optional[str] = None
@@ -52,7 +52,7 @@ Fişten aşağıdaki bilgileri çıkar ve SADECE JSON formatında döndür, baş
   "net_tartim_kg": Net Tartım değeri sayı olarak (sadece rakam, kg birimi olmadan),
   "fire_kg": Fire değeri sayı olarak (sadece rakam, 0 olabilir),
   "tarih": "GG.AA.YYYY formatında giriş tarihi",
-  "firma": "firma adı",
+  "firma": "Firma Adı satırındaki tam şirket adı (örn: SAMSUN MAKİNE SANAYİ A.Ş., KROMAN ÇELİK, İÇTAŞ DEMİR ÇELİK — sadece şirket adını yaz, hurda veya malzeme gibi kelimeler değil)",
   "irsaliye_no": "irsaliye numarası",
   "kantar_no": "kantar numarası",
   "malzemeler": {
@@ -69,7 +69,7 @@ Fişten aşağıdaki bilgileri çıkar ve SADECE JSON formatında döndür, baş
 - "Fire" satırındaki değeri fire_kg olarak al (yoksa 0 yaz)
 - "Fis No" veya "Yukleme / Bosaltma Fis No" satırındaki numarayı fis_no olarak al
 - Plaka için "Araç Plakası" satırına bak
-- firma: Fişte "Firma Adı" satırındaki değeri al
+- firma: Fişte "Firma Adı" satırındaki şirket adını al. "Hurda", "Malzeme", "Ürün" gibi kelimeler firma adı değildir
 - malzemeler: Fişin "Malzeme Tanısı" bölümündeki her malzeme grubunu ve karşısındaki Net değerini oku
   - Değer 0 ise 0 yaz, yoksa null değil 0 yaz
   - Fişte olmayan malzeme grubu varsa 0 yaz
