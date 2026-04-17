@@ -4,7 +4,6 @@ from datetime import datetime
 from app.parasut.client import parasut_post
 from app.core.config import (
     PARASUT_COMPANY_ID,
-    PARASUT_DEMO_CONTACT_ID,
     PARASUT_HURDA_PRODUCT_ID,
     PARASUT_CONTACT_IDS,
 )
@@ -15,7 +14,9 @@ from app.core.logger import logger
 def _contact_id_bul(firma_adi: str) -> str:
     """Firma adına göre Paraşüt cari ID'sini döndürür."""
     if not firma_adi:
-        return str(PARASUT_DEMO_CONTACT_ID)
+        varsayilan = str(list(PARASUT_CONTACT_IDS.values())[0])
+        logger.warning(f"Firma adı yok, varsayılan cari kullanılıyor: {varsayilan}")
+        return varsayilan
 
     firma_upper = firma_adi.upper().strip()
 
@@ -24,8 +25,10 @@ def _contact_id_bul(firma_adi: str) -> str:
             logger.info(f"Firma eşleşti: {firma_adi} → {anahtar} (ID: {cid})")
             return str(cid)
 
-    logger.warning(f"Firma bulunamadı: {firma_adi}, varsayılan cari kullanılıyor")
-    return str(PARASUT_DEMO_CONTACT_ID)
+    # Eşleşme yoksa ilk kayıt (UHT Ufuk Hurda) varsayılan
+    varsayilan = str(list(PARASUT_CONTACT_IDS.values())[0])
+    logger.warning(f"Firma bulunamadı: {firma_adi}, varsayılan cari kullanılıyor: {varsayilan}")
+    return varsayilan
 
 
 def irsaliye_olustur(ticket_id: int) -> dict:
@@ -43,9 +46,7 @@ def irsaliye_olustur(ticket_id: int) -> dict:
         db.commit()
 
         tarih_str = _tarih_formatla(ticket.fis_tarihi)
-
-        # Firma adına göre doğru cari ID bul
-        contact_id = _contact_id_bul(ticket.firma if hasattr(ticket, 'firma') else None)
+        contact_id = _contact_id_bul(ticket.firma)
 
         istek_verisi = {
             "data": {
