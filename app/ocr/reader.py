@@ -4,7 +4,7 @@ import anthropic
 import base64
 import json
 from pathlib import Path
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional, Dict
 
 from app.core.config import ANTHROPIC_API_KEY
@@ -69,6 +69,7 @@ Fişten aşağıdaki bilgileri çıkar ve SADECE JSON formatında döndür, baş
 - "Fire" satırındaki değeri fire_kg olarak al (yoksa 0 yaz)
 - "Fis No" veya "Yukleme / Bosaltma Fis No" satırındaki numarayı fis_no olarak al
 - Plaka için "Araç Plakası" satırına bak
+- firma: Fişte "Firma Adı" satırındaki değeri al
 - malzemeler: Fişin "Malzeme Tanısı" bölümündeki her malzeme grubunu ve karşısındaki Net değerini oku
   - Değer 0 ise 0 yaz, yoksa null değil 0 yaz
   - Fişte olmayan malzeme grubu varsa 0 yaz
@@ -118,12 +119,11 @@ Fişten aşağıdaki bilgileri çıkar ve SADECE JSON formatında döndür, baş
         if net_agirlik < 0:
             net_agirlik = int(net_tartim)
 
-        # Malzemeleri filtrele — sadece sıfırdan büyük olanlar
         malzemeler_ham = veri.get("malzemeler") or {}
         malzemeler = {k: int(v) for k, v in malzemeler_ham.items() if v and int(v) > 0}
 
         logger.info(f"Net Tartım: {net_tartim} kg | Fire: {fire} kg | Net Ağırlık: {net_agirlik} kg")
-        logger.info(f"Malzemeler: {malzemeler}")
+        logger.info(f"Firma: {veri.get('firma')} | Malzemeler: {malzemeler}")
 
         return FisVerisi(
             plaka=veri.get("plaka"),
@@ -173,6 +173,7 @@ def fis_db_kaydet(fis: FisVerisi, foto_path: str, db) -> object:
         agirlik_kg=fis.net_agirlik_kg,
         net_tartim_kg=fis.net_tartim_kg,
         fire_kg=fis.fire_kg or 0,
+        firma=fis.firma,
         fis_tarihi=fis_tarihi,
         malzeme="hurda",
         malzemeler=json.dumps(fis.malzemeler, ensure_ascii=False) if fis.malzemeler else None,
@@ -185,6 +186,6 @@ def fis_db_kaydet(fis: FisVerisi, foto_path: str, db) -> object:
     db.commit()
     db.refresh(ticket)
 
-    logger.info(f"✅ Fiş DB'ye kaydedildi: ticket_id={ticket.id} plaka={ticket.plaka} fis_no={ticket.fis_no} agirlik={ticket.agirlik_kg}kg malzemeler={fis.malzemeler}")
+    logger.info(f"✅ Fiş DB'ye kaydedildi: ticket_id={ticket.id} plaka={ticket.plaka} firma={ticket.firma} fis_no={ticket.fis_no} agirlik={ticket.agirlik_kg}kg")
 
     return ticket

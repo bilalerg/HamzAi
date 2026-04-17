@@ -36,7 +36,13 @@ PARASUT_USERNAME         = os.getenv("PARASUT_USERNAME")
 PARASUT_PASSWORD         = os.getenv("PARASUT_PASSWORD")
 PARASUT_COMPANY_ID       = os.getenv("PARASUT_COMPANY_ID")
 PARASUT_BASE_URL         = os.getenv("PARASUT_BASE_URL", "https://api.parasut.com/v4")
-PARASUT_DEMO_CONTACT_ID  = os.getenv("PARASUT_DEMO_CONTACT_ID")
+PARASUT_CONTACT_IDS = {
+    "UHT UFUK HURDA": os.getenv("PARASUT_DEMO_CONTACT_ID"),
+    "SAMSUN MAKİNE":  "1061309834",
+    "KROMAN":         "1061309836",
+    "İÇTAŞ DEMİR ÇELİK TERSANE": "1061309838",
+    "KAPTAN DEMİR ÇELİK": "1061309841",
+}
 PARASUT_HURDA_PRODUCT_ID = os.getenv("PARASUT_HURDA_PRODUCT_ID")
 
 # ── VERİTABANI ─────────────────────────────────────────────────────────

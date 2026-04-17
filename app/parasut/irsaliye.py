@@ -1,12 +1,4 @@
 # irsaliye.py — Paraşüt e-İrsaliye Modülü
-#
-# SORUMLULUK:
-# 1. Kantar fişi verisinden Paraşüt'te e-İrsaliye oluşturur
-# 2. Oluşturulan irsaliyenin ID'sini DB'ye kaydeder
-# 3. Status'u IRSALIYE_TAMAMLANDI yapar (fabrika onayı beklenmez artık)
-#
-# AKIŞ:
-# webhook.py → fis_isle() → irsaliye_olustur() → Paraşüt API → DB güncelle → birim fiyat sor
 
 from datetime import datetime
 from app.parasut.client import parasut_post
@@ -14,16 +6,29 @@ from app.core.config import (
     PARASUT_COMPANY_ID,
     PARASUT_DEMO_CONTACT_ID,
     PARASUT_HURDA_PRODUCT_ID,
+    PARASUT_CONTACT_IDS,
 )
 from app.core.database import SessionLocal, WeighTicket, Waybill, TicketStatus
 from app.core.logger import logger
 
 
+def _contact_id_bul(firma_adi: str) -> str:
+    """Firma adına göre Paraşüt cari ID'sini döndürür."""
+    if not firma_adi:
+        return str(PARASUT_DEMO_CONTACT_ID)
+
+    firma_upper = firma_adi.upper().strip()
+
+    for anahtar, cid in PARASUT_CONTACT_IDS.items():
+        if anahtar.upper() in firma_upper or firma_upper in anahtar.upper():
+            logger.info(f"Firma eşleşti: {firma_adi} → {anahtar} (ID: {cid})")
+            return str(cid)
+
+    logger.warning(f"Firma bulunamadı: {firma_adi}, varsayılan cari kullanılıyor")
+    return str(PARASUT_DEMO_CONTACT_ID)
+
+
 def irsaliye_olustur(ticket_id: int) -> dict:
-    """
-    Verilen ticket_id için Paraşüt'te e-İrsaliye oluşturur.
-    Fabrika onay maili artık gönderilmez — direkt birim fiyat sorulacak.
-    """
     db = SessionLocal()
     try:
         ticket = db.query(WeighTicket).filter(WeighTicket.id == ticket_id).first()
@@ -39,6 +44,9 @@ def irsaliye_olustur(ticket_id: int) -> dict:
 
         tarih_str = _tarih_formatla(ticket.fis_tarihi)
 
+        # Firma adına göre doğru cari ID bul
+        contact_id = _contact_id_bul(ticket.firma if hasattr(ticket, 'firma') else None)
+
         istek_verisi = {
             "data": {
                 "type": "shipment_documents",
@@ -52,7 +60,7 @@ def irsaliye_olustur(ticket_id: int) -> dict:
                     "contact": {
                         "data": {
                             "type": "contacts",
-                            "id": str(PARASUT_DEMO_CONTACT_ID)
+                            "id": contact_id
                         }
                     },
                     "stock_movements": {
@@ -93,9 +101,6 @@ def irsaliye_olustur(ticket_id: int) -> dict:
         db.commit()
         db.refresh(waybill)
 
-        logger.info(f"Waybill kaydedildi: waybill_id={waybill.id}")
-
-        # Ticket status güncelle
         ticket.status = TicketStatus.IRSALIYE_TAMAMLANDI
         db.commit()
 
