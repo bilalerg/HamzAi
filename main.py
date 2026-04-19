@@ -131,8 +131,9 @@ async def upload_fis(file: UploadFile = File(...), session_id: str = "web_user")
             f"🏭 Bu fiş hangi fabrikaya ait?"
         )
 
-        from app.core.config import PARASUT_CONTACT_IDS
-        firma_listesi = list(PARASUT_CONTACT_IDS.keys())
+        from app.parasut.client import cari_listesi_getir
+        cariler = cari_listesi_getir()
+        firma_listesi = [c["ad"] for c in cariler]
 
         return JSONResponse({
             "cevap": cevap,
@@ -160,7 +161,6 @@ async def firma_sec(request: Request):
     db = SessionLocal()
     try:
         from app.core.database import WeighTicket
-        from app.core.config import PARASUT_CONTACT_IDS
 
         # Ticket'ta firma adını güncelle
         ticket = db.query(WeighTicket).filter(WeighTicket.id == ticket_id).first()

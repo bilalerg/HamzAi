@@ -12,9 +12,15 @@ from app.core.config import (
 )
 from app.core.logger import logger
 
+# ── TOKEN ─────────────────────────────────────────────────────────────
 _access_token = None
 _refresh_token = None
 _token_expires_at = 0
+
+# ── CARİ CACHE (in-memory, 30 dakika) ────────────────────────────────
+_cari_cache = None
+_cari_cache_time = 0
+CACHE_SURE = 1800  # 30 dakika
 
 
 def _token_al() -> dict:
@@ -94,14 +100,21 @@ def parasut_post(endpoint: str, veri: dict) -> dict:
     return response.json()
 
 
-# ── CHATBOT SORGU FONKSİYONLARI ──────────────────────────────────────
+# ── CARİ CACHE SİSTEMİ ───────────────────────────────────────────────
 
-def cari_listesi_getir() -> list:
-    """Tüm carileri döndürür."""
-    try:
-        sonuc = parasut_get(f"/{PARASUT_COMPANY_ID}/contacts", params={"page[size]": 25})
-        cariler = []
-        for c in sonuc.get("data", []):
+def _cari_listesi_api() -> list:
+    """Paraşüt'ten tüm carileri çeker (tüm sayfalar)."""
+    cariler = []
+    page = 1
+    while True:
+        sonuc = parasut_get(
+            f"/{PARASUT_COMPANY_ID}/contacts",
+            params={"page[size]": 25, "page[number]": page}
+        )
+        data = sonuc.get("data", [])
+        if not data:
+            break
+        for c in data:
             attr = c.get("attributes", {})
             cariler.append({
                 "id": c["id"],
@@ -110,16 +123,89 @@ def cari_listesi_getir() -> list:
                 "telefon": attr.get("phone", "-"),
                 "bakiye": attr.get("balance", 0),
                 "vergi_no": attr.get("tax_number", "-"),
+                "adres": attr.get("address", "-"),
+                "vergi_dairesi": attr.get("tax_office", "-"),
             })
-        return cariler
-    except Exception as e:
-        logger.error(f"Cari listesi hatası: {e}")
-        return []
+        if len(data) < 25:
+            break
+        page += 1
+    logger.info(f"✅ Paraşüt'ten {len(cariler)} cari çekildi")
+    return cariler
 
+
+def cari_cache_yenile():
+    """Cache'i zorla yeniler."""
+    global _cari_cache, _cari_cache_time
+    _cari_cache = _cari_listesi_api()
+    _cari_cache_time = time.time()
+    return _cari_cache
+
+
+def cari_listesi_getir() -> list:
+    """Cache-aside pattern ile cari listesi döndürür."""
+    global _cari_cache, _cari_cache_time
+    # Cache geçerliyse direkt döndür
+    if _cari_cache and time.time() - _cari_cache_time < CACHE_SURE:
+        return _cari_cache
+    # Cache miss — API'den çek
+    try:
+        return cari_cache_yenile()
+    except Exception as e:
+        logger.error(f"Cari cache yenileme hatası: {e}")
+        return _cari_cache or []
+
+
+def cari_id_bul(firma_adi: str) -> str | None:
+    """
+    Firma adından Paraşüt cari ID'sini dinamik olarak bulur.
+    Config.py'de hardcode ID yok — Paraşüt'ten çeker, cache'te tutar.
+    """
+    if not firma_adi:
+        return None
+
+    firma_upper = firma_adi.upper().strip()
+    cariler = cari_listesi_getir()
+
+    # 1. Tam eşleşme
+    for c in cariler:
+        if c["ad"].upper() == firma_upper:
+            logger.info(f"Cari tam eşleşme: {firma_adi} → {c['ad']} (ID: {c['id']})")
+            return c["id"]
+
+    # 2. İçerik eşleşmesi
+    for c in cariler:
+        cari_upper = c["ad"].upper()
+        if firma_upper in cari_upper or cari_upper in firma_upper:
+            logger.info(f"Cari içerik eşleşme: {firma_adi} → {c['ad']} (ID: {c['id']})")
+            return c["id"]
+
+    # 3. Kelime bazlı eşleşme (en az 2 kelime uyuşsun)
+    firma_kelimeler = set(firma_upper.split())
+    for c in cariler:
+        cari_kelimeler = set(c["ad"].upper().split())
+        ortak = firma_kelimeler & cari_kelimeler
+        # "A.Ş", "LTD", "SAN" gibi genel kelimeleri say alma
+        genel = {"A.Ş", "LTD", "ŞTİ", "SAN", "TİC", "VE", "GERİ", "DÖNÜŞÜM", "NAK", "TİCARET"}
+        anlamli_ortak = ortak - genel
+        if len(anlamli_ortak) >= 2:
+            logger.info(f"Cari kelime eşleşme: {firma_adi} → {c['ad']} (ID: {c['id']})")
+            return c["id"]
+
+    logger.warning(f"Cari bulunamadı: {firma_adi}")
+    return None
+
+
+# ── CHATBOT SORGU FONKSİYONLARI ──────────────────────────────────────
 
 def cari_detay_getir(cari_id: str) -> dict:
     """Belirli bir carinin detaylarını döndürür."""
     try:
+        # Önce cache'den bak
+        cariler = cari_listesi_getir()
+        for c in cariler:
+            if c["id"] == str(cari_id):
+                return c
+        # Cache'de yoksa API'den çek
         sonuc = parasut_get(f"/{PARASUT_COMPANY_ID}/contacts/{cari_id}")
         attr = sonuc.get("data", {}).get("attributes", {})
         return {

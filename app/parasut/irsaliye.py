@@ -1,35 +1,13 @@
 # irsaliye.py — Paraşüt e-İrsaliye Modülü
 
 from datetime import datetime
-from app.parasut.client import parasut_post
-from app.core.config import (
-    PARASUT_COMPANY_ID,
-    PARASUT_HURDA_PRODUCT_ID,
-    PARASUT_CONTACT_IDS,
-)
+from app.parasut.client import parasut_post, cari_id_bul
+from app.core.config import PARASUT_COMPANY_ID, PARASUT_HURDA_PRODUCT_ID
 from app.core.database import SessionLocal, WeighTicket, Waybill, TicketStatus
 from app.core.logger import logger
 
 
-def _contact_id_bul(firma_adi: str) -> str:
-    if not firma_adi:
-        return str(list(PARASUT_CONTACT_IDS.values())[0])
-    firma_upper = firma_adi.upper().strip()
-    for anahtar, cid in PARASUT_CONTACT_IDS.items():
-        if anahtar.upper() in firma_upper or firma_upper in anahtar.upper():
-            logger.info(f"Firma eşleşti: {firma_adi} → {anahtar} (ID: {cid})")
-            return str(cid)
-    varsayilan = str(list(PARASUT_CONTACT_IDS.values())[0])
-    logger.warning(f"Firma bulunamadı: {firma_adi}, varsayılan kullanılıyor")
-    return varsayilan
-
-
 def irsaliye_olustur(ticket_id: int, beklet: bool = False) -> dict:
-    """
-    Paraşüt'te e-İrsaliye oluşturur.
-    beklet=True → FABRIKA_BEKLENIYOR statüsünde bekletir (onay gerekir)
-    beklet=False → direkt IRSALIYE_TAMAMLANDI yapar
-    """
     db = SessionLocal()
     try:
         ticket = db.query(WeighTicket).filter(WeighTicket.id == ticket_id).first()
@@ -44,9 +22,18 @@ def irsaliye_olustur(ticket_id: int, beklet: bool = False) -> dict:
         db.commit()
 
         tarih_str = _tarih_formatla(ticket.fis_tarihi)
-        contact_id = _contact_id_bul(ticket.firma)
 
-        # Attributes — plakayı vehicle_plate_number olarak gönder
+        # Dinamik cari ID — config.py'de hardcode yok
+        contact_id = cari_id_bul(ticket.firma)
+        if not contact_id:
+            logger.warning(f"Cari bulunamadı: {ticket.firma}, ilk cari kullanılıyor")
+            from app.parasut.client import cari_listesi_getir
+            cariler = cari_listesi_getir()
+            contact_id = cariler[0]["id"] if cariler else None
+
+        if not contact_id:
+            return {"basarili": False, "hata": "Cari bulunamadı"}
+
         attributes = {
             "description": f"Kantar Fişi — {ticket.plaka} — {ticket.agirlik_kg} kg",
             "issue_date": tarih_str,
@@ -62,7 +49,7 @@ def irsaliye_olustur(ticket_id: int, beklet: bool = False) -> dict:
                 "attributes": attributes,
                 "relationships": {
                     "contact": {
-                        "data": {"type": "contacts", "id": contact_id}
+                        "data": {"type": "contacts", "id": str(contact_id)}
                     },
                     "stock_movements": {
                         "data": [{
@@ -122,13 +109,11 @@ def irsaliye_olustur(ticket_id: int, beklet: bool = False) -> dict:
         except:
             pass
         return {"basarili": False, "hata": str(e)}
-
     finally:
         db.close()
 
 
 def irsaliye_onayla(waybill_id: int) -> dict:
-    """Bekleyen irsaliyeyi onaylar — birim fiyat sorma aşamasına geçer."""
     db = SessionLocal()
     try:
         waybill = db.query(Waybill).filter(Waybill.id == waybill_id).first()

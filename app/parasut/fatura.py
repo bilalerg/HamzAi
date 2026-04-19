@@ -1,25 +1,24 @@
 # fatura.py — Paraşüt Satış Faturası Modülü
 
 from datetime import datetime
-from app.parasut.client import parasut_post
-from app.core.config import (
-    PARASUT_COMPANY_ID,
-    PARASUT_HURDA_PRODUCT_ID,
-    PARASUT_CONTACT_IDS,
-)
+from app.parasut.client import parasut_post, cari_id_bul, cari_listesi_getir
+from app.core.config import PARASUT_COMPANY_ID, PARASUT_HURDA_PRODUCT_ID
 from app.core.database import SessionLocal, Waybill, Invoice, WeighTicket, TicketStatus
 from app.core.logger import logger
 from app.chatbox.wp_sender import patrona_bildir, muhasebeciye_bildir
 
 
 def _contact_id_bul(firma_adi: str) -> str:
-    if not firma_adi:
-        return str(list(PARASUT_CONTACT_IDS.values())[0])
-    firma_upper = firma_adi.upper().strip()
-    for anahtar, cid in PARASUT_CONTACT_IDS.items():
-        if anahtar.upper() in firma_upper or firma_upper in anahtar.upper():
-            return str(cid)
-    return str(list(PARASUT_CONTACT_IDS.values())[0])
+    """Dinamik cari ID bulma — config.py'de hardcode yok."""
+    cid = cari_id_bul(firma_adi)
+    if cid:
+        return str(cid)
+    # Fallback: ilk cari
+    cariler = cari_listesi_getir()
+    if cariler:
+        logger.warning(f"Cari bulunamadı: {firma_adi}, ilk cari kullanılıyor")
+        return str(cariler[0]["id"])
+    raise Exception("Hiç cari bulunamadı")
 
 
 def fatura_kes(waybill_id: int, birim_fiyat: float = 0) -> dict:
@@ -132,11 +131,7 @@ def fatura_kes(waybill_id: int, birim_fiyat: float = 0) -> dict:
 
 
 def fatura_kes_malzemeli(waybill_id: int, malzemeler: dict, toplanan_fiyatlar: dict) -> dict:
-    """
-    Malzeme bazlı fatura keser — her malzeme Paraşüt'te ayrı satır olarak görünür.
-    malzemeler: {"BONUS": 7700, "KARMA": 6000}
-    toplanan_fiyatlar: {"BONUS": 16.0, "KARMA": 14.0}
-    """
+    """Malzeme bazlı fatura keser — her malzeme Paraşüt'te ayrı satır olarak görünür."""
     db = SessionLocal()
     try:
         waybill = db.query(Waybill).filter(Waybill.id == waybill_id).first()
@@ -157,7 +152,6 @@ def fatura_kes_malzemeli(waybill_id: int, malzemeler: dict, toplanan_fiyatlar: d
         fis_tarihi = ticket.fis_tarihi.strftime("%Y-%m-%d") if ticket.fis_tarihi else bugun
         contact_id = _contact_id_bul(ticket.firma)
 
-        # Her malzeme için ayrı satır oluştur
         detaylar = []
         toplam_tutar = 0
         for malzeme_adi, fiyat in toplanan_fiyatlar.items():
@@ -221,12 +215,10 @@ def fatura_kes_malzemeli(waybill_id: int, malzemeler: dict, toplanan_fiyatlar: d
         ticket.status = TicketStatus.TAMAMLANDI
         db.commit()
 
-        # Bildirim
         ozet_satir = " | ".join([f"{m}: {malzemeler.get(m,0):,}kg×{f:,.0f}₺" for m, f in toplanan_fiyatlar.items()])
         patrona_bildir(
             f"✅ Fatura kesildi!\n🚗 Plaka: {ticket.plaka}\n"
-            f"{ozet_satir}\n"
-            f"💵 Toplam: {toplam_tutar:,.0f} TL\n🧾 {parasut_id}"
+            f"{ozet_satir}\n💵 Toplam: {toplam_tutar:,.0f} TL\n🧾 {parasut_id}"
         )
         muhasebeciye_bildir(
             f"✅ Tamamlandı!\n🚗 {ticket.plaka} | 💵 {toplam_tutar:,.0f} TL\n🧾 {parasut_id}"
