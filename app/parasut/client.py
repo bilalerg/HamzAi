@@ -339,14 +339,13 @@ def cari_olustur(firma_adi: str, email: str = None, telefon: str = None,
         return {"basarili": False, "hata": str(e)}
 
 
-def tahsilat_ekle(cari_adi: str, tutar: float, aciklama: str = None, tarih: str = None) -> dict:
-    """Paraşüt'te belirli bir cariye tahsilat kaydı ekler."""
+def fatura_tahsilat_ekle(fatura_id: str, tutar: float, aciklama: str = None, tarih: str = None) -> dict:
+    """
+    Paraşüt'te belirli bir satış faturasına tahsilat (ödeme) kaydı ekler.
+    Fatura endpoint: /{company_id}/sales_invoices/{id}/payments
+    """
     try:
         from datetime import datetime
-
-        cari_id = cari_id_bul(cari_adi)
-        if not cari_id:
-            return {"basarili": False, "hata": f"'{cari_adi}' adlı cari bulunamadı."}
 
         bugun = tarih or datetime.now().strftime("%Y-%m-%d")
 
@@ -354,34 +353,86 @@ def tahsilat_ekle(cari_adi: str, tutar: float, aciklama: str = None, tarih: str 
             "data": {
                 "type": "payments",
                 "attributes": {
-                    "description": aciklama or f"{cari_adi} tahsilat",
+                    "description": aciklama or "Tahsilat",
                     "payment_date": bugun,
                     "amount": str(tutar),
                     "currency": "TRL",
                     "payment_type": "cash",
-                    "payment_category": "income",
                 },
-                "relationships": {
-                    "contact": {
-                        "data": {"type": "contacts", "id": str(cari_id)}
-                    }
-                }
             }
         }
 
-        sonuc = parasut_post(f"/{PARASUT_COMPANY_ID}/payments", istek)
+        sonuc = parasut_post(
+            f"/{PARASUT_COMPANY_ID}/sales_invoices/{fatura_id}/payments",
+            istek
+        )
         odeme_id = sonuc["data"]["id"]
-
-        logger.info(f"✅ Tahsilat eklendi: {cari_adi} — {tutar:,.0f} TL (ID: {odeme_id})")
-        cari_cache_yenile()
+        logger.info(f"✅ Fatura tahsilatı eklendi: fatura_id={fatura_id} — {tutar:,.0f} TL")
 
         return {
             "basarili": True,
             "id": odeme_id,
-            "cari": cari_adi,
+            "fatura_id": fatura_id,
             "tutar": tutar,
             "tarih": bugun
         }
+    except Exception as e:
+        logger.error(f"Fatura tahsilat hatası: {e}")
+        return {"basarili": False, "hata": str(e)}
+
+
+def tahsilat_ekle(cari_adi: str, tutar: float, aciklama: str = None, tarih: str = None) -> dict:
+    """
+    Belirli bir carinin açık faturalarını listeler.
+    Tutar belirtilmişse o tutara en yakın faturayı bulur ve tahsilat ekler.
+    """
+    try:
+        cari_id = cari_id_bul(cari_adi)
+        if not cari_id:
+            return {"basarili": False, "hata": f"'{cari_adi}' adlı cari bulunamadı."}
+
+        # Carinin açık faturalarını çek
+        sonuc = parasut_get(
+            f"/{PARASUT_COMPANY_ID}/sales_invoices",
+            params={
+                "filter[contact_id]": cari_id,
+                "filter[payment_status]": "overdue,not_paid",
+                "page[size]": 25,
+                "sort": "-issue_date"
+            }
+        )
+
+        faturalar = []
+        for f in sonuc.get("data", []):
+            attr = f.get("attributes", {})
+            faturalar.append({
+                "id": f["id"],
+                "tarih": attr.get("issue_date", "-"),
+                "tutar": attr.get("gross_total", 0),
+                "kalan": attr.get("remaining", 0),
+                "aciklama": attr.get("description", "-"),
+            })
+
+        if not faturalar:
+            return {"basarili": False, "hata": f"{cari_adi} için açık fatura bulunamadı."}
+
+        # Tutara en yakın faturayı bul
+        hedef_fatura = min(faturalar, key=lambda f: abs((f.get("kalan") or f.get("tutar") or 0) - tutar))
+
+        sonuc = fatura_tahsilat_ekle(
+            fatura_id=hedef_fatura["id"],
+            tutar=tutar,
+            aciklama=aciklama or f"{cari_adi} tahsilat",
+            tarih=tarih
+        )
+
+        if sonuc.get("basarili"):
+            sonuc["eslesen_fatura"] = hedef_fatura
+            sonuc["cari"] = cari_adi
+            logger.info(f"✅ Tahsilat tamamlandı: {cari_adi} — {tutar:,.0f} TL → fatura {hedef_fatura['id']}")
+
+        return sonuc
+
     except Exception as e:
         logger.error(f"Tahsilat ekleme hatası: {e}")
         return {"basarili": False, "hata": str(e)}
