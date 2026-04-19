@@ -43,38 +43,52 @@ def claude_fis_oku(fotograf_yolu: str) -> FisVerisi:
 
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
-    prompt = """Bu bir kantar (tartı) fişi fotoğrafıdır.
-Fişten aşağıdaki bilgileri çıkar ve SADECE JSON formatında döndür, başka hiçbir şey yazma:
+    prompt = """Bu bir kantar (tartı) fişi fotoğrafıdır. Fişten bilgileri çıkar ve SADECE JSON formatında döndür, başka hiçbir şey yazma.
 
+JSON formatı:
 {
-  "plaka": "araç plaka numarası",
-  "fis_no": "Yukleme/Bosaltma Fis No veya fiş numarası",
-  "net_tartim_kg": Net Tartım değeri sayı olarak (sadece rakam, kg birimi olmadan),
-  "fire_kg": Fire değeri sayı olarak (sadece rakam, 0 olabilir),
-  "tarih": "GG.AA.YYYY formatında giriş tarihi",
-  "firma": "Firma Adı satırındaki tam şirket adı (örn: SAMSUN MAKİNE SANAYİ A.Ş., KROMAN ÇELİK, İÇTAŞ DEMİR ÇELİK — sadece şirket adını yaz, hurda veya malzeme gibi kelimeler değil)",
-  "irsaliye_no": "irsaliye numarası",
-  "kantar_no": "kantar numarası",
-  "malzemeler": {
-    "DKP": 0,
-    "TOPSİS": 0,
-    "BONUS": 0,
-    "1.GRUP": 0,
-    "KARMA": 0
-  }
+  "plaka": "araç plaka numarası (sadece birinci/ana araç plakası, dorse veya 2. plaka değil)",
+  "fis_no": "fiş numarası veya yükleme/boşaltma fiş no",
+  "net_tartim_kg": net tartım değeri (sayı, kg birimi olmadan),
+  "fire_kg": fire veya tenzil değeri (sayı, yoksa 0),
+  "tarih": "GG.AA.YYYY formatında fiş tarihi",
+  "firma": "fişte yazan fabrika/şirket adı (Samsun Makine, Kroman, İçtaş, Kaptan gibi — hurda satıcısı değil, kantarın sahibi fabrika)",
+  "irsaliye_no": "irsaliye numarası (yoksa null)",
+  "kantar_no": "kantar numarası (yoksa null)",
+  "malzemeler": {}
 }
 
-Önemli kurallar:
-- "Net Tartım" satırındaki değeri net_tartim_kg olarak al
-- "Fire" satırındaki değeri fire_kg olarak al (yoksa 0 yaz)
-- "Fis No" veya "Yukleme / Bosaltma Fis No" satırındaki numarayı fis_no olarak al
-- Plaka için "Araç Plakası" satırına bak
-- firma: Fişte "Firma Adı" satırındaki şirket adını al. "Hurda", "Malzeme", "Ürün" gibi kelimeler firma adı değildir
-- malzemeler: Fişin "Malzeme Tanısı" bölümündeki her malzeme grubunu ve karşısındaki Net değerini oku
-  - Değer 0 ise 0 yaz, yoksa null değil 0 yaz
-  - Fişte olmayan malzeme grubu varsa 0 yaz
-  - Malzeme adını fişte yazan şekilde yaz (büyük harf)
-- Eğer bir bilgi fişte yoksa null yaz"""
+PLAKA KURALI:
+- "Plaka-1", "Araç Plakası", "Plaka No" gibi alanlardan ilk plakayı al
+- "Plaka-2", "Dorse", "Römork" gibi ikinci plakayı ALMA
+- Birden fazla plaka varsa sadece birincisini al
+
+FİRMA KURALI:
+- Fişin başlığındaki veya üst kısmındaki fabrika adını al (SAMSUN MAKİNE SANAYİ A.Ş., KAPTAN DEMİR ÇELİK, İÇDAŞ A.Ş. gibi)
+- "Firma Adı" satırındaki hurda tedarikçisini (YEŞİL İZABE, MAJ DENİZ gibi) ALMA — bu hurda satan firma, fabrika değil
+- Fişin sahibi kim? O fabrikanın adını yaz
+
+NET TARTIM VE FİRE KURALI:
+- "Net Tartım", "Net", "NET AĞIRLIK" satırındaki değeri net_tartim_kg olarak al
+- "Fire", "Tenzil", "Fire Kg" satırındaki değeri fire_kg olarak al — ikisi aynı anlama gelir
+- Eğer fişte malzeme tablosu varsa "Tenz.Miktar" sütunu da fire demektir, toplam tenzil miktarını fire_kg olarak yaz
+- net_tartim_kg her zaman fire düşülmeden önceki değerdir
+
+MALZEME KURALI — ÇOK ÖNEMLİ:
+Fişte malzeme listesi/tablosu var mı?
+
+EVET, tablo/liste varsa:
+- Her malzeme satırını oku: malzeme adı → net miktarı
+- Eğer "Tenz.Miktar" veya "Tenzil Miktar" sütunu varsa: net miktar = Miktar - Tenz.Miktar
+- Eğer sadece "Miktar" sütunu varsa: net miktar = Miktar
+- Sıfırdan büyük olan malzemeleri yaz
+- Örnek: {"HURDA YERLİ EXTRA": 4627, "HURDA YERLİ 1.GRUP": 2644, "HURDA YERLİ 2.GRUP": 1983, "HURDA YERLİ EXTRA-KESİM": 3966}
+
+HAYIR, sadece tek net kilo varsa:
+- malzemeler: {} (boş bırak)
+- Net tartım zaten net_tartim_kg alanında
+
+NOT: "1.Tartı", "2.Tartı", "Brüt", "Dara", "Dolu Tartım", "Boş Tartım" gibi ara değerleri ASLA malzeme olarak ekleme — bunlar hesaplama aşamaları."""
 
     response = client.messages.create(
         model="claude-sonnet-4-5",
