@@ -425,7 +425,7 @@ def tahsilat_ekle(cari_adi: str, tutar: float, aciklama: str = None, tarih: str 
             return {"basarili": False, "hata": f"{cari_adi} için açık fatura bulunamadı."}
 
         # Tutara en yakın faturayı bul
-        hedef_fatura = min(faturalar, key=lambda f: abs((f.get("kalan") or f.get("tutar") or 0) - tutar))
+        hedef_fatura = min(faturalar, key=lambda f: abs(float(f.get("kalan") or f.get("tutar") or 0) - float(tutar)))
 
         sonuc = fatura_tahsilat_ekle(
             fatura_id=hedef_fatura["id"],
