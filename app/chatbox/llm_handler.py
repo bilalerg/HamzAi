@@ -14,11 +14,10 @@ SORU_BELIRTECLERI = [
     "hangi", "toplam", "bugün", "fatura", "plaka", "irsaliye", "ton"
 ]
 
-# ── TOOL TANIMLARI ────────────────────────────────────────────────────
 TOOLS = [
     {
         "name": "cari_listesi_getir",
-        "description": "Paraşüt'teki tüm cari hesapları (müşteri/tedarikçi) listeler. Bakiye, iletişim bilgileri dahil.",
+        "description": "Paraşüt'teki tüm cari hesapları listeler. Bakiye, iletişim bilgileri dahil.",
         "input_schema": {"type": "object", "properties": {}, "required": []}
     },
     {
@@ -66,6 +65,22 @@ TOOLS = [
         "description": "Genel hesap özetini getirir: toplam alacak, borç, cari sayısı.",
         "input_schema": {"type": "object", "properties": {}, "required": []}
     },
+    {
+        "name": "cari_olustur",
+        "description": "Paraşüt'te yeni cari (müşteri) oluşturur. Tüm bilgiler toplandıktan sonra çağır.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "firma_adi": {"type": "string", "description": "Firma adı (zorunlu)"},
+                "email": {"type": "string", "description": "Email adresi (opsiyonel)"},
+                "telefon": {"type": "string", "description": "Telefon numarası (opsiyonel)"},
+                "vergi_no": {"type": "string", "description": "Vergi numarası (opsiyonel)"},
+                "vergi_dairesi": {"type": "string", "description": "Vergi dairesi (opsiyonel)"},
+                "adres": {"type": "string", "description": "Adres (opsiyonel)"}
+            },
+            "required": ["firma_adi"]
+        }
+    },
 ]
 
 
@@ -104,30 +119,27 @@ def _session_kaydet(db, session_id: str, isim: str, gecmis: list):
 
 
 def _cari_id_bul(cari_adi: str) -> str | None:
-    """Cari adından Paraşüt ID'sini dinamik olarak bulur."""
     from app.parasut.client import cari_id_bul
     return cari_id_bul(cari_adi)
 
 
 def _tool_calistir(tool_name: str, tool_input: dict) -> str:
-    """Tool çağrısını çalıştırır ve sonucu string olarak döndürür."""
     try:
         from app.parasut.client import (
             cari_listesi_getir, cari_detay_getir, cari_faturalari_getir,
-            cari_irsaliyeleri_getir, acik_faturalar_getir, hesap_ozeti_getir
+            cari_irsaliyeleri_getir, acik_faturalar_getir, hesap_ozeti_getir,
+            cari_olustur
         )
 
         if tool_name == "cari_listesi_getir":
-            sonuc = cari_listesi_getir()
-            return json.dumps(sonuc, ensure_ascii=False)
+            return json.dumps(cari_listesi_getir(), ensure_ascii=False)
 
         elif tool_name == "cari_detay_getir":
             cari_adi = tool_input.get("cari_adi", "")
             cari_id = _cari_id_bul(cari_adi)
             if not cari_id:
                 return f"'{cari_adi}' adlı cari bulunamadı."
-            sonuc = cari_detay_getir(cari_id)
-            return json.dumps(sonuc, ensure_ascii=False)
+            return json.dumps(cari_detay_getir(cari_id), ensure_ascii=False)
 
         elif tool_name == "cari_faturalari_getir":
             cari_adi = tool_input.get("cari_adi", "")
@@ -135,8 +147,7 @@ def _tool_calistir(tool_name: str, tool_input: dict) -> str:
             cari_id = _cari_id_bul(cari_adi)
             if not cari_id:
                 return f"'{cari_adi}' adlı cari bulunamadı."
-            sonuc = cari_faturalari_getir(cari_id, limit)
-            return json.dumps(sonuc, ensure_ascii=False)
+            return json.dumps(cari_faturalari_getir(cari_id, limit), ensure_ascii=False)
 
         elif tool_name == "cari_irsaliyeleri_getir":
             cari_adi = tool_input.get("cari_adi", "")
@@ -144,15 +155,23 @@ def _tool_calistir(tool_name: str, tool_input: dict) -> str:
             cari_id = _cari_id_bul(cari_adi)
             if not cari_id:
                 return f"'{cari_adi}' adlı cari bulunamadı."
-            sonuc = cari_irsaliyeleri_getir(cari_id, limit)
-            return json.dumps(sonuc, ensure_ascii=False)
+            return json.dumps(cari_irsaliyeleri_getir(cari_id, limit), ensure_ascii=False)
 
         elif tool_name == "acik_faturalar_getir":
-            sonuc = acik_faturalar_getir()
-            return json.dumps(sonuc, ensure_ascii=False)
+            return json.dumps(acik_faturalar_getir(), ensure_ascii=False)
 
         elif tool_name == "hesap_ozeti_getir":
-            sonuc = hesap_ozeti_getir()
+            return json.dumps(hesap_ozeti_getir(), ensure_ascii=False)
+
+        elif tool_name == "cari_olustur":
+            sonuc = cari_olustur(
+                firma_adi=tool_input.get("firma_adi"),
+                email=tool_input.get("email"),
+                telefon=tool_input.get("telefon"),
+                vergi_no=tool_input.get("vergi_no"),
+                vergi_dairesi=tool_input.get("vergi_dairesi"),
+                adres=tool_input.get("adres")
+            )
             return json.dumps(sonuc, ensure_ascii=False)
 
         else:
@@ -265,11 +284,18 @@ SİSTEMİN YAPABİLDİKLERİ:
 - 📎 Sol alttaki butonla kantar fişi fotoğrafı yüklenebilir
 - Sistem fişi OCR ile okur: plaka, ağırlık, fire, malzeme grupları, firma
 - Paraşüt'te otomatik irsaliye oluşturulur (taslak olarak bekletilir)
-- Kullanıcı hangi fabrikaya ait olduğunu seçer (Samsun Makine, Kroman, İçtaş, Kaptan, UHT)
+- Kullanıcı hangi fabrikaya ait olduğunu seçer
 - İrsaliye onaylandıktan sonra malzeme bazlı fiyat girilir
 - Her malzeme ayrı kalem olarak Paraşüt'e fatura kesilir
-- Birden fazla fiş bekletilip sırayla onaylanabilir
 - Paraşüt'teki cari bilgileri, faturalar, irsaliyeler sorgulanabilir
+- Chatbot üzerinden yeni cari açılabilir ("yeni cari aç" yazılırsa bilgileri sırayla sor)
+
+YENİ CARİ AÇMA KURALLARI:
+- Kullanıcı "yeni cari aç", "cari ekle" veya benzeri bir şey yazarsa bilgileri sırayla iste
+- Sıra: 1) Firma adı 2) Email 3) Telefon 4) Vergi no 5) Vergi dairesi 6) Adres
+- Her bilgiyi ayrı mesajda sor, kullanıcı "yok" veya "-" yazarsa o alanı boş bırak
+- Tüm bilgiler toplandıktan sonra özet göster ve onay iste
+- Onay gelince cari_olustur tool'unu çağır
 
 KURALLAR:
 - Kısa ve net cevap ver
@@ -287,7 +313,6 @@ PROFAIX VERİTABANI:
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
     try:
-        # İlk API çağrısı — tool use etkin
         response = client.messages.create(
             model="claude-sonnet-4-5",
             max_tokens=1000,
@@ -296,9 +321,7 @@ PROFAIX VERİTABANI:
             messages=gecmis
         )
 
-        # Tool çağrısı var mı?
         while response.stop_reason == "tool_use":
-            # Tüm tool çağrılarını işle
             tool_results = []
             for block in response.content:
                 if block.type == "tool_use":
@@ -310,12 +333,9 @@ PROFAIX VERİTABANI:
                         "content": sonuc
                     })
 
-            # Assistant mesajını geçmişe ekle
             gecmis.append({"role": "assistant", "content": response.content})
-            # Tool sonuçlarını geçmişe ekle
             gecmis.append({"role": "user", "content": tool_results})
 
-            # Tekrar Claude'a sor
             response = client.messages.create(
                 model="claude-sonnet-4-5",
                 max_tokens=1000,
@@ -324,15 +344,12 @@ PROFAIX VERİTABANI:
                 messages=gecmis
             )
 
-        # Nihai cevabı al
         cevap = ""
         for block in response.content:
             if hasattr(block, "text"):
                 cevap += block.text
-
         cevap = cevap.strip()
 
-        # Geçmişe sadece son user/assistant çiftini kaydet
         gecmis_kayit = [m for m in gecmis if isinstance(m.get("content"), str)]
         gecmis_kayit.append({"role": "assistant", "content": cevap})
         if len(gecmis_kayit) > MAX_GECMIS:

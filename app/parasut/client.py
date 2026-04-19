@@ -307,3 +307,33 @@ def hesap_ozeti_getir() -> dict:
     except Exception as e:
         logger.error(f"Hesap özeti hatası: {e}")
         return {}
+
+
+def cari_olustur(firma_adi: str, email: str = None, telefon: str = None,
+                 vergi_no: str = None, vergi_dairesi: str = None, adres: str = None) -> dict:
+    """Paraşüt'te yeni cari oluşturur ve cache'i yeniler."""
+    try:
+        attributes = {
+            "name": firma_adi,
+            "contact_type": "company",
+            "account_type": "customer",
+        }
+        if email: attributes["email"] = email
+        if telefon: attributes["phone"] = telefon
+        if vergi_no: attributes["tax_number"] = vergi_no
+        if vergi_dairesi: attributes["tax_office"] = vergi_dairesi
+        if adres: attributes["address"] = adres
+
+        istek = {"data": {"type": "contacts", "attributes": attributes}}
+        sonuc = parasut_post(f"/{PARASUT_COMPANY_ID}/contacts", istek)
+        cari_id = sonuc["data"]["id"]
+
+        logger.info(f"✅ Yeni cari oluşturuldu: {firma_adi} (ID: {cari_id})")
+
+        # Cache'i yenile — yeni cari hemen görünsün
+        cari_cache_yenile()
+
+        return {"basarili": True, "id": cari_id, "ad": firma_adi}
+    except Exception as e:
+        logger.error(f"Cari oluşturma hatası: {e}")
+        return {"basarili": False, "hata": str(e)}
