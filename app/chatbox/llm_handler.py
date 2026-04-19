@@ -104,13 +104,9 @@ def _session_kaydet(db, session_id: str, isim: str, gecmis: list):
 
 
 def _cari_id_bul(cari_adi: str) -> str | None:
-    """Cari adından Paraşüt ID'si bulur."""
-    from app.core.config import PARASUT_CONTACT_IDS
-    cari_adi_upper = cari_adi.upper().strip()
-    for anahtar, cid in PARASUT_CONTACT_IDS.items():
-        if anahtar.upper() in cari_adi_upper or cari_adi_upper in anahtar.upper():
-            return str(cid)
-    return None
+    """Cari adından Paraşüt ID'sini dinamik olarak bulur."""
+    from app.parasut.client import cari_id_bul
+    return cari_id_bul(cari_adi)
 
 
 def _tool_calistir(tool_name: str, tool_input: dict) -> str:
