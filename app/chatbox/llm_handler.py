@@ -14,6 +14,60 @@ SORU_BELIRTECLERI = [
     "hangi", "toplam", "bugün", "fatura", "plaka", "irsaliye", "ton"
 ]
 
+# ── TOOL TANIMLARI ────────────────────────────────────────────────────
+TOOLS = [
+    {
+        "name": "cari_listesi_getir",
+        "description": "Paraşüt'teki tüm cari hesapları (müşteri/tedarikçi) listeler. Bakiye, iletişim bilgileri dahil.",
+        "input_schema": {"type": "object", "properties": {}, "required": []}
+    },
+    {
+        "name": "cari_detay_getir",
+        "description": "Belirli bir carinin detaylarını getirir: adres, telefon, email, vergi no, bakiye.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "cari_adi": {"type": "string", "description": "Cari adı (örn: Samsun Makine, Kroman)"}
+            },
+            "required": ["cari_adi"]
+        }
+    },
+    {
+        "name": "cari_faturalari_getir",
+        "description": "Belirli bir carinin faturalarını listeler.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "cari_adi": {"type": "string", "description": "Cari adı"},
+                "limit": {"type": "integer", "description": "Kaç fatura getirileceği (varsayılan 10)", "default": 10}
+            },
+            "required": ["cari_adi"]
+        }
+    },
+    {
+        "name": "cari_irsaliyeleri_getir",
+        "description": "Belirli bir carinin irsaliyelerini listeler.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "cari_adi": {"type": "string", "description": "Cari adı"},
+                "limit": {"type": "integer", "description": "Kaç irsaliye getirileceği (varsayılan 10)", "default": 10}
+            },
+            "required": ["cari_adi"]
+        }
+    },
+    {
+        "name": "acik_faturalar_getir",
+        "description": "Tüm ödenmemiş/gecikmiş faturaları listeler.",
+        "input_schema": {"type": "object", "properties": {}, "required": []}
+    },
+    {
+        "name": "hesap_ozeti_getir",
+        "description": "Genel hesap özetini getirir: toplam alacak, borç, cari sayısı.",
+        "input_schema": {"type": "object", "properties": {}, "required": []}
+    },
+]
+
 
 def _isim_mi(metin: str) -> bool:
     metin_lower = metin.lower().strip()
@@ -29,17 +83,13 @@ def _isim_mi(metin: str) -> bool:
 
 def _session_yukle(db, session_id: str):
     from app.core.database import ChatSession
-    return db.query(ChatSession).filter(
-        ChatSession.session_id == session_id
-    ).first()
+    return db.query(ChatSession).filter(ChatSession.session_id == session_id).first()
 
 
 def _session_kaydet(db, session_id: str, isim: str, gecmis: list):
     from app.core.database import ChatSession
     try:
-        session = db.query(ChatSession).filter(
-            ChatSession.session_id == session_id
-        ).first()
+        session = db.query(ChatSession).filter(ChatSession.session_id == session_id).first()
         gecmis_json = json.dumps(gecmis, ensure_ascii=False)
         if session:
             session.isim = isim
@@ -53,10 +103,73 @@ def _session_kaydet(db, session_id: str, isim: str, gecmis: list):
         db.rollback()
 
 
+def _cari_id_bul(cari_adi: str) -> str | None:
+    """Cari adından Paraşüt ID'si bulur."""
+    from app.core.config import PARASUT_CONTACT_IDS
+    cari_adi_upper = cari_adi.upper().strip()
+    for anahtar, cid in PARASUT_CONTACT_IDS.items():
+        if anahtar.upper() in cari_adi_upper or cari_adi_upper in anahtar.upper():
+            return str(cid)
+    return None
+
+
+def _tool_calistir(tool_name: str, tool_input: dict) -> str:
+    """Tool çağrısını çalıştırır ve sonucu string olarak döndürür."""
+    try:
+        from app.parasut.client import (
+            cari_listesi_getir, cari_detay_getir, cari_faturalari_getir,
+            cari_irsaliyeleri_getir, acik_faturalar_getir, hesap_ozeti_getir
+        )
+
+        if tool_name == "cari_listesi_getir":
+            sonuc = cari_listesi_getir()
+            return json.dumps(sonuc, ensure_ascii=False)
+
+        elif tool_name == "cari_detay_getir":
+            cari_adi = tool_input.get("cari_adi", "")
+            cari_id = _cari_id_bul(cari_adi)
+            if not cari_id:
+                return f"'{cari_adi}' adlı cari bulunamadı."
+            sonuc = cari_detay_getir(cari_id)
+            return json.dumps(sonuc, ensure_ascii=False)
+
+        elif tool_name == "cari_faturalari_getir":
+            cari_adi = tool_input.get("cari_adi", "")
+            limit = tool_input.get("limit", 10)
+            cari_id = _cari_id_bul(cari_adi)
+            if not cari_id:
+                return f"'{cari_adi}' adlı cari bulunamadı."
+            sonuc = cari_faturalari_getir(cari_id, limit)
+            return json.dumps(sonuc, ensure_ascii=False)
+
+        elif tool_name == "cari_irsaliyeleri_getir":
+            cari_adi = tool_input.get("cari_adi", "")
+            limit = tool_input.get("limit", 10)
+            cari_id = _cari_id_bul(cari_adi)
+            if not cari_id:
+                return f"'{cari_adi}' adlı cari bulunamadı."
+            sonuc = cari_irsaliyeleri_getir(cari_id, limit)
+            return json.dumps(sonuc, ensure_ascii=False)
+
+        elif tool_name == "acik_faturalar_getir":
+            sonuc = acik_faturalar_getir()
+            return json.dumps(sonuc, ensure_ascii=False)
+
+        elif tool_name == "hesap_ozeti_getir":
+            sonuc = hesap_ozeti_getir()
+            return json.dumps(sonuc, ensure_ascii=False)
+
+        else:
+            return f"Bilinmeyen tool: {tool_name}"
+
+    except Exception as e:
+        logger.error(f"Tool çalıştırma hatası ({tool_name}): {e}")
+        return f"Hata: {str(e)}"
+
+
 def db_context_hazirla(db) -> str:
     from app.core.database import WeighTicket, Waybill, Invoice, Alert, TicketStatus
     from sqlalchemy import func
-    from datetime import date
 
     bugun = date.today()
 
@@ -67,14 +180,12 @@ def db_context_hazirla(db) -> str:
         ).limit(20).all()
 
         toplam_kg = sum(t.agirlik_kg or 0 for t in tum_fisler)
-        toplam_ton = toplam_kg / 1000
         arac_sayisi = len(tum_fisler)
 
         fis_listesi = "\n".join([
             f"  • {t.fis_tarihi.strftime('%d.%m.%Y') if t.fis_tarihi else t.created_at.strftime('%d.%m.%Y')} — "
             f"{t.plaka} (Fiş No: {t.fis_no or '-'}): net {(t.agirlik_kg or 0)/1000:.2f} ton"
             + (f" | fire: {t.fire_kg:,} kg" if t.fire_kg else "")
-            + (f" | net tartım: {t.net_tartim_kg:,} kg" if t.net_tartim_kg else "")
             + (f" | firma: {t.firma}" if t.firma else "")
             for t in tum_fisler
         ]) if tum_fisler else "  Henüz araç gelmedi"
@@ -90,14 +201,11 @@ def db_context_hazirla(db) -> str:
             f"  • Plaka: {w.ticket.plaka if w.ticket else '-'} | "
             f"Ağırlık: {(w.ticket.agirlik_kg or 0)/1000:.2f} ton | "
             f"Firma: {w.ticket.firma if w.ticket else '-'} | "
-            f"İrsaliye: {w.parasut_irsaliye_id} | "
             f"waybill_id: {w.id}"
             for w in bekleyen_waybills
         ]) if bekleyen_waybills else "  Bekleyen irsaliye yok"
 
-        tum_faturalar = db.query(Invoice).order_by(
-            Invoice.created_at.desc()
-        ).limit(10).all()
+        tum_faturalar = db.query(Invoice).order_by(Invoice.created_at.desc()).limit(10).all()
 
         fatura_listesi = "\n".join([
             f"  • Fatura No: {f.fatura_no} | Tutar: {f.tutar:,} TL"
@@ -106,35 +214,15 @@ def db_context_hazirla(db) -> str:
             for f in tum_faturalar
         ]) if tum_faturalar else "  Henüz fatura yok"
 
-        bugun_faturalar = db.query(Invoice).filter(
-            func.date(Invoice.created_at) == bugun
-        ).all()
-
-        tamamlananlar = db.query(WeighTicket).filter(
-            WeighTicket.status == TicketStatus.TAMAMLANDI
-        ).count()
-
-        son_fatura = tum_faturalar[0] if tum_faturalar else None
-        son_fatura_bilgi = "Henüz fatura yok"
-        if son_fatura:
-            son_fatura_bilgi = f"Fatura No: {son_fatura.fatura_no} | Tutar: {son_fatura.tutar:,} TL" + (f" | Birim: {son_fatura.birim_fiyat:,} TL/kg" if son_fatura.birim_fiyat else "")
-
-        bugun_duplicateler = db.query(Alert).filter(
-            Alert.tur == "DUPLICATE",
-            func.date(Alert.created_at) == bugun
-        ).all()
-
-        duplicate_listesi = "\n".join([
-            f"  • {a.mesaj}"
-            for a in bugun_duplicateler
-        ]) if bugun_duplicateler else "  Bugün mükerrer fiş yok"
+        bugun_faturalar = db.query(Invoice).filter(func.date(Invoice.created_at) == bugun).all()
+        tamamlananlar = db.query(WeighTicket).filter(WeighTicket.status == TicketStatus.TAMAMLANDI).count()
 
         return f"""
 === PROFAIX SİSTEM VERİLERİ ===
 Bugün: {bugun.strftime('%d.%m.%Y')}
 
 GENEL DURUM:
-- Toplam araç: {arac_sayisi} | Toplam: {toplam_ton:.2f} ton
+- Toplam araç: {arac_sayisi} | Toplam: {toplam_kg/1000:.2f} ton
 - Bugün eklenen: {len(bugun_eklenen)} araç / {bugun_kg/1000:.2f} ton
 - Bugün fatura: {len(bugun_faturalar)} | Tamamlanan: {tamamlananlar}
 
@@ -146,10 +234,6 @@ BEKLEYEN İRSALİYELER:
 
 SON 10 FATURA:
 {fatura_listesi}
-
-SON FATURA: {son_fatura_bilgi}
-
-MÜKERRER FİŞLER: {duplicate_listesi}
 """
     except Exception as e:
         logger.error(f"DB context hatası: {e}")
@@ -189,40 +273,79 @@ SİSTEMİN YAPABİLDİKLERİ:
 - İrsaliye onaylandıktan sonra malzeme bazlı fiyat girilir
 - Her malzeme ayrı kalem olarak Paraşüt'e fatura kesilir
 - Birden fazla fiş bekletilip sırayla onaylanabilir
+- Paraşüt'teki cari bilgileri, faturalar, irsaliyeler sorgulanabilir
 
 KURALLAR:
 - Kısa ve net cevap ver
-- Fişlerin giriş tarihine göre sorgula
+- Paraşüt verisi gerekiyorsa tool kullan
 - Sistemde olmayan bilgiyi uydurma
 - Emoji kullan ama abartma
 
-VERİLER:
+PROFAIX VERİTABANI:
 {db_context}"""
 
     gecmis.append({"role": "user", "content": mesaj})
-
     if len(gecmis) > MAX_GECMIS:
         gecmis = gecmis[-MAX_GECMIS:]
 
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
     try:
+        # İlk API çağrısı — tool use etkin
         response = client.messages.create(
             model="claude-sonnet-4-5",
-            max_tokens=500,
+            max_tokens=1000,
             system=sistem_promptu,
+            tools=TOOLS,
             messages=gecmis
         )
 
-        cevap = response.content[0].text.strip()
-        gecmis.append({"role": "assistant", "content": cevap})
-        _session_kaydet(db, gonderen, isim=isim, gecmis=gecmis)
+        # Tool çağrısı var mı?
+        while response.stop_reason == "tool_use":
+            # Tüm tool çağrılarını işle
+            tool_results = []
+            for block in response.content:
+                if block.type == "tool_use":
+                    logger.info(f"🔧 Tool çağrısı: {block.name} — {block.input}")
+                    sonuc = _tool_calistir(block.name, block.input)
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": sonuc
+                    })
 
+            # Assistant mesajını geçmişe ekle
+            gecmis.append({"role": "assistant", "content": response.content})
+            # Tool sonuçlarını geçmişe ekle
+            gecmis.append({"role": "user", "content": tool_results})
+
+            # Tekrar Claude'a sor
+            response = client.messages.create(
+                model="claude-sonnet-4-5",
+                max_tokens=1000,
+                system=sistem_promptu,
+                tools=TOOLS,
+                messages=gecmis
+            )
+
+        # Nihai cevabı al
+        cevap = ""
+        for block in response.content:
+            if hasattr(block, "text"):
+                cevap += block.text
+
+        cevap = cevap.strip()
+
+        # Geçmişe sadece son user/assistant çiftini kaydet
+        gecmis_kayit = [m for m in gecmis if isinstance(m.get("content"), str)]
+        gecmis_kayit.append({"role": "assistant", "content": cevap})
+        if len(gecmis_kayit) > MAX_GECMIS:
+            gecmis_kayit = gecmis_kayit[-MAX_GECMIS:]
+
+        _session_kaydet(db, gonderen, isim=isim, gecmis=gecmis_kayit)
         logger.info(f"🤖 LLM cevap ({isim}): {cevap[:60]}...")
         return cevap
 
     except Exception as e:
         logger.error(f"Claude API hatası: {e}")
-        if gecmis and gecmis[-1]["role"] == "user":
-            gecmis.pop()
         return "❌ Şu an cevap veremiyorum, lütfen tekrar deneyin."
