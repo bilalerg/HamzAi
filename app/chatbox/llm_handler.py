@@ -66,6 +66,20 @@ TOOLS = [
         "input_schema": {"type": "object", "properties": {}, "required": []}
     },
     {
+        "name": "tahsilat_ekle",
+        "description": "Paraşüt'te belirli bir cariye tahsilat (ödeme alındı) kaydı ekler. Bakiyeyi düşürür.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "cari_adi": {"type": "string", "description": "Cari adı (örn: Kroman, Samsun Makine)"},
+                "tutar": {"type": "number", "description": "Tahsilat tutarı (TL)"},
+                "aciklama": {"type": "string", "description": "Açıklama (opsiyonel)"},
+                "tarih": {"type": "string", "description": "Tahsilat tarihi GG.AA.YYYY formatında (opsiyonel, bugün kullanılır)"}
+            },
+            "required": ["cari_adi", "tutar"]
+        }
+    },
+    {
         "name": "cari_olustur",
         "description": "Paraşüt'te yeni cari (müşteri) oluşturur. Tüm bilgiler toplandıktan sonra çağır.",
         "input_schema": {
@@ -162,6 +176,22 @@ def _tool_calistir(tool_name: str, tool_input: dict) -> str:
 
         elif tool_name == "hesap_ozeti_getir":
             return json.dumps(hesap_ozeti_getir(), ensure_ascii=False)
+
+        elif tool_name == "tahsilat_ekle":
+            from app.parasut.client import tahsilat_ekle
+            cari_adi = tool_input.get("cari_adi", "")
+            tutar = tool_input.get("tutar", 0)
+            aciklama = tool_input.get("aciklama")
+            tarih = tool_input.get("tarih")
+            # Tarihi YYYY-MM-DD formatına çevir
+            if tarih and "." in tarih:
+                try:
+                    from datetime import datetime
+                    tarih = datetime.strptime(tarih, "%d.%m.%Y").strftime("%Y-%m-%d")
+                except:
+                    tarih = None
+            sonuc = tahsilat_ekle(cari_adi, tutar, aciklama, tarih)
+            return json.dumps(sonuc, ensure_ascii=False)
 
         elif tool_name == "cari_olustur":
             sonuc = cari_olustur(
@@ -288,7 +318,8 @@ SİSTEMİN YAPABİLDİKLERİ:
 - İrsaliye onaylandıktan sonra malzeme bazlı fiyat girilir
 - Her malzeme ayrı kalem olarak Paraşüt'e fatura kesilir
 - Paraşüt'teki cari bilgileri, faturalar, irsaliyeler sorgulanabilir
-- Chatbot üzerinden yeni cari açılabilir ("yeni cari aç" yazılırsa bilgileri sırayla sor)
+- Chatbot üzerinden yeni cari açılabilir
+- Chatbot üzerinden tahsilat kaydı eklenebilir (örn: 'Kroman'dan 500.000 TL tahsilat al') ("yeni cari aç" yazılırsa bilgileri sırayla sor)
 
 YENİ CARİ AÇMA KURALLARI:
 - Kullanıcı "yeni cari aç", "cari ekle" veya benzeri bir şey yazarsa bilgileri sırayla iste

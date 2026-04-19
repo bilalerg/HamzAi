@@ -337,3 +337,51 @@ def cari_olustur(firma_adi: str, email: str = None, telefon: str = None,
     except Exception as e:
         logger.error(f"Cari oluşturma hatası: {e}")
         return {"basarili": False, "hata": str(e)}
+
+
+def tahsilat_ekle(cari_adi: str, tutar: float, aciklama: str = None, tarih: str = None) -> dict:
+    """Paraşüt'te belirli bir cariye tahsilat kaydı ekler."""
+    try:
+        from datetime import datetime
+
+        cari_id = cari_id_bul(cari_adi)
+        if not cari_id:
+            return {"basarili": False, "hata": f"'{cari_adi}' adlı cari bulunamadı."}
+
+        bugun = tarih or datetime.now().strftime("%Y-%m-%d")
+
+        istek = {
+            "data": {
+                "type": "payments",
+                "attributes": {
+                    "description": aciklama or f"{cari_adi} tahsilat",
+                    "payment_date": bugun,
+                    "amount": str(tutar),
+                    "currency": "TRL",
+                    "payment_type": "cash",
+                    "payment_category": "income",
+                },
+                "relationships": {
+                    "contact": {
+                        "data": {"type": "contacts", "id": str(cari_id)}
+                    }
+                }
+            }
+        }
+
+        sonuc = parasut_post(f"/{PARASUT_COMPANY_ID}/payments", istek)
+        odeme_id = sonuc["data"]["id"]
+
+        logger.info(f"✅ Tahsilat eklendi: {cari_adi} — {tutar:,.0f} TL (ID: {odeme_id})")
+        cari_cache_yenile()
+
+        return {
+            "basarili": True,
+            "id": odeme_id,
+            "cari": cari_adi,
+            "tutar": tutar,
+            "tarih": bugun
+        }
+    except Exception as e:
+        logger.error(f"Tahsilat ekleme hatası: {e}")
+        return {"basarili": False, "hata": str(e)}
