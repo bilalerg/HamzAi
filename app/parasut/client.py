@@ -360,6 +360,9 @@ def fatura_tahsilat_ekle(fatura_id: str, tutar: float, aciklama: str = None, tar
                     "payment_type": "cash",
                 },
                 "relationships": {
+                    "payable": {
+                        "data": {"type": "sales_invoices", "id": str(fatura_id)}
+                    },
                     "account": {
                         "data": {"type": "accounts", "id": "1000594394"}
                     }
@@ -368,7 +371,7 @@ def fatura_tahsilat_ekle(fatura_id: str, tutar: float, aciklama: str = None, tar
         }
 
         sonuc = parasut_post(
-            f"/{PARASUT_COMPANY_ID}/sales_invoices/{fatura_id}/payments",
+            f"/{PARASUT_COMPANY_ID}/payments",
             istek
         )
         odeme_id = sonuc["data"]["id"]
