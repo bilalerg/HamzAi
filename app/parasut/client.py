@@ -444,3 +444,48 @@ def tahsilat_ekle(cari_adi: str, tutar: float, aciklama: str = None, tarih: str 
     except Exception as e:
         logger.error(f"Tahsilat ekleme hatası: {e}")
         return {"basarili": False, "hata": str(e)}
+
+
+def cari_bekleyen_irsaliyeleri_getir(cari_adi: str) -> list:
+    """
+    Belirli bir carinin Paraşüt'teki faturası kesilmemiş irsaliyelerini döndürür.
+    İrsaliyenin ilişkili faturası yoksa bekleyen olarak sayılır.
+    """
+    try:
+        cari_id = cari_id_bul(cari_adi)
+        if not cari_id:
+            return []
+
+        sonuc = parasut_get(
+            f"/{PARASUT_COMPANY_ID}/shipment_documents",
+            params={
+                "filter[contact_id]": cari_id,
+                "page[size]": 25,
+                "sort": "-issue_date",
+                "include": "invoices"
+            }
+        )
+
+        irsaliyeler = []
+        for i in sonuc.get("data", []):
+            attr = i.get("attributes", {})
+            rels = i.get("relationships", {})
+
+            # Faturası var mı kontrol et
+            fatura_rels = rels.get("invoices", {}).get("data", [])
+            if fatura_rels:
+                continue  # Faturası varsa atla
+
+            irsaliyeler.append({
+                "id": i["id"],
+                "tarih": attr.get("issue_date", "-"),
+                "aciklama": attr.get("description", "-"),
+                "net_toplam": attr.get("net_total", 0),
+            })
+
+        logger.info(f"✅ {cari_adi} için {len(irsaliyeler)} bekleyen irsaliye bulundu")
+        return irsaliyeler
+
+    except Exception as e:
+        logger.error(f"Bekleyen irsaliye hatası: {e}")
+        return []

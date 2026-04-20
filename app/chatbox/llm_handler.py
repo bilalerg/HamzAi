@@ -67,15 +67,17 @@ TOOLS = [
     },
     {
         "name": "fatura_kes_waybill",
-        "description": "Fiyatlar toplandıktan sonra waybill'e fatura keser. irsaliye_faturalandir ile bilgileri aldıktan sonra fiyatları kullanıcıdan toplayıp bu tool'u çağır.",
+        "description": "Fiyatlar toplandıktan sonra Paraşüt irsaliyesine fatura keser. irsaliye_faturalandir ile irsaliye bilgilerini aldıktan sonra kullanıcıdan fiyatları toplayıp bu tool'u çağır.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "waybill_id": {"type": "integer", "description": "Waybill ID"},
-                "malzemeler": {"type": "object", "description": "Malzeme adı → kg dict"},
-                "toplanan_fiyatlar": {"type": "object", "description": "Malzeme adı → TL/kg fiyat dict"}
+                "cari_adi": {"type": "string", "description": "Cari/firma adı"},
+                "parasut_irsaliye_id": {"type": "string", "description": "Paraşüt irsaliye ID'si"},
+                "agirlik_kg": {"type": "number", "description": "Net ağırlık kg"},
+                "malzemeler": {"type": "object", "description": "Malzeme adı → kg dict (opsiyonel)"},
+                "toplanan_fiyatlar": {"type": "object", "description": "Malzeme adı → TL/kg fiyat dict veya tek fiyat için {'hurda': fiyat}"}
             },
-            "required": ["waybill_id", "toplanan_fiyatlar"]
+            "required": ["cari_adi", "parasut_irsaliye_id", "toplanan_fiyatlar"]
         }
     },
     {
@@ -203,68 +205,105 @@ def _tool_calistir(tool_name: str, tool_input: dict) -> str:
             return json.dumps(hesap_ozeti_getir(), ensure_ascii=False)
 
         elif tool_name == "fatura_kes_waybill":
-            from app.parasut.fatura import fatura_kes, fatura_kes_malzemeli
-            waybill_id = tool_input.get("waybill_id")
+            from app.parasut.client import cari_id_bul as _cari_id_bul2
+            from app.parasut.client import parasut_post as _parasut_post
+            from app.core.config import PARASUT_COMPANY_ID as _CID, PARASUT_HURDA_PRODUCT_ID as _PROD
+            from datetime import datetime as _dt
+
+            cari_adi = tool_input.get("cari_adi", "")
+            parasut_irsaliye_id = tool_input.get("parasut_irsaliye_id")
+            agirlik_kg = tool_input.get("agirlik_kg", 0)
             malzemeler = tool_input.get("malzemeler", {})
             toplanan_fiyatlar = tool_input.get("toplanan_fiyatlar", {})
 
+            contact_id = _cari_id_bul2(cari_adi)
+            if not contact_id:
+                return json.dumps({"basarili": False, "hata": f"{cari_adi} carisi bulunamadı."})
+
+            bugun = _dt.now().strftime("%Y-%m-%d")
+
+            # Detayları oluştur
             if malzemeler and len(toplanan_fiyatlar) > 1:
-                sonuc = fatura_kes_malzemeli(waybill_id, malzemeler, toplanan_fiyatlar)
+                detaylar = []
+                for malzeme_adi, fiyat in toplanan_fiyatlar.items():
+                    kg = malzemeler.get(malzeme_adi, 0)
+                    if kg <= 0:
+                        continue
+                    detaylar.append({
+                        "type": "sales_invoice_details",
+                        "attributes": {
+                            "quantity": kg,
+                            "unit_price": str(float(fiyat)),
+                            "vat_rate": 0,
+                            "description": f"{malzeme_adi} — {kg:,} kg — {float(fiyat):,.2f} TL/kg"
+                        },
+                        "relationships": {
+                            "product": {"data": {"type": "products", "id": str(_PROD)}}
+                        }
+                    })
             else:
                 birim_fiyat = float(list(toplanan_fiyatlar.values())[0]) if toplanan_fiyatlar else 0
-                sonuc = fatura_kes(waybill_id, birim_fiyat)
+                kg = agirlik_kg or sum(malzemeler.values()) if malzemeler else agirlik_kg
+                detaylar = [{
+                    "type": "sales_invoice_details",
+                    "attributes": {
+                        "quantity": kg,
+                        "unit_price": str(birim_fiyat),
+                        "vat_rate": 0,
+                        "description": f"Hurda — {kg:,} kg — {birim_fiyat:,.2f} TL/kg"
+                    },
+                    "relationships": {
+                        "product": {"data": {"type": "products", "id": str(_PROD)}}
+                    }
+                }]
 
-            return json.dumps(sonuc, ensure_ascii=False)
+            istek = {
+                "data": {
+                    "type": "sales_invoices",
+                    "attributes": {
+                        "item_type": "invoice",
+                        "description": f"Hurda Alım — İrsaliye {parasut_irsaliye_id}",
+                        "issue_date": bugun,
+                        "due_date": bugun,
+                        "currency": "TRL"
+                    },
+                    "relationships": {
+                        "contact": {"data": {"type": "contacts", "id": str(contact_id)}},
+                        "details": {"data": detaylar},
+                        "shipment_document": {"data": {"type": "shipment_documents", "id": str(parasut_irsaliye_id)}}
+                    }
+                }
+            }
+
+            try:
+                sonuc = _parasut_post(f"/{_CID}/sales_invoices", istek)
+                fatura_id = sonuc["data"]["id"]
+                logger.info(f"✅ İrsaliye bazlı fatura kesildi: {fatura_id}")
+                return json.dumps({"basarili": True, "fatura_no": fatura_id}, ensure_ascii=False)
+            except Exception as e:
+                # shipment_document ilişkisi çalışmazsa ilişkisiz dene
+                istek["data"]["relationships"].pop("shipment_document", None)
+                try:
+                    sonuc = _parasut_post(f"/{_CID}/sales_invoices", istek)
+                    fatura_id = sonuc["data"]["id"]
+                    return json.dumps({"basarili": True, "fatura_no": fatura_id}, ensure_ascii=False)
+                except Exception as e2:
+                    return json.dumps({"basarili": False, "hata": str(e2)}, ensure_ascii=False)
 
         elif tool_name == "irsaliye_faturalandir":
-            from app.core.database import SessionLocal, Waybill, WeighTicket, TicketStatus
-            import json as _json
+            from app.parasut.client import cari_bekleyen_irsaliyeleri_getir
             cari_adi = tool_input.get("cari_adi", "")
-            waybill_id = tool_input.get("waybill_id")
-            db2 = SessionLocal()
-            try:
-                # waybill_id verilmişse onu al, yoksa firma adına göre bul
-                if waybill_id:
-                    waybill = db2.query(Waybill).filter(Waybill.id == waybill_id).first()
-                else:
-                    # Firmaya ait bekleyen irsaliyeleri bul
-                    cari_id = cari_id_bul(cari_adi)
-                    bekleyenler = db2.query(Waybill).filter(
-                        Waybill.status == TicketStatus.FABRIKA_BEKLENIYOR
-                    ).all()
-                    # Firma adına göre filtrele
-                    waybill = None
-                    for w in bekleyenler:
-                        t = db2.query(WeighTicket).filter(WeighTicket.id == w.ticket_id).first()
-                        if t and t.firma and cari_adi.upper() in t.firma.upper():
-                            waybill = w
-                            break
 
-                if not waybill:
-                    return f"{cari_adi} için bekleyen irsaliye bulunamadı."
+            irsaliyeler = cari_bekleyen_irsaliyeleri_getir(cari_adi)
 
-                ticket = db2.query(WeighTicket).filter(WeighTicket.id == waybill.ticket_id).first()
-                if not ticket:
-                    return "Fiş bulunamadı."
+            if not irsaliyeler:
+                return f"{cari_adi} için Paraşüt'te faturası kesilmemiş irsaliye bulunamadı."
 
-                # Malzeme bilgisini al
-                malzemeler = {}
-                if ticket.malzemeler:
-                    try:
-                        malzemeler = _json.loads(ticket.malzemeler)
-                    except:
-                        pass
-
-                return json.dumps({
-                    "waybill_id": waybill.id,
-                    "plaka": ticket.plaka,
-                    "agirlik_kg": ticket.agirlik_kg,
-                    "firma": ticket.firma,
-                    "malzemeler": malzemeler,
-                    "mesaj": "Fiyat bilgilerini girdikten sonra fatura keseceğim."
-                }, ensure_ascii=False)
-            finally:
-                db2.close()
+            return json.dumps({
+                "irsaliyeler": irsaliyeler,
+                "cari_adi": cari_adi,
+                "mesaj": f"{len(irsaliyeler)} adet bekleyen irsaliye bulundu. Hangisini faturalandırmak istiyorsunuz? İrsaliye ID'sini belirtin veya tümünü faturalandırmak için 'tümü' yazın."
+            }, ensure_ascii=False)
 
         elif tool_name == "tahsilat_ekle":
             from app.parasut.client import tahsilat_ekle
