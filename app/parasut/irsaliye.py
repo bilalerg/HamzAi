@@ -1,5 +1,6 @@
 # irsaliye.py — Paraşüt e-İrsaliye Modülü
 
+import json
 from datetime import datetime
 from app.parasut.client import parasut_post, cari_id_bul
 from app.core.config import PARASUT_COMPANY_ID, PARASUT_HURDA_PRODUCT_ID
@@ -23,7 +24,6 @@ def irsaliye_olustur(ticket_id: int, beklet: bool = False) -> dict:
 
         tarih_str = _tarih_formatla(ticket.fis_tarihi)
 
-        # Dinamik cari ID — config.py'de hardcode yok
         contact_id = cari_id_bul(ticket.firma)
         if not contact_id:
             logger.warning(f"Cari bulunamadı: {ticket.firma}, ilk cari kullanılıyor")
@@ -43,6 +43,47 @@ def irsaliye_olustur(ticket_id: int, beklet: bool = False) -> dict:
         if ticket.plaka:
             attributes["vehicle_plate_number"] = ticket.plaka
 
+        # Malzeme bazlı stock_movements oluştur
+        malzemeler = {}
+        if ticket.malzemeler:
+            try:
+                malzemeler = json.loads(ticket.malzemeler)
+            except:
+                pass
+
+        if malzemeler:
+            # Her malzeme için ayrı stock_movement
+            stock_movements = []
+            for malzeme_adi, kg in malzemeler.items():
+                if kg > 0:
+                    stock_movements.append({
+                        "type": "stock_movements",
+                        "attributes": {
+                            "quantity": kg,
+                            "description": f"{ticket.plaka} — {malzeme_adi} — {kg:,} kg"
+                        },
+                        "relationships": {
+                            "product": {
+                                "data": {"type": "products", "id": str(PARASUT_HURDA_PRODUCT_ID)}
+                            }
+                        }
+                    })
+            logger.info(f"Malzeme bazlı irsaliye: {len(stock_movements)} kalem")
+        else:
+            # Malzeme yoksa tek kalem
+            stock_movements = [{
+                "type": "stock_movements",
+                "attributes": {
+                    "quantity": ticket.agirlik_kg or 1,
+                    "description": f"{ticket.plaka} — hurda malzeme"
+                },
+                "relationships": {
+                    "product": {
+                        "data": {"type": "products", "id": str(PARASUT_HURDA_PRODUCT_ID)}
+                    }
+                }
+            }]
+
         istek_verisi = {
             "data": {
                 "type": "shipment_documents",
@@ -52,18 +93,7 @@ def irsaliye_olustur(ticket_id: int, beklet: bool = False) -> dict:
                         "data": {"type": "contacts", "id": str(contact_id)}
                     },
                     "stock_movements": {
-                        "data": [{
-                            "type": "stock_movements",
-                            "attributes": {
-                                "quantity": ticket.agirlik_kg or 1,
-                                "description": f"{ticket.plaka} — hurda malzeme"
-                            },
-                            "relationships": {
-                                "product": {
-                                    "data": {"type": "products", "id": str(PARASUT_HURDA_PRODUCT_ID)}
-                                }
-                            }
-                        }]
+                        "data": stock_movements
                     }
                 }
             }
