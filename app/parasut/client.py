@@ -448,8 +448,7 @@ def tahsilat_ekle(cari_adi: str, tutar: float, aciklama: str = None, tarih: str 
 
 def cari_bekleyen_irsaliyeleri_getir(cari_adi: str) -> list:
     """
-    Belirli bir carinin Paraşüt'teki faturası kesilmemiş irsaliyelerini döndürür.
-    İrsaliyenin ilişkili faturası yoksa bekleyen olarak sayılır.
+    Belirli bir carinin Paraşüt'teki irsaliyelerini stock_movements dahil döndürür.
     """
     try:
         cari_id = cari_id_bul(cari_adi)
@@ -462,30 +461,89 @@ def cari_bekleyen_irsaliyeleri_getir(cari_adi: str) -> list:
                 "filter[contact_id]": cari_id,
                 "page[size]": 25,
                 "sort": "-issue_date",
-                "include": "invoices"
+                "include": "stock_movements"
             }
         )
+
+        included = sonuc.get("included", [])
+        sm_map = {
+            inc["id"]: inc.get("attributes", {})
+            for inc in included
+            if inc.get("type") == "stock_movements"
+        }
 
         irsaliyeler = []
         for i in sonuc.get("data", []):
             attr = i.get("attributes", {})
             rels = i.get("relationships", {})
+            sm_rels = rels.get("stock_movements", {}).get("data", [])
 
-            # Faturası var mı kontrol et
-            fatura_rels = rels.get("invoices", {}).get("data", [])
-            if fatura_rels:
-                continue  # Faturası varsa atla
+            kalemler = []
+            for sm_ref in sm_rels:
+                sm_attr = sm_map.get(sm_ref["id"], {})
+                miktar = float(sm_attr.get("quantity", 0))
+                if miktar > 0:
+                    kalemler.append({
+                        "aciklama": sm_attr.get("description", "Hurda"),
+                        "miktar_kg": miktar,
+                    })
 
             irsaliyeler.append({
                 "id": i["id"],
                 "tarih": attr.get("issue_date", "-"),
                 "aciklama": attr.get("description", "-"),
-                "net_toplam": attr.get("net_total", 0),
+                "kalemler": kalemler,
+                "toplam_kg": sum(k["miktar_kg"] for k in kalemler),
             })
 
-        logger.info(f"✅ {cari_adi} için {len(irsaliyeler)} bekleyen irsaliye bulundu")
+        logger.info(f"✅ {cari_adi} için {len(irsaliyeler)} irsaliye bulundu")
         return irsaliyeler
 
     except Exception as e:
         logger.error(f"Bekleyen irsaliye hatası: {e}")
         return []
+
+
+def irsaliye_detay_getir(irsaliye_id: str) -> dict:
+    """
+    Paraşüt'ten belirli bir irsaliyenin detayını çeker.
+    stock_movements dahil — kalemleri ve miktarları döndürür.
+    """
+    try:
+        sonuc = parasut_get(
+            f"/{PARASUT_COMPANY_ID}/shipment_documents/{irsaliye_id}",
+            params={"include": "stock_movements,stock_movements.product"}
+        )
+
+        data = sonuc.get("data", {})
+        attr = data.get("attributes", {})
+        included = sonuc.get("included", [])
+
+        # Stock movements listesi
+        sm_rels = data.get("relationships", {}).get("stock_movements", {}).get("data", [])
+        sm_ids = {sm["id"] for sm in sm_rels}
+
+        kalemler = []
+        for inc in included:
+            if inc.get("type") == "stock_movements" and inc["id"] in sm_ids:
+                sm_attr = inc.get("attributes", {})
+                # Ürün adını bul
+                urun_adi = sm_attr.get("description", "Hurda Malzeme")
+                miktar = float(sm_attr.get("quantity", 0))
+                if miktar > 0:
+                    kalemler.append({
+                        "aciklama": urun_adi,
+                        "miktar_kg": miktar,
+                    })
+
+        return {
+            "id": irsaliye_id,
+            "tarih": attr.get("issue_date", "-"),
+            "aciklama": attr.get("description", "-"),
+            "kalemler": kalemler,
+            "toplam_kg": sum(k["miktar_kg"] for k in kalemler),
+        }
+
+    except Exception as e:
+        logger.error(f"İrsaliye detay hatası: {e}")
+        return {}

@@ -294,15 +294,20 @@ def _tool_calistir(tool_name: str, tool_input: dict) -> str:
             from app.parasut.client import cari_bekleyen_irsaliyeleri_getir
             cari_adi = tool_input.get("cari_adi", "")
 
+            # Tamamen Paraşüt'ten çek — DB'ye bakma
             irsaliyeler = cari_bekleyen_irsaliyeleri_getir(cari_adi)
-
             if not irsaliyeler:
-                return f"{cari_adi} için Paraşüt'te faturası kesilmemiş irsaliye bulunamadı."
+                return f"{cari_adi} için Paraşüt'te irsaliye bulunamadı."
 
             return json.dumps({
                 "irsaliyeler": irsaliyeler,
                 "cari_adi": cari_adi,
-                "mesaj": f"{len(irsaliyeler)} adet bekleyen irsaliye bulundu. Hangisini faturalandırmak istiyorsunuz? İrsaliye ID'sini belirtin veya tümünü faturalandırmak için 'tümü' yazın."
+                "talimat": (
+                    "Her irsaliyenin kalemleri (aciklama + miktar_kg) gösterildi. "
+                    "Kullanıcıya hangi irsaliyeyi faturalandırmak istediğini sor. "
+                    "Seçilen irsaliyenin her kalemi için ayrı fiyat sor. "
+                    "Sonra fatura_kes_waybill tool'unu çağır."
+                )
             }, ensure_ascii=False)
 
         elif tool_name == "tahsilat_ekle":
