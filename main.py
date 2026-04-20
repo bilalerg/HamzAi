@@ -131,9 +131,8 @@ async def upload_fis(file: UploadFile = File(...), session_id: str = "web_user")
             f"🏭 Bu fiş hangi fabrikaya ait?"
         )
 
-        from app.parasut.client import cari_listesi_getir
-        cariler = cari_listesi_getir()
-        firma_listesi = [c["ad"] for c in cariler]
+        from app.core.config import PARASUT_CONTACT_IDS
+        firma_listesi = list(PARASUT_CONTACT_IDS.keys())
 
         return JSONResponse({
             "cevap": cevap,
@@ -161,6 +160,7 @@ async def firma_sec(request: Request):
     db = SessionLocal()
     try:
         from app.core.database import WeighTicket
+        from app.core.config import PARASUT_CONTACT_IDS
 
         # Ticket'ta firma adını güncelle
         ticket = db.query(WeighTicket).filter(WeighTicket.id == ticket_id).first()
@@ -179,13 +179,25 @@ async def firma_sec(request: Request):
 
         waybill_id = sonuc["waybill_id"]
 
+        # Malzeme bilgisini waybill'e kaydet
+        from app.core.database import Waybill
+        import json as _json
+        waybill_obj = db.query(Waybill).filter(Waybill.id == waybill_id).first()
+        if waybill_obj and malzemeler:
+            waybill_obj.malzemeler_json = _json.dumps(malzemeler, ensure_ascii=False)
+            db.commit()
+
+        malzeme_ozet = ""
+        if malzemeler:
+            malzeme_ozet = "\n\n📦 Malzemeler:\n"
+            for isim, kg in malzemeler.items():
+                malzeme_ozet += f"  • {isim}: {kg:,} kg\n"
+
         return JSONResponse({
-            "cevap": f"✅ {secilen_firma} seçildi, irsaliye Paraşüt'te oluşturuldu!\n\n"
-                     f"⏳ İrsaliye onay bekliyor.\n"
-                     f"Faturaya geçmek için 'Onayla' butonuna tıklayın.",
-            "bekliyor": "irsaliye_onay",
-            "waybill_id": waybill_id,
-            "malzemeler": malzemeler,
+            "cevap": f"✅ {secilen_firma} seçildi, irsaliye Paraşüt'te oluşturuldu!\n"
+                     f"🆔 İrsaliye ID: {waybill_id}"
+                     f"{malzeme_ozet}\n"
+                     f"💡 Fatura kesmek için chatbota yazın: '{secilen_firma} irsaliyesini faturalandır'",
         })
     finally:
         db.close()
@@ -237,6 +249,42 @@ async def irsaliye_onayla_endpoint(request: Request):
     finally:
         db.close()
 
+
+
+
+@app.post("/api/fatura-kes-waybill")
+async def fatura_kes_waybill(request: Request):
+    """Chatbot üzerinden waybill_id ile fatura keser."""
+    data = await request.json()
+    waybill_id = data.get("waybill_id")
+    toplanan_fiyatlar = data.get("toplanan_fiyatlar", {})
+    malzemeler = data.get("malzemeler", {})
+
+    db = SessionLocal()
+    try:
+        if malzemeler and toplanan_fiyatlar:
+            from app.parasut.fatura import fatura_kes_malzemeli
+            sonuc = fatura_kes_malzemeli(waybill_id, malzemeler, toplanan_fiyatlar)
+        else:
+            birim_fiyat = list(toplanan_fiyatlar.values())[0] if toplanan_fiyatlar else 0
+            from app.parasut.fatura import fatura_kes
+            sonuc = fatura_kes(waybill_id, birim_fiyat)
+
+        if not sonuc.get("basarili"):
+            return JSONResponse({"cevap": f"❌ Fatura kesilemedi: {sonuc.get('hata')}"})
+
+        toplam = sonuc.get("toplam_tutar", 0)
+        ozet = "✅ Fatura kesildi!\n\n"
+        for m, f in toplanan_fiyatlar.items():
+            kg = malzemeler.get(m, 0)
+            ozet += f"  • {m}: {kg:,} kg × {f:,} TL/kg = {int(kg*f):,} TL\n"
+        ozet += f"\n💵 Toplam: {int(toplam):,} TL\n"
+        ozet += f"🧾 Fatura No: {sonuc.get('fatura_no', '-')}"
+        return JSONResponse({"cevap": ozet, "basarili": True})
+    except Exception as e:
+        return JSONResponse({"cevap": f"❌ Hata: {str(e)}"})
+    finally:
+        db.close()
 
 @app.post("/api/fiyat")
 async def fiyat_gir(request: Request):
@@ -736,23 +784,9 @@ CHAT_HTML = """<!DOCTYPE html>
       const data = await res.json();
       removeTyping();
 
-      if (data.bekliyor === 'irsaliye_onay') {
-        const btn = document.createElement('button');
-        btn.className = 'onay-btn';
-        btn.textContent = '✅ İrsaliyeyi Onayla ve Faturaya Geç';
-        btn.onclick = () => irsaliyeOnayla(data.waybill_id, data.malzemeler, btn);
-        addMessage(data.cevap, 'bot', btn);
-        bekleyenDurum = {
-          tip: 'irsaliye_onay',
-          waybill_id: data.waybill_id,
-          malzemeler: data.malzemeler || malzemeler
-        };
-        setPlaceholder();
-      } else {
-        addMessage(data.cevap, 'bot');
-        bekleyenDurum = null;
-        setPlaceholder();
-      }
+      addMessage(data.cevap, 'bot');
+      bekleyenDurum = null;
+      setPlaceholder();
     } catch {
       removeTyping();
       addMessage('❌ Hata oluştu, tekrar deneyin.', 'bot');

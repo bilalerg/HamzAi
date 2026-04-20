@@ -66,6 +66,31 @@ TOOLS = [
         "input_schema": {"type": "object", "properties": {}, "required": []}
     },
     {
+        "name": "fatura_kes_waybill",
+        "description": "Fiyatlar toplandıktan sonra waybill'e fatura keser. irsaliye_faturalandir ile bilgileri aldıktan sonra fiyatları kullanıcıdan toplayıp bu tool'u çağır.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "waybill_id": {"type": "integer", "description": "Waybill ID"},
+                "malzemeler": {"type": "object", "description": "Malzeme adı → kg dict"},
+                "toplanan_fiyatlar": {"type": "object", "description": "Malzeme adı → TL/kg fiyat dict"}
+            },
+            "required": ["waybill_id", "toplanan_fiyatlar"]
+        }
+    },
+    {
+        "name": "irsaliye_faturalandir",
+        "description": "Bekleyen bir irsaliyeyi faturalandırır. Önce irsaliyeyi bulur, malzeme/kilo bilgilerini gösterir, fiyatları toplar ve fatura keser. 'Samsun Makine irsaliyesini faturalandır' gibi isteklerde kullan.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "cari_adi": {"type": "string", "description": "Cari/firma adı"},
+                "waybill_id": {"type": "integer", "description": "Belirli bir waybill ID (opsiyonel, verilmezse en son bekleyen irsaliye kullanılır)"}
+            },
+            "required": ["cari_adi"]
+        }
+    },
+    {
         "name": "tahsilat_ekle",
         "description": "Paraşüt'te belirli bir cariye tahsilat (ödeme alındı) kaydı ekler. Bakiyeyi düşürür.",
         "input_schema": {
@@ -176,6 +201,70 @@ def _tool_calistir(tool_name: str, tool_input: dict) -> str:
 
         elif tool_name == "hesap_ozeti_getir":
             return json.dumps(hesap_ozeti_getir(), ensure_ascii=False)
+
+        elif tool_name == "fatura_kes_waybill":
+            from app.parasut.fatura import fatura_kes, fatura_kes_malzemeli
+            waybill_id = tool_input.get("waybill_id")
+            malzemeler = tool_input.get("malzemeler", {})
+            toplanan_fiyatlar = tool_input.get("toplanan_fiyatlar", {})
+
+            if malzemeler and len(toplanan_fiyatlar) > 1:
+                sonuc = fatura_kes_malzemeli(waybill_id, malzemeler, toplanan_fiyatlar)
+            else:
+                birim_fiyat = float(list(toplanan_fiyatlar.values())[0]) if toplanan_fiyatlar else 0
+                sonuc = fatura_kes(waybill_id, birim_fiyat)
+
+            return json.dumps(sonuc, ensure_ascii=False)
+
+        elif tool_name == "irsaliye_faturalandir":
+            from app.core.database import SessionLocal, Waybill, WeighTicket, TicketStatus
+            import json as _json
+            cari_adi = tool_input.get("cari_adi", "")
+            waybill_id = tool_input.get("waybill_id")
+            db2 = SessionLocal()
+            try:
+                # waybill_id verilmişse onu al, yoksa firma adına göre bul
+                if waybill_id:
+                    waybill = db2.query(Waybill).filter(Waybill.id == waybill_id).first()
+                else:
+                    # Firmaya ait bekleyen irsaliyeleri bul
+                    cari_id = cari_id_bul(cari_adi)
+                    bekleyenler = db2.query(Waybill).filter(
+                        Waybill.status == TicketStatus.FABRIKA_BEKLENIYOR
+                    ).all()
+                    # Firma adına göre filtrele
+                    waybill = None
+                    for w in bekleyenler:
+                        t = db2.query(WeighTicket).filter(WeighTicket.id == w.ticket_id).first()
+                        if t and t.firma and cari_adi.upper() in t.firma.upper():
+                            waybill = w
+                            break
+
+                if not waybill:
+                    return f"{cari_adi} için bekleyen irsaliye bulunamadı."
+
+                ticket = db2.query(WeighTicket).filter(WeighTicket.id == waybill.ticket_id).first()
+                if not ticket:
+                    return "Fiş bulunamadı."
+
+                # Malzeme bilgisini al
+                malzemeler = {}
+                if ticket.malzemeler:
+                    try:
+                        malzemeler = _json.loads(ticket.malzemeler)
+                    except:
+                        pass
+
+                return json.dumps({
+                    "waybill_id": waybill.id,
+                    "plaka": ticket.plaka,
+                    "agirlik_kg": ticket.agirlik_kg,
+                    "firma": ticket.firma,
+                    "malzemeler": malzemeler,
+                    "mesaj": "Fiyat bilgilerini girdikten sonra fatura keseceğim."
+                }, ensure_ascii=False)
+            finally:
+                db2.close()
 
         elif tool_name == "tahsilat_ekle":
             from app.parasut.client import tahsilat_ekle
@@ -319,7 +408,8 @@ SİSTEMİN YAPABİLDİKLERİ:
 - Her malzeme ayrı kalem olarak Paraşüt'e fatura kesilir
 - Paraşüt'teki cari bilgileri, faturalar, irsaliyeler sorgulanabilir
 - Chatbot üzerinden yeni cari açılabilir
-- Chatbot üzerinden tahsilat kaydı eklenebilir (örn: 'Kroman'dan 500.000 TL tahsilat al') ("yeni cari aç" yazılırsa bilgileri sırayla sor)
+- Chatbot üzerinden tahsilat kaydı eklenebilir
+- 'X firmasının irsaliyesini faturalandır' deyince fiyat sorulup fatura kesilir (örn: 'Kroman'dan 500.000 TL tahsilat al') ("yeni cari aç" yazılırsa bilgileri sırayla sor)
 
 YENİ CARİ AÇMA KURALLARI:
 - Kullanıcı "yeni cari aç", "cari ekle" veya benzeri bir şey yazarsa bilgileri sırayla iste
