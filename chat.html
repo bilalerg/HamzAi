@@ -560,21 +560,24 @@
       addMessage('❌ Geçersiz fiyat. Örnek: 14.85 veya 14850', 'bot');
       fiyatSor('💰 Tekrar deneyin:'); return;
     }
-    const { irs, malzeme_listesi, malzemeler, toplanan_fiyatlar, index } = faturaAkisi;
+    const { irs, malzeme_listesi, malzemeler, toplanan_fiyatlar, index,
+            otomatik_kalan, otomatik_index } = faturaAkisi;
+
     if (malzeme_listesi.length > 0) {
       const mevcut = malzeme_listesi[index];
+      const mevcut_kg = malzemeler[mevcut] || 0;
       toplanan_fiyatlar[mevcut] = fiyat;
       const sonraki = index + 1;
       if (sonraki < malzeme_listesi.length) {
         faturaAkisi.index = sonraki;
         const sm = malzeme_listesi[sonraki];
         const sk = malzemeler[sm] || 0;
-        fiyatSor(`✅ ${mevcut}: ${fiyat.toLocaleString()} TL/kg kaydedildi.\n\n💰 ${sm} fiyatı nedir?\n(${sk.toLocaleString()} kg / ${(sk/1000).toFixed(2)} ton)`);
+        fiyatSor(`✅ ${mevcut} (${mevcut_kg.toLocaleString()} kg): ${fiyat.toLocaleString()} TL/kg kaydedildi.\n\n💰 ${sm} fiyatı nedir?\n(${sk.toLocaleString()} kg / ${(sk/1000).toFixed(2)} ton)`);
       } else {
-        await faturaOzetVeKes(irs, malzemeler, toplanan_fiyatlar);
+        await faturaOzetVeKesOtomatik(irs, malzemeler, toplanan_fiyatlar, null, otomatik_kalan, otomatik_index);
       }
     } else {
-      await faturaOzetVeKes(irs, {}, { 'hurda': fiyat }, irs.toplam_kg);
+      await faturaOzetVeKesOtomatik(irs, {}, { 'hurda': fiyat }, irs.toplam_kg, otomatik_kalan, otomatik_index);
     }
   }
 
@@ -595,6 +598,11 @@
       removeTyping();
       addMessage(data.cevap, 'bot');
       faturaAkisi = null;
+
+      // Fatura başarıyla kesildiyse bekleyen irsaliyeleri kontrol et
+      if (data.basarili) {
+        await sonrakiIrsaliyeSor();
+      }
     } catch {
       removeTyping();
       addMessage('❌ Fatura kesilemedi, tekrar deneyin.', 'bot');
@@ -602,7 +610,150 @@
     }
   }
 
-  function parseFiyat(metin) {
+  // Fatura kesildikten sonra kalan irsaliyeleri kontrol et ve devam sor
+  async function sonrakiIrsaliyeSor() {
+    try {
+      const res = await fetch('/api/bekleyen-irsaliyeler');
+      const data = await res.json();
+
+      if (!data.irsaliyeler || data.irsaliyeler.length === 0) {
+        addMessage('🎉 Tüm irsaliyeler faturalandı! Bekleyen irsaliye kalmadı.', 'bot');
+        return;
+      }
+
+      // Kalan irsaliyeler var — devam sorusu sor
+      const kalan = data.irsaliyeler;
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'margin-top:8px;';
+
+      const bilgi = document.createElement('div');
+      bilgi.style.cssText = 'font-size:12px;color:var(--muted);margin-bottom:10px;';
+      bilgi.textContent = `${kalan.length} irsaliye daha bekliyor. Devam edilsin mi?`;
+      wrap.appendChild(bilgi);
+
+      const btnWrap = document.createElement('div');
+      btnWrap.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;';
+
+      // Sıradaki irsaliyeye geç
+      const devamBtn = document.createElement('button');
+      devamBtn.className = 'fiyat-gonder-btn';
+      devamBtn.textContent = `▶ Sıradakine geç (${kalan[0].cari_adi.split(' ')[0]})`;
+      devamBtn.onclick = () => {
+        btnWrap.querySelectorAll('button').forEach(b => b.disabled = true);
+        irsaliyeSecildi(kalan[0], null);
+      };
+
+      // Hepsini sırayla kes
+      const hepsiBtn = document.createElement('button');
+      hepsiBtn.className = 'fiyat-gonder-btn';
+      hepsiBtn.style.background = '#1a3d28';
+      hepsiBtn.textContent = `⚡ Hepsini sırayla kes (${kalan.length} adet)`;
+      hepsiBtn.onclick = () => {
+        btnWrap.querySelectorAll('button').forEach(b => b.disabled = true);
+        tumunuSiralaKes(kalan, 0);
+      };
+
+      // Dur
+      const durBtn = document.createElement('button');
+      durBtn.style.cssText = 'padding:9px 18px;background:var(--surface);color:var(--muted);border:1.5px solid var(--border2);border-radius:9px;font-family:\'DM Sans\',sans-serif;font-size:13px;cursor:pointer;';
+      durBtn.textContent = '⏸ Şimdilik dur';
+      durBtn.onclick = () => {
+        btnWrap.querySelectorAll('button').forEach(b => b.disabled = true);
+        addMessage(`Tamam, ${kalan.length} irsaliye beklemede kalacak.`, 'bot');
+      };
+
+      btnWrap.appendChild(devamBtn);
+      btnWrap.appendChild(hepsiBtn);
+      btnWrap.appendChild(durBtn);
+      wrap.appendChild(btnWrap);
+      addMessage('', 'bot', wrap);
+
+    } catch {
+      // Sessizce geç, kritik değil
+    }
+  }
+
+  // Tüm irsaliyeleri sırayla kes — otomatik mod
+  let otomatikMod = false;
+  async function tumunuSiralaKes(irsaliyeler, index) {
+    if (index >= irsaliyeler.length) {
+      addMessage('🎉 Tüm irsaliyeler faturalandı!', 'bot');
+      otomatikMod = false;
+      return;
+    }
+    otomatikMod = true;
+    const irs = irsaliyeler[index];
+    addMessage(`⚡ Otomatik: ${irs.cari_adi} (${(irs.toplam_kg/1000).toFixed(2)} ton)`, 'bot');
+
+    // Otomatik modda fatura kesince bir sonrakine geç
+    // irsaliyeSecildi'yi çağır ama sonrakiIrsaliyeSor yerine index+1 ile devam et
+    const kalemler = irs.kalemler || [];
+    if (kalemler.length > 1) {
+      faturaAkisi = {
+        irs,
+        malzeme_listesi: kalemler.map(k => k.aciklama),
+        malzemeler: Object.fromEntries(kalemler.map(k => [k.aciklama, k.miktar_kg])),
+        toplanan_fiyatlar: {}, index: 0,
+        // Otomatik mod: fatura sonrası bir sonraki index'e geç
+        otomatik_kalan: irsaliyeler,
+        otomatik_index: index + 1
+      };
+      const ilk = kalemler[0];
+      fiyatSor(`💰 ${irs.cari_adi} — ${ilk.aciklama} fiyatı?\n(${ilk.miktar_kg.toLocaleString()} kg / ${(ilk.miktar_kg/1000).toFixed(2)} ton)`);
+    } else {
+      faturaAkisi = {
+        irs, malzeme_listesi: [], malzemeler: {}, toplanan_fiyatlar: {}, index: 0,
+        otomatik_kalan: irsaliyeler,
+        otomatik_index: index + 1
+      };
+      fiyatSor(`💰 ${irs.cari_adi} — birim fiyat? (TL/kg)\n⚖️ ${(irs.toplam_kg/1000).toFixed(2)} ton`);
+    }
+  }
+
+  // Otomatik mod destekli fatura kesme
+  async function faturaOzetVeKesOtomatik(irs, malzemeler, toplanan_fiyatlar, agirlik_kg, otomatik_kalan, otomatik_index) {
+    showTyping();
+    try {
+      const res = await fetch('/api/fatura-kes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          parasut_irsaliye_id: irs.parasut_irsaliye_id,
+          cari_adi: irs.cari_adi,
+          agirlik_kg: agirlik_kg || irs.toplam_kg,
+          malzemeler, toplanan_fiyatlar
+        })
+      });
+      const data = await res.json();
+      removeTyping();
+      addMessage(data.cevap, 'bot');
+      faturaAkisi = null;
+
+      if (!data.basarili) return;
+
+      // Otomatik mod — sıradaki irsaliyeye geç
+      if (otomatik_kalan && otomatik_index < otomatik_kalan.length) {
+        setTimeout(() => tumunuSiralaKes(otomatik_kalan, otomatik_index), 500);
+      } else if (otomatik_kalan && otomatik_index >= otomatik_kalan.length) {
+        // Otomatik listesi bitti ama yeni eklenmiş olabilir
+        const res2 = await fetch('/api/bekleyen-irsaliyeler');
+        const d2 = await res2.json();
+        if (!d2.irsaliyeler || d2.irsaliyeler.length === 0) {
+          addMessage('🎉 Tüm irsaliyeler faturalandı!', 'bot');
+        } else {
+          addMessage(`✅ Otomatik sıra tamamlandı. ${d2.irsaliyeler.length} yeni irsaliye mevcut.`, 'bot');
+          await sonrakiIrsaliyeSor();
+        }
+      } else {
+        // Manuel mod — devam sorusu
+        await sonrakiIrsaliyeSor();
+      }
+    } catch {
+      removeTyping();
+      addMessage('❌ Fatura kesilemedi, tekrar deneyin.', 'bot');
+      faturaAkisi = null;
+    }
+  }
     metin = metin.trim().toLowerCase()
       .replace('tl','').replace('lira','').replace('₺','').trim()
       .replace(',','.');
