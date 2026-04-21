@@ -193,9 +193,14 @@ async def firma_sec(request: Request):
         parasut_id = sonuc.get("parasut_id", "-")
 
         waybill_obj = db.query(Waybill).filter(Waybill.id == waybill_id).first()
-        if waybill_obj and malzemeler:
-            waybill_obj.malzemeler_json = _json.dumps(malzemeler, ensure_ascii=False)
+        if waybill_obj:
+            if malzemeler:
+                waybill_obj.malzemeler_json = _json.dumps(malzemeler, ensure_ascii=False)
+            elif ticket.malzemeler:
+                # Frontend malzeme göndermemişse ticket'taki malzemeleri kullan
+                waybill_obj.malzemeler_json = ticket.malzemeler
             db.commit()
+            logger.info(f"Waybill malzemeler_json kaydedildi: {waybill_obj.malzemeler_json}")
 
         malzeme_ozet = ""
         if malzemeler:
@@ -357,19 +362,21 @@ async def cari_olustur_endpoint(request: Request):
 async def bekleyen_irsaliyeler():
     """
     Tüm carilerin bekleyen irsaliyelerini getirir.
-    DB'de TAMAMLANDI olan waybill'lerin parasut_irsaliye_id'lerini filtreler —
-    faturası kesilmiş irsaliyeler listede çıkmaz.
+    Malzeme bilgisi DB'den okunur (Paraşüt ürün adını override ediyor).
     """
     db = SessionLocal()
     try:
         from app.parasut.client import cari_listesi_getir, cari_bekleyen_irsaliyeleri_getir
         from app.core.database import Waybill, TicketStatus
 
-        # DB'de tamamlanmış irsaliyelerin Paraşüt ID'lerini çek
-        tamamlananlar = db.query(Waybill).filter(
-            Waybill.status == TicketStatus.TAMAMLANDI
-        ).all()
-        tamamlanan_ids = {w.parasut_irsaliye_id for w in tamamlananlar if w.parasut_irsaliye_id}
+        # DB'deki tüm waybill'leri çek — malzeme bilgisi ve status için
+        tum_waybiller = db.query(Waybill).all()
+        waybill_map = {w.parasut_irsaliye_id: w for w in tum_waybiller if w.parasut_irsaliye_id}
+
+        tamamlanan_ids = {
+            w.parasut_irsaliye_id for w in tum_waybiller
+            if w.status == TicketStatus.TAMAMLANDI and w.parasut_irsaliye_id
+        }
         logger.info(f"Tamamlanmış irsaliye ID'leri: {tamamlanan_ids}")
 
         cariler = cari_listesi_getir()
@@ -377,15 +384,34 @@ async def bekleyen_irsaliyeler():
         for cari in cariler:
             irsaliyeler = cari_bekleyen_irsaliyeleri_getir(cari["ad"])
             for irs in irsaliyeler:
-                # Faturası kesilmişse atla
                 if str(irs["id"]) in tamamlanan_ids:
                     continue
+
+                # Malzeme bilgisini DB'den al
+                waybill = waybill_map.get(str(irs["id"]))
+                kalemler = irs.get("kalemler", [])
+                toplam_kg = irs.get("toplam_kg", 0)
+
+                if waybill and waybill.malzemeler_json:
+                    try:
+                        malzemeler = _json.loads(waybill.malzemeler_json)
+                        if malzemeler:
+                            kalemler = [
+                                {"aciklama": ad, "miktar_kg": kg}
+                                for ad, kg in malzemeler.items()
+                                if kg > 0
+                            ]
+                            toplam_kg = sum(k["miktar_kg"] for k in kalemler)
+                            logger.info(f"DB'den malzeme okundu: {list(malzemeler.keys())}")
+                    except Exception as e:
+                        logger.warning(f"malzemeler_json parse hatası: {e}")
+
                 sonuc.append({
                     "parasut_irsaliye_id": irs["id"],
                     "cari_adi": cari["ad"],
                     "tarih": irs.get("tarih", "-"),
-                    "toplam_kg": irs.get("toplam_kg", 0),
-                    "kalemler": irs.get("kalemler", []),
+                    "toplam_kg": toplam_kg,
+                    "kalemler": kalemler,
                     "aciklama": irs.get("aciklama", "-"),
                 })
 
