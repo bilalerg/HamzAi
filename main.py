@@ -247,6 +247,105 @@ async def hesap_ozeti():
         return JSONResponse({"hata": str(e)})
 
 
+# ── TAHSİLAT (Python, Claude yok) ────────────────────────────────────
+@app.post("/api/tahsilat")
+async def tahsilat_ekle_endpoint(request: Request):
+    """
+    Belirli bir cariye tahsilat kaydı ekler.
+    Paraşüt'teki açık faturaya ödeme bağlar.
+    Claude devreye girmez.
+    """
+    data = await request.json()
+    cari_adi = data.get("cari_adi", "").strip()
+    tutar    = data.get("tutar", 0)
+    aciklama = data.get("aciklama", "")
+    tarih    = data.get("tarih", "")
+
+    if not cari_adi or not tutar:
+        return JSONResponse({"basarili": False, "cevap": "❌ Cari adı ve tutar gerekli."})
+
+    try:
+        from app.parasut.client import tahsilat_ekle
+        from datetime import datetime
+
+        # Tarih formatla
+        tarih_str = None
+        if tarih:
+            try:
+                tarih_str = datetime.strptime(tarih, "%d.%m.%Y").strftime("%Y-%m-%d")
+            except Exception:
+                tarih_str = None
+
+        sonuc = tahsilat_ekle(cari_adi, float(tutar), aciklama or f"{cari_adi} tahsilat", tarih_str)
+
+        if sonuc.get("basarili"):
+            logger.info(f"✅ Tahsilat eklendi: {cari_adi} — {tutar:,.0f} TL")
+            return JSONResponse({
+                "basarili": True,
+                "cevap": (
+                    f"✅ Tahsilat kaydedildi!\n\n"
+                    f"🏢 Cari: {cari_adi}\n"
+                    f"💰 Tutar: {float(tutar):,.0f} TL\n"
+                    f"📅 Tarih: {tarih or 'Bugün'}\n"
+                    f"Paraşüt'e kaydedildi."
+                )
+            })
+        else:
+            return JSONResponse({
+                "basarili": False,
+                "cevap": f"❌ Tahsilat eklenemedi: {sonuc.get('hata', 'Bilinmeyen hata')}"
+            })
+    except Exception as e:
+        logger.error(f"Tahsilat endpoint hatası: {e}")
+        return JSONResponse({"basarili": False, "cevap": f"❌ Hata: {str(e)}"})
+
+
+# ── YENİ CARİ OLUŞTUR (Python, Claude yok) ───────────────────────────
+@app.post("/api/cari-olustur")
+async def cari_olustur_endpoint(request: Request):
+    """
+    Paraşüt'te yeni cari oluşturur.
+    Claude devreye girmez.
+    """
+    data = await request.json()
+    firma_adi    = data.get("firma_adi", "").strip()
+    email        = data.get("email", "").strip() or None
+    telefon      = data.get("telefon", "").strip() or None
+    vergi_no     = data.get("vergi_no", "").strip() or None
+    vergi_dairesi = data.get("vergi_dairesi", "").strip() or None
+    adres        = data.get("adres", "").strip() or None
+
+    if not firma_adi:
+        return JSONResponse({"basarili": False, "cevap": "❌ Firma adı gerekli."})
+
+    try:
+        from app.parasut.client import cari_olustur
+        sonuc = cari_olustur(firma_adi, email, telefon, vergi_no, vergi_dairesi, adres)
+
+        if sonuc.get("basarili"):
+            logger.info(f"✅ Yeni cari oluşturuldu: {firma_adi}")
+            return JSONResponse({
+                "basarili": True,
+                "cevap": (
+                    f"✅ Yeni cari oluşturuldu!\n\n"
+                    f"🏢 Firma: {firma_adi}\n"
+                    f"📧 Email: {email or '-'}\n"
+                    f"📞 Telefon: {telefon or '-'}\n"
+                    f"🔢 Vergi No: {vergi_no or '-'}\n"
+                    f"Paraşüt'e kaydedildi."
+                ),
+                "cari_id": sonuc.get("id")
+            })
+        else:
+            return JSONResponse({
+                "basarili": False,
+                "cevap": f"❌ Cari oluşturulamadı: {sonuc.get('hata', 'Bilinmeyen hata')}"
+            })
+    except Exception as e:
+        logger.error(f"Cari oluştur hatası: {e}")
+        return JSONResponse({"basarili": False, "cevap": f"❌ Hata: {str(e)}"})
+
+
 # ── BEKLEYENİRSALİYELER ──────────────────────────────────────────────
 @app.get("/api/bekleyen-irsaliyeler")
 async def bekleyen_irsaliyeler():
