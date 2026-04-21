@@ -362,8 +362,23 @@ def fatura_tahsilat_ekle(fatura_id: str, tutar: float, aciklama: str = None, tar
         if not hesap_id:
             return {"basarili": False, "hata": "Kasa/banka hesabi bulunamadi."}
 
-        # V1: fatura endpoint + account_id attribute olarak
+        # V1: fatura endpoint + date alanı ile
         istek_v1 = {
+            "data": {
+                "type": "payments",
+                "attributes": {
+                    "description": aciklama or "Tahsilat",
+                    "date": bugun,
+                    "amount": str(tutar),
+                    "currency": "TRL",
+                    "payment_type": "cash",
+                    "account_id": int(hesap_id),
+                }
+            }
+        }
+
+        # V2: payment_date ile
+        istek_v2 = {
             "data": {
                 "type": "payments",
                 "attributes": {
@@ -377,31 +392,9 @@ def fatura_tahsilat_ekle(fatura_id: str, tutar: float, aciklama: str = None, tar
             }
         }
 
-        # V2: payments endpoint + payable + account relationship
-        istek_v2 = {
-            "data": {
-                "type": "payments",
-                "attributes": {
-                    "description": aciklama or "Tahsilat",
-                    "payment_date": bugun,
-                    "amount": str(tutar),
-                    "currency": "TRL",
-                    "payment_type": "cash",
-                },
-                "relationships": {
-                    "payable": {
-                        "data": {"type": "sales_invoices", "id": str(fatura_id)}
-                    },
-                    "account": {
-                        "data": {"type": "accounts", "id": str(hesap_id)}
-                    }
-                }
-            }
-        }
-
         denemeler = [
             (f"/{PARASUT_COMPANY_ID}/sales_invoices/{fatura_id}/payments", istek_v1),
-            (f"/{PARASUT_COMPANY_ID}/payments", istek_v2),
+            (f"/{PARASUT_COMPANY_ID}/sales_invoices/{fatura_id}/payments", istek_v2),
         ]
 
         sonuc = None
