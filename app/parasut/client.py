@@ -382,8 +382,7 @@ def fatura_tahsilat_ekle(fatura_id: str, tutar: float, aciklama: str = None, tar
             }
         }
 
-        # Paraşüt tahsilat — iki farklı yapı dene
-        # Yapı 1: fatura endpoint'i, hesap relationship'siz
+        # Paraşüt tahsilat — account_id attribute olarak gonder
         istek_v1 = {
             "data": {
                 "type": "payments",
@@ -393,11 +392,12 @@ def fatura_tahsilat_ekle(fatura_id: str, tutar: float, aciklama: str = None, tar
                     "amount": str(tutar),
                     "currency": "TRL",
                     "payment_type": "cash",
+                    "account_id": int(hesap_id),
                 }
             }
         }
 
-        # Yapı 2: payments endpoint'i, payable + account ile
+        # Yapı 2: relationship ile
         istek_v2 = {
             "data": {
                 "type": "payments",
