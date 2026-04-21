@@ -25,8 +25,14 @@ def _chat_html() -> str:
 async def lifespan(app: FastAPI):
     logger.info("🚀 Profaix başlatılıyor...")
     validate_config()
-    init_db()
-    await startup_recovery()
+    try:
+        init_db()
+    except Exception as e:
+        logger.warning(f"⚠️ DB başlatma gecikmeli, devam ediliyor: {e}")
+    try:
+        await startup_recovery()
+    except Exception as e:
+        logger.warning(f"⚠️ Startup recovery atlandı: {e}")
     logger.info(f"✅ Profaix hazır — Ortam: {ENV}")
     yield
     logger.info("Profaix kapanıyor...")
