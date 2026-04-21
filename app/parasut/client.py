@@ -523,22 +523,18 @@ def cari_bekleyen_irsaliyeleri_getir(cari_adi: str) -> list:
                 miktar = float(sm_attr.get("quantity", 0))
                 if miktar > 0:
                     desc = sm_attr.get("description", "Hurda")
+                    logger.info(f"SM debug: desc={desc!r} miktar={miktar}")
                     # Format: "32PR295 — HURDA YERLİ EXTRA — 4,711 kg"
-                    # veya: "None — hurda malzeme"
-                    # Malzeme adını çıkar: parçalara böl, ortadaki kısım
                     malzeme_adi = desc
                     try:
                         parcalar = [p.strip() for p in desc.split("—")]
-                        if len(parcalar) >= 2:
-                            # Son parça "X kg" ise malzeme adı ortadaki
-                            orta = parcalar[1].strip()
-                            # Son parça kg içeriyorsa malzeme adı ortada
-                            if len(parcalar) >= 3 and 'kg' in parcalar[-1].lower():
-                                malzeme_adi = parcalar[1].strip()
-                            elif orta and 'kg' not in orta.lower():
-                                malzeme_adi = orta
+                        if len(parcalar) >= 3 and 'kg' in parcalar[-1].lower():
+                            malzeme_adi = parcalar[1].strip()
+                        elif len(parcalar) == 2 and 'kg' not in parcalar[1].lower():
+                            malzeme_adi = parcalar[1].strip()
                     except Exception:
                         malzeme_adi = desc
+                    logger.info(f"SM parsed: malzeme_adi={malzeme_adi!r}")
                     kalemler.append({
                         "aciklama": malzeme_adi,
                         "miktar_kg": miktar,
