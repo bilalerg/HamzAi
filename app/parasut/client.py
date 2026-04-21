@@ -17,14 +17,14 @@ _access_token = None
 _refresh_token = None
 _token_expires_at = 0
 
-# ── CARİ CACHE (in-memory, 30 dakika) ────────────────────────────────
+# ── CARİ CACHE (in-memory, 5 dakika) ─────────────────────────────────
 _cari_cache = None
 _cari_cache_time = 0
-CACHE_SURE = 1800  # 30 dakika
+CACHE_SURE = 300  # 5 dakika (bakiye değişimleri hızlı yansısın)
 
 
 def _token_al() -> dict:
-    logger.info("Paraşüt'ten yeni token alınıyor...")
+    logger.info("Parasut'ten yeni token aliniyor...")
     response = requests.post(
         "https://api.parasut.com/oauth/token",
         data={
@@ -37,13 +37,13 @@ def _token_al() -> dict:
         }
     )
     if response.status_code != 200:
-        raise Exception(f"Paraşüt token hatası: {response.status_code}")
-    logger.info("✅ Paraşüt token alındı")
+        raise Exception(f"Parasut token hatasi: {response.status_code}")
+    logger.info("Parasut token alindi")
     return response.json()
 
 
 def _token_yenile(refresh_token: str) -> dict:
-    logger.info("Paraşüt token yenileniyor...")
+    logger.info("Parasut token yenileniyor...")
     response = requests.post(
         "https://api.parasut.com/oauth/token",
         data={
@@ -56,7 +56,7 @@ def _token_yenile(refresh_token: str) -> dict:
     )
     if response.status_code != 200:
         return _token_al()
-    logger.info("✅ Paraşüt token yenilendi")
+    logger.info("Parasut token yenilendi")
     return response.json()
 
 
@@ -83,7 +83,7 @@ def parasut_get(endpoint: str, params: dict = None) -> dict:
         params=params
     )
     if response.status_code != 200:
-        raise Exception(f"Paraşüt API hatası: {response.status_code} — {response.text[:200]}")
+        raise Exception(f"Parasut API hatasi: {response.status_code} — {response.text[:200]}")
     return response.json()
 
 
@@ -96,14 +96,14 @@ def parasut_post(endpoint: str, veri: dict) -> dict:
         json=veri
     )
     if response.status_code not in [200, 201]:
-        raise Exception(f"Paraşüt API hatası: {response.status_code} — {response.text[:200]}")
+        raise Exception(f"Parasut API hatasi: {response.status_code} — {response.text[:200]}")
     return response.json()
 
 
 # ── CARİ CACHE SİSTEMİ ───────────────────────────────────────────────
 
 def _cari_listesi_api() -> list:
-    """Paraşüt'ten tüm carileri çeker (tüm sayfalar)."""
+    """Parasut'ten tum carileri ceker (tum sayfalar)."""
     cariler = []
     page = 1
     while True:
@@ -116,9 +116,13 @@ def _cari_listesi_api() -> list:
             break
         for c in data:
             attr = c.get("attributes", {})
-            # Bakiyeyi her zaman float'a çevir — Paraşüt bazen string döndürüyor
+            # Bakiyeyi her zaman float'a cevir
+            # Parasut "balance" alanini bazen string, bazen None donduruyor
+            # Ayrica isaret: pozitif = alacak (bizden para bekliyor), negatif = borc
             try:
-                bakiye = float(attr.get("balance") or 0)
+                bakiye_raw = attr.get("balance")
+                logger.debug(f"Cari bakiye ham: {c['id']} {attr.get('name')} → balance={bakiye_raw!r}")
+                bakiye = float(bakiye_raw) if bakiye_raw is not None and bakiye_raw != "" else 0.0
             except (ValueError, TypeError):
                 bakiye = 0.0
             cariler.append({
@@ -134,7 +138,7 @@ def _cari_listesi_api() -> list:
         if len(data) < 25:
             break
         page += 1
-    logger.info(f"✅ Paraşüt'ten {len(cariler)} cari çekildi")
+    logger.info(f"Parasut'ten {len(cariler)} cari cekildi")
     return cariler
 
 
@@ -146,15 +150,15 @@ def cari_cache_yenile():
     return _cari_cache
 
 
-def cari_listesi_getir() -> list:
-    """Cache-aside pattern ile cari listesi döndürür."""
+def cari_listesi_getir(force_refresh: bool = False) -> list:
+    """Cache-aside pattern ile cari listesi dondurur."""
     global _cari_cache, _cari_cache_time
-    if _cari_cache and time.time() - _cari_cache_time < CACHE_SURE:
+    if not force_refresh and _cari_cache and time.time() - _cari_cache_time < CACHE_SURE:
         return _cari_cache
     try:
         return cari_cache_yenile()
     except Exception as e:
-        logger.error(f"Cari cache yenileme hatası: {e}")
+        logger.error(f"Cari cache yenileme hatasi: {e}")
         return _cari_cache or []
 
 
@@ -165,31 +169,31 @@ def cari_id_bul(firma_adi: str) -> str | None:
     firma_upper = firma_adi.upper().strip()
     cariler = cari_listesi_getir()
 
-    # 1. Tam eşleşme
+    # 1. Tam eslestirme
     for c in cariler:
         if c["ad"].upper() == firma_upper:
-            logger.info(f"Cari tam eşleşme: {firma_adi} → {c['ad']} (ID: {c['id']})")
+            logger.info(f"Cari tam eslestirme: {firma_adi} → {c['ad']} (ID: {c['id']})")
             return c["id"]
 
-    # 2. İçerik eşleşmesi
+    # 2. Icerik eslestirmesi
     for c in cariler:
         cari_upper = c["ad"].upper()
         if firma_upper in cari_upper or cari_upper in firma_upper:
-            logger.info(f"Cari içerik eşleşme: {firma_adi} → {c['ad']} (ID: {c['id']})")
+            logger.info(f"Cari icerik eslestirme: {firma_adi} → {c['ad']} (ID: {c['id']})")
             return c["id"]
 
-    # 3. Kelime bazlı eşleşme
+    # 3. Kelime bazli eslestirme
     firma_kelimeler = set(firma_upper.split())
     for c in cariler:
         cari_kelimeler = set(c["ad"].upper().split())
         ortak = firma_kelimeler & cari_kelimeler
-        genel = {"A.Ş", "LTD", "ŞTİ", "SAN", "TİC", "VE", "GERİ", "DÖNÜŞÜM", "NAK", "TİCARET"}
+        genel = {"A.S", "LTD", "STI", "SAN", "TIC", "VE", "GERI", "DONUSUM", "NAK", "TICARET"}
         anlamli_ortak = ortak - genel
         if len(anlamli_ortak) >= 2:
-            logger.info(f"Cari kelime eşleşme: {firma_adi} → {c['ad']} (ID: {c['id']})")
+            logger.info(f"Cari kelime eslestirme: {firma_adi} → {c['ad']} (ID: {c['id']})")
             return c["id"]
 
-    logger.warning(f"Cari bulunamadı: {firma_adi}")
+    logger.warning(f"Cari bulunamadi: {firma_adi}")
     return None
 
 
@@ -197,14 +201,12 @@ def cari_id_bul(firma_adi: str) -> str | None:
 
 def cari_detay_getir(cari_id: str) -> dict:
     try:
-        cariler = cari_listesi_getir()
-        for c in cariler:
-            if c["id"] == str(cari_id):
-                return c
+        # Cache'den degil, direkt API'den cek (guncel bakiye icin)
         sonuc = parasut_get(f"/{PARASUT_COMPANY_ID}/contacts/{cari_id}")
         attr = sonuc.get("data", {}).get("attributes", {})
         try:
-            bakiye = float(attr.get("balance") or 0)
+            bakiye_raw = attr.get("balance")
+            bakiye = float(bakiye_raw) if bakiye_raw is not None and bakiye_raw != "" else 0.0
         except (ValueError, TypeError):
             bakiye = 0.0
         return {
@@ -218,7 +220,7 @@ def cari_detay_getir(cari_id: str) -> dict:
             "bakiye": bakiye,
         }
     except Exception as e:
-        logger.error(f"Cari detay hatası: {e}")
+        logger.error(f"Cari detay hatasi: {e}")
         return {}
 
 
@@ -240,7 +242,7 @@ def cari_faturalari_getir(cari_id: str, limit: int = 10) -> list:
             })
         return faturalar
     except Exception as e:
-        logger.error(f"Cari fatura hatası: {e}")
+        logger.error(f"Cari fatura hatasi: {e}")
         return []
 
 
@@ -261,7 +263,7 @@ def cari_irsaliyeleri_getir(cari_id: str, limit: int = 10) -> list:
             })
         return irsaliyeler
     except Exception as e:
-        logger.error(f"Cari irsaliye hatası: {e}")
+        logger.error(f"Cari irsaliye hatasi: {e}")
         return []
 
 
@@ -284,29 +286,24 @@ def acik_faturalar_getir() -> list:
             })
         return faturalar
     except Exception as e:
-        logger.error(f"Açık fatura hatası: {e}")
+        logger.error(f"Acik fatura hatasi: {e}")
         return []
 
 
 def hesap_ozeti_getir() -> dict:
-    """
-    Genel hesap özetini döndürür.
-    DÜZELTME: Paraşüt bakiyeyi bazen string döndürüyor,
-    float'a çevirme _cari_listesi_api'de yapılıyor artık.
-    """
+    """Genel hesap ozetini dondurur. Her zaman taze veri."""
     try:
-        cariler = cari_listesi_getir()
+        # Bakiye icin cache'i atla, taze veri cek
+        cariler = cari_listesi_getir(force_refresh=True)
         toplam_alacak = sum(c["bakiye"] for c in cariler if c["bakiye"] > 0)
         toplam_borclu = sum(abs(c["bakiye"]) for c in cariler if c["bakiye"] < 0)
         return {
             "toplam_cari": len(cariler),
             "toplam_alacak": toplam_alacak,
             "toplam_borclu": toplam_borclu,
-            # "cariler" alanı kasıtlı olarak çıkarıldı — token tasarrufu
-            # Cari listesi gerekiyorsa cari_listesi_getir() kullan
         }
     except Exception as e:
-        logger.error(f"Hesap özeti hatası: {e}")
+        logger.error(f"Hesap ozeti hatasi: {e}")
         return {}
 
 
@@ -327,50 +324,42 @@ def cari_olustur(firma_adi: str, email: str = None, telefon: str = None,
         istek = {"data": {"type": "contacts", "attributes": attributes}}
         sonuc = parasut_post(f"/{PARASUT_COMPANY_ID}/contacts", istek)
         cari_id = sonuc["data"]["id"]
-        logger.info(f"✅ Yeni cari oluşturuldu: {firma_adi} (ID: {cari_id})")
+        logger.info(f"Yeni cari olusturuldu: {firma_adi} (ID: {cari_id})")
         cari_cache_yenile()
         return {"basarili": True, "id": cari_id, "ad": firma_adi}
     except Exception as e:
-        logger.error(f"Cari oluşturma hatası: {e}")
+        logger.error(f"Cari olusturma hatasi: {e}")
         return {"basarili": False, "hata": str(e)}
 
 
 def _kasa_hesabi_bul() -> str | None:
-    """
-    Paraşüt'teki ilk aktif kasa/banka hesabının ID'sini döndürür.
-    Hardcoded ID yerine dinamik olarak çeker.
-    """
+    """Parasut'teki ilk aktif kasa/banka hesabinin ID'sini dondurur."""
     try:
         sonuc = parasut_get(f"/{PARASUT_COMPANY_ID}/accounts")
         for hesap in sonuc.get("data", []):
             attr = hesap.get("attributes", {})
-            # Kasa veya banka hesabı
             if attr.get("account_type") in ("cash", "bank"):
-                logger.info(f"Kasa hesabı bulundu: {hesap['id']} ({attr.get('name')})")
+                logger.info(f"Kasa hesabi bulundu: {hesap['id']} ({attr.get('name')})")
                 return hesap["id"]
-        logger.warning("Kasa/banka hesabı bulunamadı")
+        logger.warning("Kasa/banka hesabi bulunamadi")
         return None
     except Exception as e:
-        logger.error(f"Kasa hesabı bulunamadı: {e}")
+        logger.error(f"Kasa hesabi bulunamadi: {e}")
         return None
 
 
 def fatura_tahsilat_ekle(fatura_id: str, tutar: float, aciklama: str = None, tarih: str = None) -> dict:
     """
-    Paraşüt'te belirli bir satış faturasına tahsilat ekler.
-
-    DÜZELTME: Eski kodda account ID hardcoded "1000594394" idi → 404 veriyordu.
-    Şimdi dinamik olarak kasa hesabını çekiyor.
-    Doğru endpoint: POST /{company_id}/payments (ilişki ile)
+    Parasut'te belirli bir satis faturasina tahsilat ekler.
+    DUZELTME: Dogru endpoint → POST /{company_id}/sales_invoices/{fatura_id}/payments
     """
     try:
         from datetime import datetime
         bugun = tarih or datetime.now().strftime("%Y-%m-%d")
 
-        # Kasa hesabını dinamik çek
         hesap_id = _kasa_hesabi_bul()
         if not hesap_id:
-            return {"basarili": False, "hata": "Kasa/banka hesabı bulunamadı. Paraşüt'te hesap tanımlı mı?"}
+            return {"basarili": False, "hata": "Kasa/banka hesabi bulunamadi."}
 
         istek = {
             "data": {
@@ -383,9 +372,6 @@ def fatura_tahsilat_ekle(fatura_id: str, tutar: float, aciklama: str = None, tar
                     "payment_type": "cash",
                 },
                 "relationships": {
-                    "payable": {
-                        "data": {"type": "sales_invoices", "id": str(fatura_id)}
-                    },
                     "account": {
                         "data": {"type": "accounts", "id": str(hesap_id)}
                     }
@@ -393,9 +379,19 @@ def fatura_tahsilat_ekle(fatura_id: str, tutar: float, aciklama: str = None, tar
             }
         }
 
-        sonuc = parasut_post(f"/{PARASUT_COMPANY_ID}/payments", istek)
+        # DUZELTME: fatura_id'yi endpoint'e ekle
+        sonuc = parasut_post(
+            f"/{PARASUT_COMPANY_ID}/sales_invoices/{fatura_id}/payments",
+            istek
+        )
         odeme_id = sonuc["data"]["id"]
-        logger.info(f"✅ Tahsilat eklendi: fatura_id={fatura_id} tutar={tutar:,.0f} TL hesap={hesap_id}")
+        logger.info(f"Tahsilat eklendi: fatura_id={fatura_id} tutar={tutar:,.0f} TL hesap={hesap_id}")
+
+        # Cache'i yenile — bakiye degisti
+        try:
+            cari_cache_yenile()
+        except Exception:
+            pass
 
         return {
             "basarili": True,
@@ -405,19 +401,19 @@ def fatura_tahsilat_ekle(fatura_id: str, tutar: float, aciklama: str = None, tar
             "tarih": bugun
         }
     except Exception as e:
-        logger.error(f"Fatura tahsilat hatası: {e}")
+        logger.error(f"Fatura tahsilat hatasi: {e}")
         return {"basarili": False, "hata": str(e)}
 
 
 def tahsilat_ekle(cari_adi: str, tutar: float, aciklama: str = None, tarih: str = None) -> dict:
     """
-    Belirli bir carinin açık faturalarına tahsilat ekler.
-    En yakın tutarlı faturayı bulur ve tahsilat kaydeder.
+    Belirli bir carinin acik faturalarina tahsilat ekler.
+    En yakin tutarli faturaya baglar.
     """
     try:
         cari_id = cari_id_bul(cari_adi)
         if not cari_id:
-            return {"basarili": False, "hata": f"'{cari_adi}' adlı cari bulunamadı."}
+            return {"basarili": False, "hata": f"'{cari_adi}' adli cari bulunamadi."}
 
         sonuc = parasut_get(
             f"/{PARASUT_COMPANY_ID}/sales_invoices",
@@ -441,9 +437,9 @@ def tahsilat_ekle(cari_adi: str, tutar: float, aciklama: str = None, tarih: str 
             })
 
         if not faturalar:
-            return {"basarili": False, "hata": f"{cari_adi} için açık fatura bulunamadı."}
+            return {"basarili": False, "hata": f"{cari_adi} icin acik fatura bulunamadi."}
 
-        # Tutara en yakın faturayı bul
+        # Tutara en yakin faturaya bagla
         hedef_fatura = min(
             faturalar,
             key=lambda f: abs(float(f.get("kalan") or f.get("tutar") or 0) - float(tutar))
@@ -459,12 +455,12 @@ def tahsilat_ekle(cari_adi: str, tutar: float, aciklama: str = None, tarih: str 
         if odeme_sonuc.get("basarili"):
             odeme_sonuc["eslesen_fatura"] = hedef_fatura
             odeme_sonuc["cari"] = cari_adi
-            logger.info(f"✅ Tahsilat tamamlandı: {cari_adi} — {tutar:,.0f} TL → fatura {hedef_fatura['id']}")
+            logger.info(f"Tahsilat tamamlandi: {cari_adi} — {tutar:,.0f} TL → fatura {hedef_fatura['id']}")
 
         return odeme_sonuc
 
     except Exception as e:
-        logger.error(f"Tahsilat ekleme hatası: {e}")
+        logger.error(f"Tahsilat ekleme hatasi: {e}")
         return {"basarili": False, "hata": str(e)}
 
 
@@ -515,11 +511,11 @@ def cari_bekleyen_irsaliyeleri_getir(cari_adi: str) -> list:
                 "toplam_kg": sum(k["miktar_kg"] for k in kalemler),
             })
 
-        logger.info(f"✅ {cari_adi} için {len(irsaliyeler)} irsaliye bulundu")
+        logger.info(f"{cari_adi} icin {len(irsaliyeler)} irsaliye bulundu")
         return irsaliyeler
 
     except Exception as e:
-        logger.error(f"Bekleyen irsaliye hatası: {e}")
+        logger.error(f"Bekleyen irsaliye hatasi: {e}")
         return []
 
 
@@ -557,5 +553,5 @@ def irsaliye_detay_getir(irsaliye_id: str) -> dict:
         }
 
     except Exception as e:
-        logger.error(f"İrsaliye detay hatası: {e}")
+        logger.error(f"Irsaliye detay hatasi: {e}")
         return {}
