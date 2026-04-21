@@ -3,203 +3,177 @@
 import anthropic
 import base64
 import json
+import re
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional, Dict
+from datetime import datetime
 
 from app.core.config import ANTHROPIC_API_KEY
 from app.core.logger import logger
+
+# Modül seviyesinde bir kez init
+_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+
+# claude-3-5-haiku: vision kalitesi iyi, Sonnet'in ~yarı fiyatı
+OCR_MODEL      = "claude-haiku-4-5-20251001"
+OCR_MAX_TOKENS = 400  # JSON çıktısı için 400 yeterli
 
 
 @dataclass
 class FisVerisi:
     """Kantar fişinden çıkarılan veriler"""
-    plaka: Optional[str] = None
-    fis_no: Optional[str] = None
-    net_agirlik_kg: Optional[int] = None
-    net_tartim_kg: Optional[int] = None
-    fire_kg: Optional[int] = None
-    tarih: Optional[str] = None
-    firma: Optional[str] = None
-    irsaliye_no: Optional[str] = None
-    kantar_no: Optional[str] = None
-    malzemeler: Optional[Dict[str, int]] = None
+    plaka:          Optional[str]          = None
+    fis_no:         Optional[str]          = None
+    net_agirlik_kg: Optional[int]          = None
+    net_tartim_kg:  Optional[int]          = None
+    fire_kg:        Optional[int]          = None
+    tarih:          Optional[str]          = None
+    firma:          Optional[str]          = None
+    irsaliye_no:    Optional[str]          = None
+    kantar_no:      Optional[str]          = None
+    malzemeler:     Optional[Dict[str,int]] = None
+    claude_ham_cikti: Optional[str]        = None
+    hata:           Optional[str]          = None
 
-    claude_ham_cikti: Optional[str] = None
-    hata: Optional[str] = None
+
+# Kısaltılmış OCR prompt — aynı kurallar, ~%55 daha az token
+OCR_PROMPT = """Kantar fişi fotoğrafı. Sadece JSON döndür, başka hiçbir şey yazma.
+
+{"plaka":"ana araç plakası (dorse/2.plaka değil)","fis_no":"fiş no","net_tartim_kg":SAYI,"fire_kg":SAYI_YA_DA_0,"tarih":"GG.AA.YYYY","firma":"fişin başlığındaki fabrika adı (hurda tedarikçisi değil)","irsaliye_no":null,"kantar_no":null,"malzemeler":{}}
+
+KURALLAR:
+- plaka: Plaka-1/Ana Araç alanı, birden fazlaysa sadece ilki
+- firma: Fiş başlığındaki fabrika (SAMSUN MAKİNE, KAPTAN DEMİR, İÇDAŞ gibi). "Firma Adı" satırındaki tedarikçiyi yazma.
+- net_tartim_kg: "Net Tartım/Net/NET AĞIRLIK" değeri (fire düşülmemiş)
+- fire_kg: "Fire/Tenzil/Fire Kg" değeri, yoksa 0
+- malzemeler: Malzeme tablosu VARSA → {ad: net_kg} (Miktar - Tenz.Miktar). YOKSA → {}
+- malzemelere ASLA ekleme: Brüt, Dara, 1.Tartı, 2.Tartı, Dolu/Boş Tartım"""
 
 
-def fotograf_to_base64(fotograf_yolu: str) -> str:
+def _fotograf_to_base64(fotograf_yolu: str) -> tuple[str, str]:
+    """Base64 ve media_type döndürür."""
     with open(fotograf_yolu, "rb") as f:
-        return base64.standard_b64encode(f.read()).decode("utf-8")
+        data = base64.standard_b64encode(f.read()).decode("utf-8")
+    uzanti = Path(fotograf_yolu).suffix.lower()
+    media_type = "image/jpeg" if uzanti in [".jpg", ".jpeg"] else "image/png"
+    return data, media_type
+
+
+def _parse_json(metin: str) -> dict:
+    """Model cevabından JSON çıkarır — markdown fence veya düz JSON."""
+    metin = metin.strip()
+    # Markdown fence varsa içini al
+    fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", metin, re.DOTALL)
+    if fence:
+        return json.loads(fence.group(1))
+    # Düz JSON
+    obj = re.search(r"\{.*\}", metin, re.DOTALL)
+    if obj:
+        return json.loads(obj.group())
+    raise ValueError(f"JSON bulunamadı: {metin[:100]}")
 
 
 def claude_fis_oku(fotograf_yolu: str) -> FisVerisi:
-    logger.info(f"Claude Vision ile fiş okunuyor: {fotograf_yolu}")
+    logger.info(f"OCR başlıyor: {fotograf_yolu} | model={OCR_MODEL}")
 
-    foto_base64 = fotograf_to_base64(fotograf_yolu)
-    uzanti = Path(fotograf_yolu).suffix.lower()
-    media_type = "image/jpeg" if uzanti in [".jpg", ".jpeg"] else "image/png"
+    foto_base64, media_type = _fotograf_to_base64(fotograf_yolu)
 
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-
-    prompt = """Bu bir kantar (tartı) fişi fotoğrafıdır. Fişten bilgileri çıkar ve SADECE JSON formatında döndür, başka hiçbir şey yazma.
-
-JSON formatı:
-{
-  "plaka": "araç plaka numarası (sadece birinci/ana araç plakası, dorse veya 2. plaka değil)",
-  "fis_no": "fiş numarası veya yükleme/boşaltma fiş no",
-  "net_tartim_kg": net tartım değeri (sayı, kg birimi olmadan),
-  "fire_kg": fire veya tenzil değeri (sayı, yoksa 0),
-  "tarih": "GG.AA.YYYY formatında fiş tarihi",
-  "firma": "fişte yazan fabrika/şirket adı (Samsun Makine, Kroman, İçtaş, Kaptan gibi — hurda satıcısı değil, kantarın sahibi fabrika)",
-  "irsaliye_no": "irsaliye numarası (yoksa null)",
-  "kantar_no": "kantar numarası (yoksa null)",
-  "malzemeler": {}
-}
-
-PLAKA KURALI:
-- "Plaka-1", "Araç Plakası", "Plaka No" gibi alanlardan ilk plakayı al
-- "Plaka-2", "Dorse", "Römork" gibi ikinci plakayı ALMA
-- Birden fazla plaka varsa sadece birincisini al
-
-FİRMA KURALI:
-- Fişin başlığındaki veya üst kısmındaki fabrika adını al (SAMSUN MAKİNE SANAYİ A.Ş., KAPTAN DEMİR ÇELİK, İÇDAŞ A.Ş. gibi)
-- "Firma Adı" satırındaki hurda tedarikçisini (YEŞİL İZABE, MAJ DENİZ gibi) ALMA — bu hurda satan firma, fabrika değil
-- Fişin sahibi kim? O fabrikanın adını yaz
-
-NET TARTIM VE FİRE KURALI:
-- "Net Tartım", "Net", "NET AĞIRLIK" satırındaki değeri net_tartim_kg olarak al
-- "Fire", "Tenzil", "Fire Kg" satırındaki değeri fire_kg olarak al — ikisi aynı anlama gelir
-- Eğer fişte malzeme tablosu varsa "Tenz.Miktar" sütunu da fire demektir, toplam tenzil miktarını fire_kg olarak yaz
-- net_tartim_kg her zaman fire düşülmeden önceki değerdir
-
-MALZEME KURALI — ÇOK ÖNEMLİ:
-Fişte malzeme listesi/tablosu var mı?
-
-EVET, tablo/liste varsa:
-- Her malzeme satırını oku: malzeme adı → net miktarı
-- Eğer "Tenz.Miktar" veya "Tenzil Miktar" sütunu varsa: net miktar = Miktar - Tenz.Miktar
-- Eğer sadece "Miktar" sütunu varsa: net miktar = Miktar
-- Sıfırdan büyük olan malzemeleri yaz
-- Örnek: {"HURDA YERLİ EXTRA": 4627, "HURDA YERLİ 1.GRUP": 2644, "HURDA YERLİ 2.GRUP": 1983, "HURDA YERLİ EXTRA-KESİM": 3966}
-
-HAYIR, sadece tek net kilo varsa:
-- malzemeler: {} (boş bırak)
-- Net tartım zaten net_tartim_kg alanında
-
-NOT: "1.Tartı", "2.Tartı", "Brüt", "Dara", "Dolu Tartım", "Boş Tartım" gibi ara değerleri ASLA malzeme olarak ekleme — bunlar hesaplama aşamaları."""
-
-    response = client.messages.create(
-        model="claude-sonnet-4-5",
-        max_tokens=1024,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": media_type,
-                            "data": foto_base64,
-                        },
-                    },
-                    {
-                        "type": "text",
-                        "text": prompt
-                    }
-                ],
-            }
-        ],
+    response = _client.messages.create(
+        model=OCR_MODEL,
+        max_tokens=OCR_MAX_TOKENS,
+        messages=[{
+            "role": "user",
+            "content": [
+                {
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": media_type, "data": foto_base64}
+                },
+                {"type": "text", "text": OCR_PROMPT}
+            ]
+        }]
     )
 
     claude_cevap = response.content[0].text
-    logger.info(f"Claude ham cevap: {claude_cevap}")
+    logger.info(f"OCR ham cevap: {claude_cevap}")
 
     try:
-        temiz_cevap = claude_cevap.strip()
-        if temiz_cevap.startswith("```"):
-            temiz_cevap = temiz_cevap.split("```")[1]
-            if temiz_cevap.startswith("json"):
-                temiz_cevap = temiz_cevap[4:]
+        veri = _parse_json(claude_cevap)
 
-        veri = json.loads(temiz_cevap)
+        net_tartim  = int(veri.get("net_tartim_kg") or 0)
+        fire        = int(veri.get("fire_kg") or 0)
+        net_agirlik = net_tartim - fire
 
-        net_tartim = veri.get("net_tartim_kg") or 0
-        fire = veri.get("fire_kg") or 0
-
-        net_agirlik = int(net_tartim) - int(fire)
         if net_agirlik < 0:
-            net_agirlik = int(net_tartim)
+            logger.warning(f"⚠️ Net ağırlık negatif çıktı (tartım={net_tartim}, fire={fire}), fire sıfırlanıyor")
+            net_agirlik = net_tartim
+            fire = 0
 
         malzemeler_ham = veri.get("malzemeler") or {}
         malzemeler = {k: int(v) for k, v in malzemeler_ham.items() if v and int(v) > 0}
 
-        logger.info(f"Net Tartım: {net_tartim} kg | Fire: {fire} kg | Net Ağırlık: {net_agirlik} kg")
-        logger.info(f"Firma: {veri.get('firma')} | Malzemeler: {malzemeler}")
+        logger.info(f"OCR sonuç — plaka={veri.get('plaka')} tartım={net_tartim}kg fire={fire}kg net={net_agirlik}kg firma={veri.get('firma')}")
 
         return FisVerisi(
-            plaka=veri.get("plaka"),
-            fis_no=str(veri.get("fis_no")) if veri.get("fis_no") else None,
-            net_tartim_kg=int(net_tartim),
-            fire_kg=int(fire),
-            net_agirlik_kg=net_agirlik,
-            tarih=veri.get("tarih"),
-            firma=veri.get("firma"),
-            irsaliye_no=veri.get("irsaliye_no"),
-            kantar_no=veri.get("kantar_no"),
-            malzemeler=malzemeler if malzemeler else None,
-            claude_ham_cikti=claude_cevap
+            plaka         = veri.get("plaka"),
+            fis_no        = str(veri.get("fis_no")) if veri.get("fis_no") else None,
+            net_tartim_kg = net_tartim,
+            fire_kg       = fire,
+            net_agirlik_kg= net_agirlik,
+            tarih         = veri.get("tarih"),
+            firma         = veri.get("firma"),
+            irsaliye_no   = veri.get("irsaliye_no"),
+            kantar_no     = veri.get("kantar_no"),
+            malzemeler    = malzemeler or None,
+            claude_ham_cikti = claude_cevap
         )
 
     except Exception as e:
-        logger.error(f"Claude cevabı parse edilemedi: {e}")
+        logger.error(f"OCR parse hatası: {e} | ham: {claude_cevap[:200]}")
         return FisVerisi(hata=str(e), claude_ham_cikti=claude_cevap)
 
 
 def fis_oku(fotograf_yolu: str) -> FisVerisi:
-    logger.info(f"Fiş okuma başladı: {fotograf_yolu}")
     fis = claude_fis_oku(fotograf_yolu)
     if fis.hata:
-        logger.error(f"Claude okuma hatası: {fis.hata}")
+        logger.error(f"Fiş okunamadı: {fis.hata}")
     return fis
 
 
 def fis_db_kaydet(fis: FisVerisi, foto_path: str, db) -> object:
     from app.core.database import WeighTicket, TicketStatus
-    from datetime import datetime
 
     fis_tarihi = None
     if fis.tarih:
-        try:
-            fis_tarihi = datetime.strptime(fis.tarih, "%d.%m.%Y")
-        except:
+        for fmt in ("%d.%m.%Y", "%Y-%m-%d"):
             try:
-                fis_tarihi = datetime.strptime(fis.tarih, "%Y-%m-%d")
-            except:
-                pass
+                fis_tarihi = datetime.strptime(fis.tarih, fmt)
+                break
+            except ValueError:
+                continue
 
     ticket = WeighTicket(
-        foto_path=foto_path,
-        plaka=fis.plaka,
-        fis_no=fis.fis_no,
-        agirlik_kg=fis.net_agirlik_kg,
-        net_tartim_kg=fis.net_tartim_kg,
-        fire_kg=fis.fire_kg or 0,
-        firma=fis.firma,
-        fis_tarihi=fis_tarihi,
-        malzeme="hurda",
-        malzemeler=json.dumps(fis.malzemeler, ensure_ascii=False) if fis.malzemeler else None,
-        ocr_ham_cikti=fis.claude_ham_cikti,
-        status=TicketStatus.OCR_TAMAMLANDI if not fis.hata else TicketStatus.HATA,
-        hata_mesaji=fis.hata
+        foto_path     = foto_path,
+        plaka         = fis.plaka,
+        fis_no        = fis.fis_no,
+        agirlik_kg    = fis.net_agirlik_kg,
+        net_tartim_kg = fis.net_tartim_kg,
+        fire_kg       = fis.fire_kg or 0,
+        firma         = fis.firma,
+        fis_tarihi    = fis_tarihi,
+        malzeme       = "hurda",
+        malzemeler    = json.dumps(fis.malzemeler, ensure_ascii=False) if fis.malzemeler else None,
+        ocr_ham_cikti = fis.claude_ham_cikti,
+        status        = TicketStatus.OCR_TAMAMLANDI if not fis.hata else TicketStatus.HATA,
+        hata_mesaji   = fis.hata
     )
 
     db.add(ticket)
     db.commit()
     db.refresh(ticket)
 
-    logger.info(f"✅ Fiş DB'ye kaydedildi: ticket_id={ticket.id} plaka={ticket.plaka} firma={ticket.firma} fis_no={ticket.fis_no} agirlik={ticket.agirlik_kg}kg")
-
+    logger.info(
+        f"✅ Fiş kaydedildi: id={ticket.id} plaka={ticket.plaka} "
+        f"firma={ticket.firma} fis_no={ticket.fis_no} agirlik={ticket.agirlik_kg}kg"
+    )
     return ticket

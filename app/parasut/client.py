@@ -116,12 +116,17 @@ def _cari_listesi_api() -> list:
             break
         for c in data:
             attr = c.get("attributes", {})
+            # Bakiyeyi her zaman float'a çevir — Paraşüt bazen string döndürüyor
+            try:
+                bakiye = float(attr.get("balance") or 0)
+            except (ValueError, TypeError):
+                bakiye = 0.0
             cariler.append({
                 "id": c["id"],
                 "ad": attr.get("name", "-"),
                 "email": attr.get("email", "-"),
                 "telefon": attr.get("phone", "-"),
-                "bakiye": attr.get("balance", 0),
+                "bakiye": bakiye,
                 "vergi_no": attr.get("tax_number", "-"),
                 "adres": attr.get("address", "-"),
                 "vergi_dairesi": attr.get("tax_office", "-"),
@@ -144,10 +149,8 @@ def cari_cache_yenile():
 def cari_listesi_getir() -> list:
     """Cache-aside pattern ile cari listesi döndürür."""
     global _cari_cache, _cari_cache_time
-    # Cache geçerliyse direkt döndür
     if _cari_cache and time.time() - _cari_cache_time < CACHE_SURE:
         return _cari_cache
-    # Cache miss — API'den çek
     try:
         return cari_cache_yenile()
     except Exception as e:
@@ -156,10 +159,6 @@ def cari_listesi_getir() -> list:
 
 
 def cari_id_bul(firma_adi: str) -> str | None:
-    """
-    Firma adından Paraşüt cari ID'sini dinamik olarak bulur.
-    Config.py'de hardcode ID yok — Paraşüt'ten çeker, cache'te tutar.
-    """
     if not firma_adi:
         return None
 
@@ -179,12 +178,11 @@ def cari_id_bul(firma_adi: str) -> str | None:
             logger.info(f"Cari içerik eşleşme: {firma_adi} → {c['ad']} (ID: {c['id']})")
             return c["id"]
 
-    # 3. Kelime bazlı eşleşme (en az 2 kelime uyuşsun)
+    # 3. Kelime bazlı eşleşme
     firma_kelimeler = set(firma_upper.split())
     for c in cariler:
         cari_kelimeler = set(c["ad"].upper().split())
         ortak = firma_kelimeler & cari_kelimeler
-        # "A.Ş", "LTD", "SAN" gibi genel kelimeleri say alma
         genel = {"A.Ş", "LTD", "ŞTİ", "SAN", "TİC", "VE", "GERİ", "DÖNÜŞÜM", "NAK", "TİCARET"}
         anlamli_ortak = ortak - genel
         if len(anlamli_ortak) >= 2:
@@ -198,16 +196,17 @@ def cari_id_bul(firma_adi: str) -> str | None:
 # ── CHATBOT SORGU FONKSİYONLARI ──────────────────────────────────────
 
 def cari_detay_getir(cari_id: str) -> dict:
-    """Belirli bir carinin detaylarını döndürür."""
     try:
-        # Önce cache'den bak
         cariler = cari_listesi_getir()
         for c in cariler:
             if c["id"] == str(cari_id):
                 return c
-        # Cache'de yoksa API'den çek
         sonuc = parasut_get(f"/{PARASUT_COMPANY_ID}/contacts/{cari_id}")
         attr = sonuc.get("data", {}).get("attributes", {})
+        try:
+            bakiye = float(attr.get("balance") or 0)
+        except (ValueError, TypeError):
+            bakiye = 0.0
         return {
             "id": cari_id,
             "ad": attr.get("name", "-"),
@@ -216,7 +215,7 @@ def cari_detay_getir(cari_id: str) -> dict:
             "adres": attr.get("address", "-"),
             "vergi_no": attr.get("tax_number", "-"),
             "vergi_dairesi": attr.get("tax_office", "-"),
-            "bakiye": attr.get("balance", 0),
+            "bakiye": bakiye,
         }
     except Exception as e:
         logger.error(f"Cari detay hatası: {e}")
@@ -224,7 +223,6 @@ def cari_detay_getir(cari_id: str) -> dict:
 
 
 def cari_faturalari_getir(cari_id: str, limit: int = 10) -> list:
-    """Belirli bir carinin faturalarını döndürür."""
     try:
         sonuc = parasut_get(
             f"/{PARASUT_COMPANY_ID}/sales_invoices",
@@ -247,7 +245,6 @@ def cari_faturalari_getir(cari_id: str, limit: int = 10) -> list:
 
 
 def cari_irsaliyeleri_getir(cari_id: str, limit: int = 10) -> list:
-    """Belirli bir carinin irsaliyelerini döndürür."""
     try:
         sonuc = parasut_get(
             f"/{PARASUT_COMPANY_ID}/shipment_documents",
@@ -269,7 +266,6 @@ def cari_irsaliyeleri_getir(cari_id: str, limit: int = 10) -> list:
 
 
 def acik_faturalar_getir() -> list:
-    """Tüm açık (ödenmemiş) faturaları döndürür."""
     try:
         sonuc = parasut_get(
             f"/{PARASUT_COMPANY_ID}/sales_invoices",
@@ -293,16 +289,21 @@ def acik_faturalar_getir() -> list:
 
 
 def hesap_ozeti_getir() -> dict:
-    """Genel hesap özetini döndürür."""
+    """
+    Genel hesap özetini döndürür.
+    DÜZELTME: Paraşüt bakiyeyi bazen string döndürüyor,
+    float'a çevirme _cari_listesi_api'de yapılıyor artık.
+    """
     try:
         cariler = cari_listesi_getir()
-        toplam_alacak = sum(c.get("bakiye", 0) for c in cariler if (c.get("bakiye") or 0) > 0)
-        toplam_borclu = sum(abs(c.get("bakiye", 0)) for c in cariler if (c.get("bakiye") or 0) < 0)
+        toplam_alacak = sum(c["bakiye"] for c in cariler if c["bakiye"] > 0)
+        toplam_borclu = sum(abs(c["bakiye"]) for c in cariler if c["bakiye"] < 0)
         return {
             "toplam_cari": len(cariler),
             "toplam_alacak": toplam_alacak,
             "toplam_borclu": toplam_borclu,
-            "cariler": cariler
+            # "cariler" alanı kasıtlı olarak çıkarıldı — token tasarrufu
+            # Cari listesi gerekiyorsa cari_listesi_getir() kullan
         }
     except Exception as e:
         logger.error(f"Hesap özeti hatası: {e}")
@@ -311,7 +312,6 @@ def hesap_ozeti_getir() -> dict:
 
 def cari_olustur(firma_adi: str, email: str = None, telefon: str = None,
                  vergi_no: str = None, vergi_dairesi: str = None, adres: str = None) -> dict:
-    """Paraşüt'te yeni cari oluşturur ve cache'i yeniler."""
     try:
         attributes = {
             "name": firma_adi,
@@ -327,27 +327,50 @@ def cari_olustur(firma_adi: str, email: str = None, telefon: str = None,
         istek = {"data": {"type": "contacts", "attributes": attributes}}
         sonuc = parasut_post(f"/{PARASUT_COMPANY_ID}/contacts", istek)
         cari_id = sonuc["data"]["id"]
-
         logger.info(f"✅ Yeni cari oluşturuldu: {firma_adi} (ID: {cari_id})")
-
-        # Cache'i yenile — yeni cari hemen görünsün
         cari_cache_yenile()
-
         return {"basarili": True, "id": cari_id, "ad": firma_adi}
     except Exception as e:
         logger.error(f"Cari oluşturma hatası: {e}")
         return {"basarili": False, "hata": str(e)}
 
 
+def _kasa_hesabi_bul() -> str | None:
+    """
+    Paraşüt'teki ilk aktif kasa/banka hesabının ID'sini döndürür.
+    Hardcoded ID yerine dinamik olarak çeker.
+    """
+    try:
+        sonuc = parasut_get(f"/{PARASUT_COMPANY_ID}/accounts")
+        for hesap in sonuc.get("data", []):
+            attr = hesap.get("attributes", {})
+            # Kasa veya banka hesabı
+            if attr.get("account_type") in ("cash", "bank"):
+                logger.info(f"Kasa hesabı bulundu: {hesap['id']} ({attr.get('name')})")
+                return hesap["id"]
+        logger.warning("Kasa/banka hesabı bulunamadı")
+        return None
+    except Exception as e:
+        logger.error(f"Kasa hesabı bulunamadı: {e}")
+        return None
+
+
 def fatura_tahsilat_ekle(fatura_id: str, tutar: float, aciklama: str = None, tarih: str = None) -> dict:
     """
-    Paraşüt'te belirli bir satış faturasına tahsilat (ödeme) kaydı ekler.
-    Fatura endpoint: /{company_id}/sales_invoices/{id}/payments
+    Paraşüt'te belirli bir satış faturasına tahsilat ekler.
+
+    DÜZELTME: Eski kodda account ID hardcoded "1000594394" idi → 404 veriyordu.
+    Şimdi dinamik olarak kasa hesabını çekiyor.
+    Doğru endpoint: POST /{company_id}/payments (ilişki ile)
     """
     try:
         from datetime import datetime
-
         bugun = tarih or datetime.now().strftime("%Y-%m-%d")
+
+        # Kasa hesabını dinamik çek
+        hesap_id = _kasa_hesabi_bul()
+        if not hesap_id:
+            return {"basarili": False, "hata": "Kasa/banka hesabı bulunamadı. Paraşüt'te hesap tanımlı mı?"}
 
         istek = {
             "data": {
@@ -364,18 +387,15 @@ def fatura_tahsilat_ekle(fatura_id: str, tutar: float, aciklama: str = None, tar
                         "data": {"type": "sales_invoices", "id": str(fatura_id)}
                     },
                     "account": {
-                        "data": {"type": "accounts", "id": "1000594394"}
+                        "data": {"type": "accounts", "id": str(hesap_id)}
                     }
                 }
             }
         }
 
-        sonuc = parasut_post(
-            f"/{PARASUT_COMPANY_ID}/payments",
-            istek
-        )
+        sonuc = parasut_post(f"/{PARASUT_COMPANY_ID}/payments", istek)
         odeme_id = sonuc["data"]["id"]
-        logger.info(f"✅ Fatura tahsilatı eklendi: fatura_id={fatura_id} — {tutar:,.0f} TL")
+        logger.info(f"✅ Tahsilat eklendi: fatura_id={fatura_id} tutar={tutar:,.0f} TL hesap={hesap_id}")
 
         return {
             "basarili": True,
@@ -391,15 +411,14 @@ def fatura_tahsilat_ekle(fatura_id: str, tutar: float, aciklama: str = None, tar
 
 def tahsilat_ekle(cari_adi: str, tutar: float, aciklama: str = None, tarih: str = None) -> dict:
     """
-    Belirli bir carinin açık faturalarını listeler.
-    Tutar belirtilmişse o tutara en yakın faturayı bulur ve tahsilat ekler.
+    Belirli bir carinin açık faturalarına tahsilat ekler.
+    En yakın tutarlı faturayı bulur ve tahsilat kaydeder.
     """
     try:
         cari_id = cari_id_bul(cari_adi)
         if not cari_id:
             return {"basarili": False, "hata": f"'{cari_adi}' adlı cari bulunamadı."}
 
-        # Carinin açık faturalarını çek
         sonuc = parasut_get(
             f"/{PARASUT_COMPANY_ID}/sales_invoices",
             params={
@@ -425,21 +444,24 @@ def tahsilat_ekle(cari_adi: str, tutar: float, aciklama: str = None, tarih: str 
             return {"basarili": False, "hata": f"{cari_adi} için açık fatura bulunamadı."}
 
         # Tutara en yakın faturayı bul
-        hedef_fatura = min(faturalar, key=lambda f: abs(float(f.get("kalan") or f.get("tutar") or 0) - float(tutar)))
+        hedef_fatura = min(
+            faturalar,
+            key=lambda f: abs(float(f.get("kalan") or f.get("tutar") or 0) - float(tutar))
+        )
 
-        sonuc = fatura_tahsilat_ekle(
+        odeme_sonuc = fatura_tahsilat_ekle(
             fatura_id=hedef_fatura["id"],
             tutar=tutar,
             aciklama=aciklama or f"{cari_adi} tahsilat",
             tarih=tarih
         )
 
-        if sonuc.get("basarili"):
-            sonuc["eslesen_fatura"] = hedef_fatura
-            sonuc["cari"] = cari_adi
+        if odeme_sonuc.get("basarili"):
+            odeme_sonuc["eslesen_fatura"] = hedef_fatura
+            odeme_sonuc["cari"] = cari_adi
             logger.info(f"✅ Tahsilat tamamlandı: {cari_adi} — {tutar:,.0f} TL → fatura {hedef_fatura['id']}")
 
-        return sonuc
+        return odeme_sonuc
 
     except Exception as e:
         logger.error(f"Tahsilat ekleme hatası: {e}")
@@ -447,9 +469,6 @@ def tahsilat_ekle(cari_adi: str, tutar: float, aciklama: str = None, tarih: str 
 
 
 def cari_bekleyen_irsaliyeleri_getir(cari_adi: str) -> list:
-    """
-    Belirli bir carinin Paraşüt'teki irsaliyelerini stock_movements dahil döndürür.
-    """
     try:
         cari_id = cari_id_bul(cari_adi)
         if not cari_id:
@@ -505,10 +524,6 @@ def cari_bekleyen_irsaliyeleri_getir(cari_adi: str) -> list:
 
 
 def irsaliye_detay_getir(irsaliye_id: str) -> dict:
-    """
-    Paraşüt'ten belirli bir irsaliyenin detayını çeker.
-    stock_movements dahil — kalemleri ve miktarları döndürür.
-    """
     try:
         sonuc = parasut_get(
             f"/{PARASUT_COMPANY_ID}/shipment_documents/{irsaliye_id}",
@@ -519,7 +534,6 @@ def irsaliye_detay_getir(irsaliye_id: str) -> dict:
         attr = data.get("attributes", {})
         included = sonuc.get("included", [])
 
-        # Stock movements listesi
         sm_rels = data.get("relationships", {}).get("stock_movements", {}).get("data", [])
         sm_ids = {sm["id"] for sm in sm_rels}
 
@@ -527,12 +541,10 @@ def irsaliye_detay_getir(irsaliye_id: str) -> dict:
         for inc in included:
             if inc.get("type") == "stock_movements" and inc["id"] in sm_ids:
                 sm_attr = inc.get("attributes", {})
-                # Ürün adını bul
-                urun_adi = sm_attr.get("description", "Hurda Malzeme")
                 miktar = float(sm_attr.get("quantity", 0))
                 if miktar > 0:
                     kalemler.append({
-                        "aciklama": urun_adi,
+                        "aciklama": sm_attr.get("description", "Hurda Malzeme"),
                         "miktar_kg": miktar,
                     })
 
