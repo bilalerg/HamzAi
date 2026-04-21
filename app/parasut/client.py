@@ -382,23 +382,58 @@ def fatura_tahsilat_ekle(fatura_id: str, tutar: float, aciklama: str = None, tar
             }
         }
 
-        # Paraşüt'te tahsilat için birkaç farklı endpoint dene
-        endpoints = [
-            f"/{PARASUT_COMPANY_ID}/payments",
-            f"/{PARASUT_COMPANY_ID}/sales_invoices/{fatura_id}/payments",
-            f"/{PARASUT_COMPANY_ID}/receipts",
+        # Paraşüt tahsilat — iki farklı yapı dene
+        # Yapı 1: fatura endpoint'i, hesap relationship'siz
+        istek_v1 = {
+            "data": {
+                "type": "payments",
+                "attributes": {
+                    "description": aciklama or "Tahsilat",
+                    "payment_date": bugun,
+                    "amount": str(tutar),
+                    "currency": "TRL",
+                    "payment_type": "cash",
+                }
+            }
+        }
+
+        # Yapı 2: payments endpoint'i, payable + account ile
+        istek_v2 = {
+            "data": {
+                "type": "payments",
+                "attributes": {
+                    "description": aciklama or "Tahsilat",
+                    "payment_date": bugun,
+                    "amount": str(tutar),
+                    "currency": "TRL",
+                    "payment_type": "cash",
+                },
+                "relationships": {
+                    "payable": {
+                        "data": {"type": "sales_invoices", "id": str(fatura_id)}
+                    },
+                    "account": {
+                        "data": {"type": "accounts", "id": str(hesap_id)}
+                    }
+                }
+            }
+        }
+
+        denemeler = [
+            (f"/{PARASUT_COMPANY_ID}/sales_invoices/{fatura_id}/payments", istek_v1),
+            (f"/{PARASUT_COMPANY_ID}/payments", istek_v2),
         ]
 
         sonuc = None
         son_hata = None
-        for ep in endpoints:
+        for ep, istek_body in denemeler:
             try:
-                logger.info(f"Tahsilat endpoint deneniyor: {ep}")
-                sonuc = parasut_post(ep, istek)
-                logger.info(f"Basarili endpoint: {ep}")
+                logger.info(f"Tahsilat deneniyor: {ep}")
+                sonuc = parasut_post(ep, istek_body)
+                logger.info(f"Tahsilat basarili: {ep}")
                 break
             except Exception as e:
-                logger.warning(f"Endpoint basarisiz {ep}: {e}")
+                logger.warning(f"Basarisiz {ep}: {e}")
                 son_hata = e
 
         if sonuc is None:

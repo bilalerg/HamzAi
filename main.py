@@ -642,6 +642,45 @@ async def fatura_onayla(request: Request):
         db.close()
 
 
+@app.get("/admin/payment-debug")
+async def payment_debug():
+    """Parasut'te odeme yapisini test eder."""
+    try:
+        from app.parasut.client import parasut_get, parasut_post
+        from app.core.config import PARASUT_COMPANY_ID
+
+        # Hesap detayini getir
+        hesaplar = parasut_get(f"/{PARASUT_COMPANY_ID}/accounts")
+        hesap_listesi = []
+        for h in hesaplar.get("data", []):
+            attr = h.get("attributes", {})
+            hesap_listesi.append({
+                "id": h["id"],
+                "type": h["type"],
+                "ad": attr.get("name"),
+                "tip": attr.get("account_type"),
+                "currency": attr.get("currency"),
+            })
+
+        # Son faturalardan birini bul
+        faturalar = parasut_get(
+            f"/{PARASUT_COMPANY_ID}/sales_invoices",
+            params={"page[size]": 1, "sort": "-issue_date"}
+        )
+        son_fatura = None
+        if faturalar.get("data"):
+            f = faturalar["data"][0]
+            son_fatura = {"id": f["id"], "type": f["type"]}
+
+        return JSONResponse({
+            "hesaplar": hesap_listesi,
+            "son_fatura": son_fatura,
+            "company_id": PARASUT_COMPANY_ID
+        })
+    except Exception as e:
+        return JSONResponse({"hata": str(e)})
+
+
 @app.get("/admin/accounts-debug")
 async def accounts_debug():
     """Parasut'teki tum hesaplari listeler — tahsilat icin dogru hesap ID'sini bulmak icin."""
