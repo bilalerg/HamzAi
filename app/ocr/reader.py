@@ -15,29 +15,28 @@ from app.core.logger import logger
 # Modül seviyesinde bir kez init
 _client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
-# claude-3-5-haiku: vision kalitesi iyi, Sonnet'in ~yarı fiyatı
 OCR_MODEL      = "claude-haiku-4-5-20251001"
-OCR_MAX_TOKENS = 400  # JSON çıktısı için 400 yeterli
+OCR_MAX_TOKENS = 400
 
 
 @dataclass
 class FisVerisi:
     """Kantar fişinden çıkarılan veriler"""
-    plaka:          Optional[str]          = None
-    fis_no:         Optional[str]          = None
-    net_agirlik_kg: Optional[int]          = None
-    net_tartim_kg:  Optional[int]          = None
-    fire_kg:        Optional[int]          = None
-    tarih:          Optional[str]          = None
-    firma:          Optional[str]          = None
-    irsaliye_no:    Optional[str]          = None
-    kantar_no:      Optional[str]          = None
-    malzemeler:     Optional[Dict[str,int]] = None
-    claude_ham_cikti: Optional[str]        = None
-    hata:           Optional[str]          = None
+    plaka:            Optional[str]           = None
+    fis_no:           Optional[str]           = None
+    net_agirlik_kg:   Optional[int]           = None
+    net_tartim_kg:    Optional[int]           = None
+    fire_kg:          Optional[int]           = None
+    tarih:            Optional[str]           = None
+    firma:            Optional[str]           = None
+    irsaliye_no:      Optional[str]           = None
+    kantar_no:        Optional[str]           = None
+    malzemeler:       Optional[Dict[str,int]] = None
+    claude_ham_cikti: Optional[str]           = None
+    hata:             Optional[str]           = None
 
 
-# Kısaltılmış OCR prompt — aynı kurallar, ~%55 daha az token
+# Prompt'a KG KURALI eklendi — Haiku ondalıklı sayı döndürme sorununu çözer
 OCR_PROMPT = """Kantar fişi fotoğrafı. Sadece JSON döndür, başka hiçbir şey yazma.
 
 {"plaka":"ana araç plakası (dorse/2.plaka değil)","fis_no":"fiş no","net_tartim_kg":SAYI,"fire_kg":SAYI_YA_DA_0,"tarih":"GG.AA.YYYY","firma":"fişin başlığındaki fabrika adı (hurda tedarikçisi değil)","irsaliye_no":null,"kantar_no":null,"malzemeler":{}}
@@ -45,14 +44,14 @@ OCR_PROMPT = """Kantar fişi fotoğrafı. Sadece JSON döndür, başka hiçbir �
 KURALLAR:
 - plaka: Plaka-1/Ana Araç alanı, birden fazlaysa sadece ilki
 - firma: Fiş başlığındaki fabrika (SAMSUN MAKİNE, KAPTAN DEMİR, İÇDAŞ gibi). "Firma Adı" satırındaki tedarikçiyi yazma.
-- net_tartim_kg: "Net Tartım/Net/NET AĞIRLIK" değeri (fire düşülmemiş)
-- fire_kg: "Fire/Tenzil/Fire Kg" değeri, yoksa 0
-- malzemeler: Malzeme tablosu VARSA → {ad: net_kg} (Miktar - Tenz.Miktar). YOKSA → {}
-- malzemelere ASLA ekleme: Brüt, Dara, 1.Tartı, 2.Tartı, Dolu/Boş Tartım"""
+- net_tartim_kg: "Net Tartım/Net/NET AĞIRLIK" değeri (fire düşülmemiş). TAM SAYI yaz, ondalık kullanma. 30.680 değil 30680 yaz.
+- fire_kg: "Fire/Tenzil/Fire Kg" değeri, yoksa 0. TAM SAYI yaz.
+- malzemeler: Malzeme tablosu VARSA → {ad: net_kg} şeklinde TAM SAYI kg değerleri. YOKSA → {}
+- malzemelere ASLA ekleme: Brüt, Dara, 1.Tartı, 2.Tartı, Dolu/Boş Tartım
+- TÜM KG DEĞERLERİ TAM SAYI OLMALI: 30680 ✓  30.680 ✗  30,680 ✗"""
 
 
 def _fotograf_to_base64(fotograf_yolu: str) -> tuple[str, str]:
-    """Base64 ve media_type döndürür."""
     with open(fotograf_yolu, "rb") as f:
         data = base64.standard_b64encode(f.read()).decode("utf-8")
     uzanti = Path(fotograf_yolu).suffix.lower()
@@ -61,17 +60,39 @@ def _fotograf_to_base64(fotograf_yolu: str) -> tuple[str, str]:
 
 
 def _parse_json(metin: str) -> dict:
-    """Model cevabından JSON çıkarır — markdown fence veya düz JSON."""
     metin = metin.strip()
-    # Markdown fence varsa içini al
     fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", metin, re.DOTALL)
     if fence:
         return json.loads(fence.group(1))
-    # Düz JSON
     obj = re.search(r"\{.*\}", metin, re.DOTALL)
     if obj:
         return json.loads(obj.group())
     raise ValueError(f"JSON bulunamadı: {metin[:100]}")
+
+
+def _parse_kg(deger) -> int:
+    """
+    Haiku bazen kg değerini ondalıklı döndürüyor: 30.680 veya 30,680
+    Bunlar aslında 30.680 kg = 30680 kg anlamında binlik ayraçlı sayılar.
+
+    Kural:
+    - Tam sayıysa (30680) → direkt int
+    - Ondalıklı ve < 1000 ise (30.680) → binlik ayraç, 1000 ile çarp
+    - Ondalıklı ve >= 1000 ise (1234.5) → gerçek ondalık, yuvarla
+    """
+    if deger is None:
+        return 0
+    try:
+        f = float(str(deger).replace(",", "."))
+        if f != int(f) and f < 1000:
+            # 30.680 → 30680
+            sonuc = int(round(f * 1000))
+            logger.warning(f"⚠️ Ondalıklı kg düzeltildi: {deger} → {sonuc}")
+            return sonuc
+        return int(f)
+    except (ValueError, TypeError):
+        logger.error(f"kg parse hatası: {deger}")
+        return 0
 
 
 def claude_fis_oku(fotograf_yolu: str) -> FisVerisi:
@@ -100,31 +121,32 @@ def claude_fis_oku(fotograf_yolu: str) -> FisVerisi:
     try:
         veri = _parse_json(claude_cevap)
 
-        net_tartim  = int(veri.get("net_tartim_kg") or 0)
-        fire        = int(veri.get("fire_kg") or 0)
+        # _parse_kg ile ondalıklı sayı sorununu da yakala
+        net_tartim  = _parse_kg(veri.get("net_tartim_kg"))
+        fire        = _parse_kg(veri.get("fire_kg"))
         net_agirlik = net_tartim - fire
 
         if net_agirlik < 0:
-            logger.warning(f"⚠️ Net ağırlık negatif çıktı (tartım={net_tartim}, fire={fire}), fire sıfırlanıyor")
+            logger.warning(f"⚠️ Net ağırlık negatif (tartım={net_tartim}, fire={fire}), fire sıfırlanıyor")
             net_agirlik = net_tartim
             fire = 0
 
         malzemeler_ham = veri.get("malzemeler") or {}
-        malzemeler = {k: int(v) for k, v in malzemeler_ham.items() if v and int(v) > 0}
+        malzemeler = {k: _parse_kg(v) for k, v in malzemeler_ham.items() if v and _parse_kg(v) > 0}
 
         logger.info(f"OCR sonuç — plaka={veri.get('plaka')} tartım={net_tartim}kg fire={fire}kg net={net_agirlik}kg firma={veri.get('firma')}")
 
         return FisVerisi(
-            plaka         = veri.get("plaka"),
-            fis_no        = str(veri.get("fis_no")) if veri.get("fis_no") else None,
-            net_tartim_kg = net_tartim,
-            fire_kg       = fire,
-            net_agirlik_kg= net_agirlik,
-            tarih         = veri.get("tarih"),
-            firma         = veri.get("firma"),
-            irsaliye_no   = veri.get("irsaliye_no"),
-            kantar_no     = veri.get("kantar_no"),
-            malzemeler    = malzemeler or None,
+            plaka            = veri.get("plaka"),
+            fis_no           = str(veri.get("fis_no")) if veri.get("fis_no") else None,
+            net_tartim_kg    = net_tartim,
+            fire_kg          = fire,
+            net_agirlik_kg   = net_agirlik,
+            tarih            = veri.get("tarih"),
+            firma            = veri.get("firma"),
+            irsaliye_no      = veri.get("irsaliye_no"),
+            kantar_no        = veri.get("kantar_no"),
+            malzemeler       = malzemeler or None,
             claude_ham_cikti = claude_cevap
         )
 

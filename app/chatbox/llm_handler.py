@@ -69,43 +69,7 @@ TOOLS = [
         "description": "Genel hesap özeti: toplam alacak, borç, cari sayısı.",
         "input_schema": {"type": "object", "properties": {}, "required": []}
     },
-    {
-        "name": "irsaliye_faturalandir",
-        "description": (
-            "Bir firmanın Paraşüt'teki irsaliyelerini listeler. "
-            "Her irsaliye için parasut_irsaliye_id döner — bu ID fatura_kes_waybill'e gidecek. "
-            "Kullanıcı hangi irsaliyeyi seçerse SADECE o irsaliye için fiyat sor, sonra fatura_kes_waybill çağır."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "cari_adi": {"type": "string", "description": "Cari/firma adı"}
-            },
-            "required": ["cari_adi"]
-        }
-    },
-    {
-        "name": "fatura_kes_waybill",
-        "description": (
-            "Tek bir Paraşüt irsaliyesine fatura keser. "
-            "parasut_irsaliye_id: irsaliye_faturalandir'dan gelen 'parasut_irsaliye_id' değeri — "
-            "waybill_id veya başka bir ID değil, Paraşüt'ün kendi ID'si (örn: 1002883098)."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "cari_adi": {"type": "string", "description": "Cari/firma adı"},
-                "parasut_irsaliye_id": {
-                    "type": "string",
-                    "description": "Paraşüt irsaliye ID'si — irsaliye_faturalandir sonucundan gelen parasut_irsaliye_id"
-                },
-                "agirlik_kg": {"type": "number", "description": "Net ağırlık kg"},
-                "malzemeler": {"type": "object", "description": "Malzeme adı → kg dict (opsiyonel)"},
-                "toplanan_fiyatlar": {"type": "object", "description": "Malzeme adı → TL/kg fiyat dict"}
-            },
-            "required": ["cari_adi", "parasut_irsaliye_id", "toplanan_fiyatlar"]
-        }
-    },
+
     {
         "name": "tahsilat_ekle",
         "description": "Paraşüt'te belirli bir cariye tahsilat kaydı ekler.",
@@ -429,11 +393,21 @@ def soru_cevapla(mesaj: str, db, gonderen: str = "") -> str:
     sistem_promptu = f"""Sen Profaix muhasebe asistanısın. Hurda metal kantar takip ve muhasebe sistemi.
 Kullanıcı: {isim} | {db_context}
 
+GÖREVIN: Sadece bilgi sorgula ve cevapla. Fatura kesme veya irsaliye oluşturma işlemleri sistem tarafından yapılır, sen yapma.
+
+YAPABILECEKLERIN:
+- Cari bakiye, fatura, irsaliye sorgulama
+- Hesap özeti getirme
+- Cari detay getirme
+- Yeni cari oluşturma
+- Tahsilat kaydı ekleme
+
+YAPAMAYACAKLARIN:
+- Fatura kesemezsin — kullanıcıya "bekleyen irsaliyeler butonuna tıklayın" de
+- İrsaliye oluşturamazsın — fiş yükleme işlemi bunu otomatik yapar
+
 KURALLAR:
-- Bakiye/fatura/irsaliye bilgisi → mutlaka tool kullan, tahmin etme veya uydurma
-- Fatura keserken: önce irsaliye_faturalandir çağır → parasut_irsaliye_id al → fiyat sor → fatura_kes_waybill çağır
-- fatura_kes_waybill'e giden parasut_irsaliye_id irsaliye_faturalandir'dan gelen değer olmalı (örn: 1002883098). waybill_id (örn: 112) FARKLI bir şeydir, onu gönderme
-- Tek seferde tek irsaliye işle, kullanıcı onaylamadan diğerine geçme
+- Bilgi için mutlaka tool kullan, tahmin etme veya uydurma
 - Bilmediğini uydurma
 - Yeni cari: firma adı→email→tel→vergi no→vergi dairesi→adres sor, özet göster, onay al, cari_olustur çağır"""
 

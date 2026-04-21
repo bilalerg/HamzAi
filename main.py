@@ -1,6 +1,5 @@
 # main.py — Profaix FastAPI Uygulaması
 
-import asyncio
 import os
 import tempfile
 import json as _json
@@ -57,6 +56,7 @@ async def chat_sayfasi():
     return HTMLResponse(content=CHAT_HTML)
 
 
+# ── CHAT (sadece bilgi sorguları, aksiyon yok) ────────────────────────
 @app.post("/api/chat")
 async def chat_api(request: Request):
     data = await request.json()
@@ -76,6 +76,7 @@ async def chat_api(request: Request):
         db.close()
 
 
+# ── FİŞ YÜKLE ────────────────────────────────────────────────────────
 @app.post("/api/upload")
 async def upload_fis(file: UploadFile = File(...), session_id: str = "web_user"):
     db = SessionLocal()
@@ -150,9 +151,9 @@ async def upload_fis(file: UploadFile = File(...), session_id: str = "web_user")
         db.close()
 
 
+# ── FİRMA SEÇ → İRSALİYE OLUŞTUR ────────────────────────────────────
 @app.post("/api/firma-sec")
 async def firma_sec(request: Request):
-    """Kullanıcının seçtiği firmaya göre irsaliye oluşturur."""
     data = await request.json()
     ticket_id = data.get("ticket_id")
     secilen_firma = data.get("firma")
@@ -160,9 +161,7 @@ async def firma_sec(request: Request):
 
     db = SessionLocal()
     try:
-        from app.core.database import WeighTicket
-
-        # Ticket'ta firma adını güncelle
+        from app.core.database import WeighTicket, Waybill
         ticket = db.query(WeighTicket).filter(WeighTicket.id == ticket_id).first()
         if not ticket:
             return JSONResponse({"cevap": "❌ Fiş bulunamadı."})
@@ -170,7 +169,6 @@ async def firma_sec(request: Request):
         ticket.firma = secilen_firma
         db.commit()
 
-        # İrsaliye oluştur
         from app.parasut.irsaliye import irsaliye_olustur
         sonuc = irsaliye_olustur(ticket_id, beklet=True)
 
@@ -178,10 +176,9 @@ async def firma_sec(request: Request):
             return JSONResponse({"cevap": "❌ İrsaliye oluşturulamadı, tekrar deneyin."})
 
         waybill_id = sonuc["waybill_id"]
+        parasut_id = sonuc.get("parasut_id", "-")
 
         # Malzeme bilgisini waybill'e kaydet
-        from app.core.database import Waybill
-        import json as _json
         waybill_obj = db.query(Waybill).filter(Waybill.id == waybill_id).first()
         if waybill_obj and malzemeler:
             waybill_obj.malzemeler_json = _json.dumps(malzemeler, ensure_ascii=False)
@@ -194,107 +191,170 @@ async def firma_sec(request: Request):
                 malzeme_ozet += f"  • {isim}: {kg:,} kg\n"
 
         return JSONResponse({
-            "cevap": f"✅ {secilen_firma} seçildi, irsaliye Paraşüt'te oluşturuldu!\n"
-                     f"🆔 İrsaliye ID: {waybill_id}"
-                     f"{malzeme_ozet}\n"
-                     f"💡 Fatura kesmek için chatbota yazın: '{secilen_firma} irsaliyesini faturalandır'",
+            "cevap": (
+                f"✅ {secilen_firma} seçildi, irsaliye Paraşüt'te oluşturuldu!\n"
+                f"🆔 Paraşüt ID: {parasut_id}"
+                f"{malzeme_ozet}\n"
+                f"İrsaliye sisteme kaydedildi. Fatura kesmek istediğinizde "
+                f"'bekleyen irsaliyeler' yazın veya aşağıdaki butona tıklayın."
+            ),
+            "bekliyor": "bitti",   # artık fiyat beklemiyor, sadece bilgi
         })
-    finally:
-        db.close()
-
-
-@app.post("/api/irsaliye-onayla")
-async def irsaliye_onayla_endpoint(request: Request):
-    """İrsaliyeyi onaylar, malzeme fiyat akışına geçer."""
-    data = await request.json()
-    waybill_id = data.get("waybill_id")
-    malzemeler = data.get("malzemeler", {})
-
-    db = SessionLocal()
-    try:
-        from app.parasut.irsaliye import irsaliye_onayla
-        from app.core.database import Waybill, WeighTicket
-        sonuc = irsaliye_onayla(waybill_id)
-        if not sonuc.get("basarili"):
-            return JSONResponse({"cevap": f"❌ Onay başarısız: {sonuc.get('hata')}"})
-
-        # Plaka bilgisini çek
-        waybill = db.query(Waybill).filter(Waybill.id == waybill_id).first()
-        ticket = db.query(WeighTicket).filter(WeighTicket.id == waybill.ticket_id).first() if waybill else None
-        plaka = ticket.plaka if ticket else "-"
-        agirlik = f"{ticket.agirlik_kg:,} kg" if ticket and ticket.agirlik_kg else "-"
-
-        # Malzeme varsa ilk fiyatı sor, yoksa tek birim fiyat sor
-        if malzemeler:
-            malzeme_listesi = list(malzemeler.keys())
-            ilk_malzeme = malzeme_listesi[0]
-            ilk_kg = malzemeler[ilk_malzeme]
-            return JSONResponse({
-                "cevap": f"✅ İrsaliye onaylandı!\n🚗 Plaka: {plaka} | ⚖️ {agirlik}\n\n"
-                         f"💰 {ilk_malzeme} fiyatı nedir? ({ilk_kg:,} kg / {ilk_kg/1000:.2f} ton)\n"
-                         f"Örnek: 14.85 veya 14850",
-                "bekliyor": "malzeme_fiyat",
-                "waybill_id": waybill_id,
-                "malzemeler": malzemeler,
-                "malzeme_listesi": malzeme_listesi,
-                "malzeme_index": 0,
-                "toplanan_fiyatlar": {}
-            })
-        else:
-            return JSONResponse({
-                "cevap": f"✅ İrsaliye onaylandı!\n🚗 Plaka: {plaka} | ⚖️ {agirlik}\n\n💰 Birim fiyatı yazın (TL/kg):\nÖrnek: 14.85 veya 14850",
-                "bekliyor": "birim_fiyat",
-                "waybill_id": waybill_id
-            })
-    finally:
-        db.close()
-
-
-
-
-@app.post("/api/fatura-kes-waybill")
-async def fatura_kes_waybill(request: Request):
-    """Chatbot üzerinden waybill_id ile fatura keser."""
-    data = await request.json()
-    waybill_id = data.get("waybill_id")
-    toplanan_fiyatlar = data.get("toplanan_fiyatlar", {})
-    malzemeler = data.get("malzemeler", {})
-
-    db = SessionLocal()
-    try:
-        if malzemeler and toplanan_fiyatlar:
-            from app.parasut.fatura import fatura_kes_malzemeli
-            sonuc = fatura_kes_malzemeli(waybill_id, malzemeler, toplanan_fiyatlar)
-        else:
-            birim_fiyat = list(toplanan_fiyatlar.values())[0] if toplanan_fiyatlar else 0
-            from app.parasut.fatura import fatura_kes
-            sonuc = fatura_kes(waybill_id, birim_fiyat)
-
-        if not sonuc.get("basarili"):
-            return JSONResponse({"cevap": f"❌ Fatura kesilemedi: {sonuc.get('hata')}"})
-
-        toplam = sonuc.get("toplam_tutar", 0)
-        ozet = "✅ Fatura kesildi!\n\n"
-        for m, f in toplanan_fiyatlar.items():
-            kg = malzemeler.get(m, 0)
-            ozet += f"  • {m}: {kg:,} kg × {f:,} TL/kg = {int(kg*f):,} TL\n"
-        ozet += f"\n💵 Toplam: {int(toplam):,} TL\n"
-        ozet += f"🧾 Fatura No: {sonuc.get('fatura_no', '-')}"
-        return JSONResponse({"cevap": ozet, "basarili": True})
     except Exception as e:
-        return JSONResponse({"cevap": f"❌ Hata: {str(e)}"})
+        logger.error(f"Firma seç hatası: {e}")
+        return JSONResponse({"cevap": f"❌ Hata oluştu: {str(e)}"})
     finally:
         db.close()
 
+
+# ── BEKLEYENİRSALİYELER (Python, Claude yok) ─────────────────────────
+@app.get("/api/bekleyen-irsaliyeler")
+async def bekleyen_irsaliyeler():
+    """Tüm carilerin bekleyen irsaliyelerini Paraşüt'ten çeker."""
+    try:
+        from app.parasut.client import cari_listesi_getir, cari_bekleyen_irsaliyeleri_getir
+        cariler = cari_listesi_getir()
+        sonuc = []
+        for cari in cariler:
+            irsaliyeler = cari_bekleyen_irsaliyeleri_getir(cari["ad"])
+            for irs in irsaliyeler:
+                sonuc.append({
+                    "parasut_irsaliye_id": irs["id"],
+                    "cari_adi": cari["ad"],
+                    "tarih": irs.get("tarih", "-"),
+                    "toplam_kg": irs.get("toplam_kg", 0),
+                    "kalemler": irs.get("kalemler", []),
+                    "aciklama": irs.get("aciklama", "-"),
+                })
+        return JSONResponse({"irsaliyeler": sonuc, "toplam": len(sonuc)})
+    except Exception as e:
+        logger.error(f"Bekleyen irsaliye hatası: {e}")
+        return JSONResponse({"irsaliyeler": [], "hata": str(e)})
+
+
+# ── FATURA KES (waybill_id ile, Python, Claude yok) ──────────────────
+@app.post("/api/fatura-kes")
+async def fatura_kes_endpoint(request: Request):
+    """
+    Paraşüt irsaliye ID'si ve fiyat bilgisiyle direkt fatura keser.
+    Claude devreye girmez.
+    """
+    data = await request.json()
+    parasut_irsaliye_id = data.get("parasut_irsaliye_id")
+    cari_adi            = data.get("cari_adi")
+    agirlik_kg          = data.get("agirlik_kg", 0)
+    malzemeler          = data.get("malzemeler", {})
+    toplanan_fiyatlar   = data.get("toplanan_fiyatlar", {})
+
+    if not parasut_irsaliye_id or not cari_adi or not toplanan_fiyatlar:
+        return JSONResponse({"cevap": "❌ Eksik bilgi: irsaliye ID, cari adı ve fiyat gerekli."})
+
+    db = SessionLocal()
+    try:
+        from app.parasut.client import cari_id_bul, parasut_post
+        from app.core.config import PARASUT_COMPANY_ID, PARASUT_HURDA_PRODUCT_ID
+        from datetime import datetime
+
+        contact_id = cari_id_bul(cari_adi)
+        if not contact_id:
+            return JSONResponse({"cevap": f"❌ '{cari_adi}' carisi Paraşüt'te bulunamadı."})
+
+        bugun = datetime.now().strftime("%Y-%m-%d")
+
+        # Malzeme bazlı mı tek fiyat mı?
+        if malzemeler and len(toplanan_fiyatlar) > 1:
+            detaylar = []
+            toplam_tutar = 0
+            for malzeme_adi, fiyat in toplanan_fiyatlar.items():
+                kg = malzemeler.get(malzeme_adi, 0)
+                if kg <= 0:
+                    continue
+                toplam_tutar += kg * fiyat
+                detaylar.append({
+                    "type": "sales_invoice_details",
+                    "attributes": {
+                        "quantity": kg,
+                        "unit_price": str(float(fiyat)),
+                        "vat_rate": 0,
+                        "description": f"{malzeme_adi} — {kg:,} kg"
+                    },
+                    "relationships": {
+                        "product": {"data": {"type": "products", "id": str(PARASUT_HURDA_PRODUCT_ID)}}
+                    }
+                })
+        else:
+            birim_fiyat  = float(list(toplanan_fiyatlar.values())[0])
+            kg           = float(agirlik_kg) if agirlik_kg else float(sum(malzemeler.values())) if malzemeler else 0
+            toplam_tutar = kg * birim_fiyat
+            detaylar     = [{
+                "type": "sales_invoice_details",
+                "attributes": {
+                    "quantity": kg,
+                    "unit_price": str(birim_fiyat),
+                    "vat_rate": 0,
+                    "description": f"Hurda — {kg:,.0f} kg"
+                },
+                "relationships": {
+                    "product": {"data": {"type": "products", "id": str(PARASUT_HURDA_PRODUCT_ID)}}
+                }
+            }]
+
+        istek = {
+            "data": {
+                "type": "sales_invoices",
+                "attributes": {
+                    "item_type": "invoice",
+                    "description": f"Hurda Alım — İrsaliye {parasut_irsaliye_id}",
+                    "issue_date": bugun,
+                    "due_date": bugun,
+                    "currency": "TRL"
+                },
+                "relationships": {
+                    "contact": {"data": {"type": "contacts", "id": str(contact_id)}},
+                    "details": {"data": detaylar},
+                    "shipment_document": {"data": {"type": "shipment_documents", "id": str(parasut_irsaliye_id)}}
+                }
+            }
+        }
+
+        try:
+            sonuc = parasut_post(f"/{PARASUT_COMPANY_ID}/sales_invoices", istek)
+        except Exception:
+            # İrsaliye bağlantısı kurulamazsa bağlantısız dene
+            logger.warning(f"İrsaliye bağlantılı fatura başarısız, bağlantısız deneniyor")
+            istek["data"]["relationships"].pop("shipment_document", None)
+            sonuc = parasut_post(f"/{PARASUT_COMPANY_ID}/sales_invoices", istek)
+
+        fatura_id = sonuc["data"]["id"]
+        logger.info(f"✅ Fatura kesildi: {fatura_id} ← irsaliye {parasut_irsaliye_id} cari={cari_adi}")
+
+        # Ozet mesaj
+        ozet = f"✅ Fatura kesildi!\n\n🏢 {cari_adi}\n"
+        for m, f in toplanan_fiyatlar.items():
+            kg = malzemeler.get(m, agirlik_kg) if malzemeler else agirlik_kg
+            ozet += f"  • {m if malzemeler else 'Hurda'}: {kg:,} kg × {f:,} TL/kg = {int(kg*f):,} TL\n"
+        ozet += f"\n💵 Toplam: {int(toplam_tutar):,} TL\n"
+        ozet += f"🧾 Fatura No: {fatura_id}"
+
+        return JSONResponse({"cevap": ozet, "basarili": True, "fatura_no": fatura_id})
+
+    except Exception as e:
+        logger.error(f"Fatura kes hatası: {e}")
+        return JSONResponse({"cevap": f"❌ Fatura kesilemedi: {str(e)}", "basarili": False})
+    finally:
+        db.close()
+
+
+# ── ESKİ ENDPOINT'LER (geriye dönük uyumluluk) ───────────────────────
 @app.post("/api/fiyat")
 async def fiyat_gir(request: Request):
     data = await request.json()
-    waybill_id = data.get("waybill_id")
-    fiyat_str = data.get("fiyat", "").strip()
-    malzeme_listesi = data.get("malzeme_listesi", [])
-    malzeme_index = data.get("malzeme_index", 0)
+    waybill_id        = data.get("waybill_id")
+    fiyat_str         = data.get("fiyat", "").strip()
+    malzeme_listesi   = data.get("malzeme_listesi", [])
+    malzeme_index     = data.get("malzeme_index", 0)
     toplanan_fiyatlar = data.get("toplanan_fiyatlar", {})
-    malzemeler = data.get("malzemeler", {})
+    malzemeler        = data.get("malzemeler", {})
 
     db = SessionLocal()
     try:
@@ -353,7 +413,6 @@ async def fiyat_gir(request: Request):
                          f"🧾 Fatura No: {sonuc.get('fatura_no', '-')}\n"
                          f"Fatura Paraşüt'e kaydedildi."
             })
-
     except Exception as e:
         logger.error(f"Fiyat hatası: {e}")
         return JSONResponse({"cevap": f"❌ Fatura kesilemedi: {str(e)}"})
@@ -364,10 +423,10 @@ async def fiyat_gir(request: Request):
 @app.post("/api/onay")
 async def fatura_onayla(request: Request):
     data = await request.json()
-    waybill_id = data.get("waybill_id")
+    waybill_id        = data.get("waybill_id")
     toplanan_fiyatlar = data.get("toplanan_fiyatlar", {})
-    malzemeler = data.get("malzemeler", {})
-    onay = data.get("onay", "").strip().lower()
+    malzemeler        = data.get("malzemeler", {})
+    onay              = data.get("onay", "").strip().lower()
 
     if onay not in ["evet", "e", "yes", "tamam", "ok"]:
         return JSONResponse({"cevap": "❌ Fatura iptal edildi. Yeni fiş yükleyebilirsiniz."})
@@ -378,7 +437,6 @@ async def fatura_onayla(request: Request):
         sonuc = fatura_kes_malzemeli(waybill_id, malzemeler, toplanan_fiyatlar)
         if not sonuc.get("basarili"):
             return JSONResponse({"cevap": f"❌ Fatura kesilemedi: {sonuc.get('hata')}"})
-
         toplam_tutar = sonuc.get("toplam_tutar", 0)
         ozet = "✅ Fatura kesildi!\n\n"
         for malzeme_adi, fiyat in toplanan_fiyatlar.items():
@@ -386,9 +444,7 @@ async def fatura_onayla(request: Request):
             ozet += f"  • {malzeme_adi}: {kg:,} kg × {fiyat:,} TL/kg = {int(kg * fiyat):,} TL\n"
         ozet += f"\n💵 Toplam: {int(toplam_tutar):,} TL\n"
         ozet += f"🧾 Fatura No: {sonuc.get('fatura_no', '-')}\n"
-        ozet += "Fatura Paraşüt'e kaydedildi. (Malzemeler ayrı kalem olarak işlendi)"
         return JSONResponse({"cevap": ozet})
-
     except Exception as e:
         logger.error(f"Onay hatası: {e}")
         return JSONResponse({"cevap": f"❌ Fatura kesilemedi: {str(e)}"})
@@ -469,7 +525,7 @@ CHAT_HTML = """<!DOCTYPE html>
   .quick-actions{display:flex;flex-wrap:wrap;gap:7px;justify-content:center;max-width:500px;margin-top:6px;}
   .quick-btn{background:var(--surface);border:1px solid var(--border);color:var(--text);font-family:'DM Sans',sans-serif;font-size:12px;font-weight:400;padding:7px 14px;border-radius:100px;cursor:pointer;transition:all 0.15s ease;box-shadow:var(--shadow-sm);}
   .quick-btn:hover{background:var(--accent-lt);border-color:#c5d9ca;color:var(--accent);transform:translateY(-1px);box-shadow:var(--shadow);}
-  .message{display:flex;flex-direction:column;max-width:68%;animation:pop 0.25s cubic-bezier(0.34,1.56,0.64,1);}
+  .message{display:flex;flex-direction:column;max-width:72%;animation:pop 0.25s cubic-bezier(0.34,1.56,0.64,1);}
   @keyframes pop{from{opacity:0;transform:translateY(8px) scale(0.97);}to{opacity:1;transform:none;}}
   .message.user{align-self:flex-end;}
   .message.bot{align-self:flex-start;}
@@ -478,13 +534,19 @@ CHAT_HTML = """<!DOCTYPE html>
   .bubble{padding:12px 16px;font-size:13.5px;line-height:1.75;white-space:pre-wrap;word-break:break-word;font-weight:400;}
   .message.user .bubble{background:var(--user-bg);color:#fff;border-radius:14px 14px 3px 14px;box-shadow:0 2px 10px rgba(45,90,61,0.2);}
   .message.bot .bubble{background:var(--surface);color:var(--text);border-radius:3px 14px 14px 14px;border:1px solid var(--border);box-shadow:var(--shadow);}
-  .onay-btn{margin-top:10px;padding:10px 20px;background:var(--accent);color:#fff;border:none;border-radius:9px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer;width:100%;transition:background 0.15s;}
-  .onay-btn:hover{background:#245030;}
   .firma-btn{margin-top:6px;padding:9px 16px;background:var(--surface);color:var(--accent);border:1.5px solid #c5d9ca;border-radius:9px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer;width:100%;transition:all 0.15s;text-align:left;}
   .firma-btn:hover{background:var(--accent-lt);border-color:var(--accent);}
+  .irsaliye-btn{margin-top:6px;padding:9px 16px;background:var(--surface);color:var(--text);border:1.5px solid var(--border2);border-radius:9px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:400;cursor:pointer;width:100%;transition:all 0.15s;text-align:left;display:flex;justify-content:space-between;align-items:center;}
+  .irsaliye-btn:hover{background:var(--accent-lt);border-color:var(--accent);color:var(--accent);}
+  .irsaliye-btn .kg{font-size:11px;color:var(--muted);font-weight:400;}
+  .fiyat-input-wrap{margin-top:10px;display:flex;gap:8px;}
+  .fiyat-input{flex:1;padding:9px 12px;border:1.5px solid var(--border2);border-radius:9px;font-family:'DM Sans',sans-serif;font-size:13px;outline:none;background:var(--bg);}
+  .fiyat-input:focus{border-color:var(--accent);}
+  .fiyat-gonder-btn{padding:9px 18px;background:var(--accent);color:#fff;border:none;border-radius:9px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer;transition:background 0.15s;}
+  .fiyat-gonder-btn:hover{background:#245030;}
   .img-bubble{background:var(--user-bg);padding:6px;border-radius:14px 14px 3px 14px;box-shadow:0 2px 10px rgba(45,90,61,0.2);display:inline-block;}
   .img-bubble img{max-width:220px;max-height:180px;border-radius:9px;display:block;}
-  .typing-wrap{display:flex;flex-direction:column;max-width:68%;align-self:flex-start;animation:pop 0.25s cubic-bezier(0.34,1.56,0.64,1);}
+  .typing-wrap{display:flex;flex-direction:column;max-width:72%;align-self:flex-start;animation:pop 0.25s cubic-bezier(0.34,1.56,0.64,1);}
   .typing-bubble{background:var(--surface);border:1px solid var(--border);border-radius:3px 14px 14px 14px;padding:14px 18px;display:flex;gap:5px;align-items:center;box-shadow:var(--shadow);width:fit-content;}
   .typing-bubble span{width:6px;height:6px;border-radius:50%;background:var(--muted2);animation:bounce 1.3s ease-in-out infinite;}
   .typing-bubble span:nth-child(2){animation-delay:0.15s;}
@@ -530,9 +592,9 @@ CHAT_HTML = """<!DOCTYPE html>
     <h2>Merhaba,<br><em>Profaix</em>'e hoş geldiniz.</h2>
     <p>Kantar fişi fotoğrafı yükleyin veya sistem verileri hakkında soru sorun.</p>
     <div class="quick-actions">
+      <button class="quick-btn" onclick="bekleyenIrsaliyeleriGoster()">📋 Bekleyen irsaliyeler</button>
       <button class="quick-btn" onclick="quickSend('Bugün kaç ton geldi?')">Bugün kaç ton geldi?</button>
-      <button class="quick-btn" onclick="quickSend('Hangi plakalar geldi?')">Hangi plakalar geldi?</button>
-      <button class="quick-btn" onclick="quickSend('Bekleyen irsaliyeler var mı?')">Bekleyen irsaliyeler</button>
+      <button class="quick-btn" onclick="quickSend('Müşteri bakiyeleri')">Müşteri bakiyeleri</button>
       <button class="quick-btn" onclick="quickSend('Son 10 fatura')">Son 10 fatura</button>
       <button class="quick-btn" onclick="quickSend('Bugün kaç fatura kesildi?')">Bugün kesilen faturalar</button>
     </div>
@@ -558,7 +620,9 @@ CHAT_HTML = """<!DOCTYPE html>
   const messagesEl = document.getElementById('messages');
   const inputEl    = document.getElementById('input');
   const sendBtn    = document.getElementById('sendBtn');
-  let bekleyenDurum = null;
+
+  // Aktif fatura akışı state'i
+  let faturaAkisi = null; // { irsaliyeler, index, toplanan_fiyatlar }
 
   function autoResize(el) {
     el.style.height = 'auto';
@@ -568,8 +632,7 @@ CHAT_HTML = """<!DOCTYPE html>
   function handleKey(e) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      if (bekleyenDurum) { gondGiris(inputEl.value.trim()); }
-      else { sendMessage(); }
+      sendMessage();
     }
   }
 
@@ -582,21 +645,22 @@ CHAT_HTML = """<!DOCTYPE html>
     return new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
   }
 
-  function addMessage(text, type, extraBtn) {
+  function addMessage(text, type, extraEl) {
     removeWelcome();
     const wrap = document.createElement('div');
     wrap.className = 'message ' + type;
     const meta = document.createElement('div');
     meta.className = 'msg-meta';
-    meta.textContent = (type === 'user' ? 'Siz' : 'Profaix AI') + ' · ' + now();
+    meta.textContent = (type === 'user' ? 'Siz' : 'Profaix') + ' · ' + now();
     const bubble = document.createElement('div');
     bubble.className = 'bubble';
     bubble.textContent = text;
-    if (extraBtn) bubble.appendChild(extraBtn);
+    if (extraEl) bubble.appendChild(extraEl);
     wrap.appendChild(meta);
     wrap.appendChild(bubble);
     messagesEl.appendChild(wrap);
     messagesEl.scrollTop = messagesEl.scrollHeight;
+    return bubble;
   }
 
   function addImageMessage(src) {
@@ -612,13 +676,12 @@ CHAT_HTML = """<!DOCTYPE html>
     const img = document.createElement('img');
     img.src = src;
     img.style.cursor = 'pointer';
-    img.title = 'Büyütmek için tıkla';
     img.onclick = () => {
       const overlay = document.createElement('div');
       overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);display:flex;align-items:center;justify-content:center;z-index:999;cursor:pointer;';
       const bigImg = document.createElement('img');
       bigImg.src = src;
-      bigImg.style.cssText = 'max-width:90%;max-height:90%;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,0.5);';
+      bigImg.style.cssText = 'max-width:90%;max-height:90%;border-radius:12px;';
       overlay.appendChild(bigImg);
       overlay.onclick = () => overlay.remove();
       document.body.appendChild(overlay);
@@ -637,7 +700,7 @@ CHAT_HTML = """<!DOCTYPE html>
     wrap.id = 'typing';
     const meta = document.createElement('div');
     meta.className = 'msg-meta';
-    meta.textContent = 'Profaix AI yazıyor…';
+    meta.textContent = 'Profaix yazıyor…';
     const bubble = document.createElement('div');
     bubble.className = 'typing-bubble';
     bubble.innerHTML = '<span></span><span></span><span></span>';
@@ -652,24 +715,20 @@ CHAT_HTML = """<!DOCTYPE html>
     if (el) el.remove();
   }
 
-  function setPlaceholder() {
-    if (!bekleyenDurum) {
-      inputEl.placeholder = 'Mesajınızı yazın veya fiş fotoğrafı yükleyin…';
-    } else if (bekleyenDurum.tip === 'firma_sec') {
-      inputEl.placeholder = 'Yukarıdaki butonlardan fabrika seçin…';
-    } else if (bekleyenDurum.tip === 'onay') {
-      inputEl.placeholder = 'evet veya hayır yazın…';
-    } else if (bekleyenDurum.tip === 'irsaliye_onay') {
-      inputEl.placeholder = 'onayla yazın veya butona tıklayın…';
-    } else {
-      inputEl.placeholder = 'Fiyat yazın (örn: 14.85 veya 14850)…';
-    }
-  }
-
+  // ── CHAT (Claude — sadece bilgi) ──────────────────────────────────
   async function sendMessage() {
     const text = inputEl.value.trim();
     if (!text || sendBtn.disabled) return;
-    if (bekleyenDurum) { gondGiris(text); return; }
+
+    // "bekleyen irsaliye" gibi yazılırsa direkt Python endpoint
+    const lower = text.toLowerCase();
+    if (lower.includes('bekleyen') && (lower.includes('irsaliy') || lower.includes('fatura'))) {
+      addMessage(text, 'user');
+      inputEl.value = '';
+      inputEl.style.height = 'auto';
+      await bekleyenIrsaliyeleriGoster();
+      return;
+    }
 
     addMessage(text, 'user');
     inputEl.value = '';
@@ -695,6 +754,7 @@ CHAT_HTML = """<!DOCTYPE html>
     }
   }
 
+  // ── FİŞ YÜKLE ────────────────────────────────────────────────────
   async function uploadFis(input) {
     const file = input.files[0];
     if (!file) return;
@@ -716,7 +776,6 @@ CHAT_HTML = """<!DOCTYPE html>
       removeTyping();
 
       if (data.bekliyor === 'firma_sec') {
-        // Firma seçim butonları ekle
         const wrap = document.createElement('div');
         (data.firma_listesi || []).forEach(firma => {
           const btn = document.createElement('button');
@@ -726,38 +785,6 @@ CHAT_HTML = """<!DOCTYPE html>
           wrap.appendChild(btn);
         });
         addMessage(data.cevap, 'bot', wrap);
-        bekleyenDurum = {
-          tip: 'firma_sec',
-          ticket_id: data.ticket_id,
-          malzemeler: data.malzemeler || {},
-          firma_listesi: data.firma_listesi || []
-        };
-        setPlaceholder();
-      } else if (data.bekliyor === 'irsaliye_onay') {
-        // Onayla butonu ekle
-        const btn = document.createElement('button');
-        btn.className = 'onay-btn';
-        btn.textContent = '✅ İrsaliyeyi Onayla ve Faturaya Geç';
-        btn.onclick = () => irsaliyeOnayla(data.waybill_id, data.malzemeler, btn);
-        addMessage(data.cevap, 'bot', btn);
-        bekleyenDurum = {
-          tip: 'irsaliye_onay',
-          waybill_id: data.waybill_id,
-          malzemeler: data.malzemeler || {}
-        };
-        setPlaceholder();
-      } else if (data.bekliyor) {
-        addMessage(data.cevap, 'bot');
-        bekleyenDurum = {
-          tip: data.bekliyor,
-          waybill_id: data.waybill_id,
-          malzemeler: data.malzemeler || {},
-          malzeme_listesi: data.malzeme_listesi || [],
-          malzeme_index: data.malzeme_index || 0,
-          toplanan_fiyatlar: data.toplanan_fiyatlar || {},
-          toplam_tutar: data.toplam_tutar || 0
-        };
-        setPlaceholder();
       } else {
         addMessage(data.cevap, 'bot');
       }
@@ -771,6 +798,7 @@ CHAT_HTML = """<!DOCTYPE html>
     }
   }
 
+  // ── FİRMA SEÇ ────────────────────────────────────────────────────
   async function firmaSecildi(ticketId, firma, malzemeler, wrap) {
     if (wrap) Array.from(wrap.querySelectorAll('button')).forEach(b => b.disabled = true);
     addMessage('🏭 ' + firma, 'user');
@@ -779,14 +807,11 @@ CHAT_HTML = """<!DOCTYPE html>
       const res = await fetch('/api/firma-sec', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ticket_id: ticketId, firma: firma, malzemeler: malzemeler, session_id: SESSION_ID })
+        body: JSON.stringify({ ticket_id: ticketId, firma, malzemeler, session_id: SESSION_ID })
       });
       const data = await res.json();
       removeTyping();
-
       addMessage(data.cevap, 'bot');
-      bekleyenDurum = null;
-      setPlaceholder();
     } catch {
       removeTyping();
       addMessage('❌ Hata oluştu, tekrar deneyin.', 'bot');
@@ -794,126 +819,179 @@ CHAT_HTML = """<!DOCTYPE html>
     inputEl.focus();
   }
 
-  async function irsaliyeOnayla(waybillId, malzemeler, btn) {
-    if (btn) btn.disabled = true;
+  // ── BEKLEYENİRSALİYELER (Python, Claude yok) ─────────────────────
+  async function bekleyenIrsaliyeleriGoster() {
     showTyping();
     try {
-      const res = await fetch('/api/irsaliye-onayla', {
+      const res = await fetch('/api/bekleyen-irsaliyeler');
+      const data = await res.json();
+      removeTyping();
+
+      if (!data.irsaliyeler || data.irsaliyeler.length === 0) {
+        addMessage('📋 Sistemde bekleyen irsaliye yok.', 'bot');
+        return;
+      }
+
+      const wrap = document.createElement('div');
+      const baslik = document.createElement('div');
+      baslik.style.cssText = 'font-size:12px;color:var(--muted);margin-bottom:8px;';
+      baslik.textContent = `${data.irsaliyeler.length} bekleyen irsaliye — fatura kesmek için seçin:`;
+      wrap.appendChild(baslik);
+
+      data.irsaliyeler.forEach((irs, idx) => {
+        const btn = document.createElement('button');
+        btn.className = 'irsaliye-btn';
+        const sol = document.createElement('span');
+        sol.textContent = `🏭 ${irs.cari_adi} · ${irs.tarih}`;
+        const sag = document.createElement('span');
+        sag.className = 'kg';
+        sag.textContent = `${(irs.toplam_kg/1000).toFixed(2)} ton`;
+        btn.appendChild(sol);
+        btn.appendChild(sag);
+        btn.onclick = () => irsaliyeSecildi(irs, wrap);
+        wrap.appendChild(btn);
+      });
+
+      addMessage('📋 Bekleyen irsaliyeler:', 'bot', wrap);
+    } catch {
+      removeTyping();
+      addMessage('❌ İrsaliyeler yüklenemedi, tekrar deneyin.', 'bot');
+    }
+  }
+
+  // ── İRSALİYE SEÇ → FİYAT AKIŞI ──────────────────────────────────
+  function irsaliyeSecildi(irs, wrap) {
+    // Diğer butonları devre dışı bırak
+    if (wrap) Array.from(wrap.querySelectorAll('button')).forEach(b => b.disabled = true);
+
+    addMessage(`✅ Seçildi: ${irs.cari_adi} — ${(irs.toplam_kg/1000).toFixed(2)} ton`, 'user');
+
+    // Malzeme bazlı mı tek fiyat mı?
+    const kalemler = irs.kalemler || [];
+    if (kalemler.length > 1) {
+      // Malzeme bazlı fiyat akışı
+      faturaAkisi = {
+        irs,
+        malzeme_listesi: kalemler.map(k => k.aciklama),
+        malzemeler: Object.fromEntries(kalemler.map(k => [k.aciklama, k.miktar_kg])),
+        toplanan_fiyatlar: {},
+        index: 0
+      };
+      const ilk = kalemler[0];
+      fiyatSor(`💰 ${ilk.aciklama} fiyatı nedir?\n(${ilk.miktar_kg.toLocaleString()} kg / ${(ilk.miktar_kg/1000).toFixed(2)} ton)\nÖrnek: 14.85 veya 14850`);
+    } else {
+      // Tek birim fiyat
+      faturaAkisi = {
+        irs,
+        malzeme_listesi: [],
+        malzemeler: {},
+        toplanan_fiyatlar: {},
+        index: 0
+      };
+      fiyatSor(`💰 Birim fiyatı nedir? (TL/kg)\n⚖️ ${(irs.toplam_kg/1000).toFixed(2)} ton\nÖrnek: 14.85 veya 14850`);
+    }
+  }
+
+  function fiyatSor(mesaj) {
+    // Fiyat input widget'ı göster
+    const wrap = document.createElement('div');
+    wrap.className = 'fiyat-input-wrap';
+    const inp = document.createElement('input');
+    inp.type = 'text';
+    inp.className = 'fiyat-input';
+    inp.placeholder = 'Örn: 14.85 veya 14850';
+    inp.autofocus = true;
+    const btn = document.createElement('button');
+    btn.className = 'fiyat-gonder-btn';
+    btn.textContent = 'Gönder';
+    const gonder = () => {
+      const deger = inp.value.trim();
+      if (!deger) return;
+      inp.disabled = true;
+      btn.disabled = true;
+      fiyatGirildi(deger);
+    };
+    btn.onclick = gonder;
+    inp.onkeydown = (e) => { if (e.key === 'Enter') gonder(); };
+    wrap.appendChild(inp);
+    wrap.appendChild(btn);
+    addMessage(mesaj, 'bot', wrap);
+    setTimeout(() => inp.focus(), 100);
+  }
+
+  async function fiyatGirildi(deger) {
+    if (!faturaAkisi) return;
+    addMessage(deger, 'user');
+
+    const fiyat = parseFiyat(deger);
+    if (!fiyat) {
+      addMessage('❌ Geçersiz fiyat. Örnek: 14.85 veya 14850', 'bot');
+      fiyatSor('💰 Tekrar deneyin:');
+      return;
+    }
+
+    const { irs, malzeme_listesi, malzemeler, toplanan_fiyatlar, index } = faturaAkisi;
+
+    if (malzeme_listesi.length > 0) {
+      // Malzeme bazlı
+      const mevcut = malzeme_listesi[index];
+      toplanan_fiyatlar[mevcut] = fiyat;
+      const sonraki = index + 1;
+
+      if (sonraki < malzeme_listesi.length) {
+        faturaAkisi.index = sonraki;
+        const sonrakiMalzeme = malzeme_listesi[sonraki];
+        const sonrakiKg = malzemeler[sonrakiMalzeme] || 0;
+        fiyatSor(`✅ ${mevcut}: ${fiyat.toLocaleString()} TL/kg kaydedildi.\n\n💰 ${sonrakiMalzeme} fiyatı nedir?\n(${sonrakiKg.toLocaleString()} kg / ${(sonrakiKg/1000).toFixed(2)} ton)`);
+      } else {
+        // Tüm fiyatlar toplandı, özet göster ve kes
+        await faturaOzetVeKes(irs, malzemeler, toplanan_fiyatlar);
+      }
+    } else {
+      // Tek fiyat
+      const tf = { 'hurda': fiyat };
+      await faturaOzetVeKes(irs, {}, tf, irs.toplam_kg);
+    }
+  }
+
+  async function faturaOzetVeKes(irs, malzemeler, toplanan_fiyatlar, agirlik_kg) {
+    showTyping();
+    try {
+      const res = await fetch('/api/fatura-kes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ waybill_id: waybillId, malzemeler: malzemeler, session_id: SESSION_ID })
+        body: JSON.stringify({
+          parasut_irsaliye_id: irs.parasut_irsaliye_id,
+          cari_adi: irs.cari_adi,
+          agirlik_kg: agirlik_kg || irs.toplam_kg,
+          malzemeler,
+          toplanan_fiyatlar
+        })
       });
       const data = await res.json();
       removeTyping();
       addMessage(data.cevap, 'bot');
-
-      if (data.bekliyor) {
-        bekleyenDurum = {
-          tip: data.bekliyor,
-          waybill_id: data.waybill_id,
-          malzemeler: data.malzemeler || malzemeler,
-          malzeme_listesi: data.malzeme_listesi || [],
-          malzeme_index: data.malzeme_index || 0,
-          toplanan_fiyatlar: data.toplanan_fiyatlar || {},
-          toplam_tutar: 0
-        };
-        setPlaceholder();
-      } else {
-        bekleyenDurum = null;
-        setPlaceholder();
-      }
+      faturaAkisi = null;
     } catch {
       removeTyping();
-      addMessage('❌ Onay hatası, tekrar deneyin.', 'bot');
+      addMessage('❌ Fatura kesilemedi, tekrar deneyin.', 'bot');
+      faturaAkisi = null;
     }
-    inputEl.focus();
   }
 
-  async function gondGiris(deger) {
-    if (!deger || !bekleyenDurum) return;
-
-    // irsaliye_onay durumunda "onayla" yazılırsa butona bastı gibi işle
-    if (bekleyenDurum.tip === 'irsaliye_onay') {
-      if (['onayla', 'evet', 'e', 'ok', 'tamam'].includes(deger.toLowerCase())) {
-        addMessage(deger, 'user');
-        inputEl.value = '';
-        inputEl.style.height = 'auto';
-        await irsaliyeOnayla(bekleyenDurum.waybill_id, bekleyenDurum.malzemeler, null);
-        return;
-      } else {
-        addMessage('ℹ️ İrsaliyeyi onaylamak için "onayla" yazın veya butona tıklayın.', 'bot');
-        inputEl.value = '';
-        return;
-      }
+  function parseFiyat(metin) {
+    metin = metin.trim().toLowerCase()
+      .replace('tl','').replace('lira','').replace('₺','').trim()
+      .replace(',','.');
+    const noktaSayisi = (metin.match(/\\./g) || []).length;
+    if (noktaSayisi === 1) {
+      const parca = metin.split('.');
+      if (parca[1].length === 3) metin = metin.replace('.','');
+    } else if (noktaSayisi > 1) {
+      metin = metin.replace(/\\./g,'');
     }
-
-    addMessage(deger, 'user');
-    inputEl.value = '';
-    inputEl.style.height = 'auto';
-    sendBtn.disabled = true;
-    showTyping();
-
-    try {
-      let res, data;
-
-      if (bekleyenDurum.tip === 'onay') {
-        res = await fetch('/api/onay', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            waybill_id: bekleyenDurum.waybill_id,
-            onay: deger,
-            malzemeler: bekleyenDurum.malzemeler,
-            toplanan_fiyatlar: bekleyenDurum.toplanan_fiyatlar,
-            session_id: SESSION_ID
-          })
-        });
-        data = await res.json();
-        removeTyping();
-        addMessage(data.cevap, 'bot');
-        bekleyenDurum = null;
-        setPlaceholder();
-      } else {
-        res = await fetch('/api/fiyat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            waybill_id: bekleyenDurum.waybill_id,
-            fiyat: deger,
-            malzeme_listesi: bekleyenDurum.malzeme_listesi,
-            malzeme_index: bekleyenDurum.malzeme_index,
-            toplanan_fiyatlar: bekleyenDurum.toplanan_fiyatlar,
-            malzemeler: bekleyenDurum.malzemeler,
-            session_id: SESSION_ID
-          })
-        });
-        data = await res.json();
-        removeTyping();
-        addMessage(data.cevap, 'bot');
-
-        if (data.bekliyor) {
-          bekleyenDurum = {
-            tip: data.bekliyor,
-            waybill_id: data.waybill_id,
-            malzemeler: data.malzemeler || bekleyenDurum.malzemeler,
-            malzeme_listesi: data.malzeme_listesi || bekleyenDurum.malzeme_listesi,
-            malzeme_index: data.malzeme_index !== undefined ? data.malzeme_index : bekleyenDurum.malzeme_index,
-            toplanan_fiyatlar: data.toplanan_fiyatlar || bekleyenDurum.toplanan_fiyatlar,
-            toplam_tutar: data.toplam_tutar || 0
-          };
-          setPlaceholder();
-        } else {
-          bekleyenDurum = null;
-          setPlaceholder();
-        }
-      }
-    } catch {
-      removeTyping();
-      addMessage('❌ Hata oluştu, tekrar deneyin.', 'bot');
-    } finally {
-      sendBtn.disabled = false;
-      inputEl.focus();
-    }
+    const f = parseFloat(metin);
+    return (f > 0) ? f : null;
   }
 
   function quickSend(text) {
