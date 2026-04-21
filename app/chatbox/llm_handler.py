@@ -69,7 +69,6 @@ TOOLS = [
         "description": "Genel hesap özeti: toplam alacak, borç, cari sayısı.",
         "input_schema": {"type": "object", "properties": {}, "required": []}
     },
-
     {
         "name": "tahsilat_ekle",
         "description": "Paraşüt'te belirli bir cariye tahsilat kaydı ekler.",
@@ -115,7 +114,6 @@ def _tool_calistir(tool_name: str, tool_input: dict) -> str:
 
         if tool_name == "cari_listesi_getir":
             cariler = cari_listesi_getir()
-            # Bakiye dahil — ama adres/telefon/vergi yok (token tasarrufu)
             kirpilmis = [{"id": c["id"], "ad": c["ad"], "bakiye": c.get("bakiye", 0)} for c in cariler]
             return json.dumps(kirpilmis, ensure_ascii=False)
 
@@ -152,126 +150,6 @@ def _tool_calistir(tool_name: str, tool_input: dict) -> str:
                 "toplam_alacak": ozet.get("toplam_alacak", 0),
                 "toplam_borclu": ozet.get("toplam_borclu", 0),
             }, ensure_ascii=False)
-
-        elif tool_name == "irsaliye_faturalandir":
-            from app.parasut.client import cari_bekleyen_irsaliyeleri_getir
-            cari_adi = tool_input.get("cari_adi", "")
-            irsaliyeler = cari_bekleyen_irsaliyeleri_getir(cari_adi)
-            if not irsaliyeler:
-                return f"{cari_adi} için Paraşüt'te irsaliye bulunamadı."
-            # parasut_irsaliye_id açıkça etiketlendi — Claude waybill_id ile karıştırmasın
-            kirpilmis = [
-                {
-                    "parasut_irsaliye_id": i["id"],
-                    "tarih": i.get("tarih", "-"),
-                    "aciklama": i.get("aciklama", "-")[:60],
-                    "toplam_kg": i.get("toplam_kg", 0),
-                    "kalemler": i.get("kalemler", [])
-                }
-                for i in irsaliyeler
-            ]
-            return json.dumps({
-                "irsaliyeler": kirpilmis,
-                "cari_adi": cari_adi,
-                "onemli": "fatura_kes_waybill cagrirken parasut_irsaliye_id olarak yukaridaki parasut_irsaliye_id degerini kullan"
-            }, ensure_ascii=False)
-
-        elif tool_name == "fatura_kes_waybill":
-            from app.parasut.client import cari_id_bul as _cid, parasut_post as _post
-            from app.core.config import PARASUT_COMPANY_ID as _CID, PARASUT_HURDA_PRODUCT_ID as _PROD
-            from datetime import datetime as _dt
-
-            cari_adi            = tool_input.get("cari_adi", "")
-            parasut_irsaliye_id = tool_input.get("parasut_irsaliye_id")
-            agirlik_kg          = tool_input.get("agirlik_kg", 0)
-            malzemeler          = tool_input.get("malzemeler", {})
-            toplanan_fiyatlar   = tool_input.get("toplanan_fiyatlar", {})
-
-            # Gelen ID'nin waybill_id olmadığını kontrol et
-            # Paraşüt ID'leri genelde 10 haneli büyük sayılar
-            if parasut_irsaliye_id and len(str(parasut_irsaliye_id)) < 8:
-                logger.warning(f"⚠️ Şüpheli parasut_irsaliye_id: {parasut_irsaliye_id} — waybill_id gibi görünüyor!")
-                return json.dumps({
-                    "basarili": False,
-                    "hata": f"parasut_irsaliye_id hatalı görünüyor ({parasut_irsaliye_id}). irsaliye_faturalandir tool'unu çağırarak doğru Paraşüt irsaliye ID'sini al."
-                }, ensure_ascii=False)
-
-            contact_id = _cid(cari_adi)
-            if not contact_id:
-                return json.dumps({"basarili": False, "hata": f"{cari_adi} carisi bulunamadı."})
-
-            bugun = _dt.now().strftime("%Y-%m-%d")
-
-            if malzemeler and len(toplanan_fiyatlar) > 1:
-                detaylar = []
-                for malzeme_adi, fiyat in toplanan_fiyatlar.items():
-                    kg = malzemeler.get(malzeme_adi, 0)
-                    if kg <= 0:
-                        continue
-                    detaylar.append({
-                        "type": "sales_invoice_details",
-                        "attributes": {
-                            "quantity": kg,
-                            "unit_price": str(float(fiyat)),
-                            "vat_rate": 0,
-                            "description": f"{malzeme_adi} — {kg:,} kg"
-                        },
-                        "relationships": {
-                            "product": {"data": {"type": "products", "id": str(_PROD)}}
-                        }
-                    })
-            else:
-                birim_fiyat = float(list(toplanan_fiyatlar.values())[0]) if toplanan_fiyatlar else 0
-                kg = float(agirlik_kg) if agirlik_kg else float(sum(malzemeler.values())) if malzemeler else 0
-                detaylar = [{
-                    "type": "sales_invoice_details",
-                    "attributes": {
-                        "quantity": kg,
-                        "unit_price": str(birim_fiyat),
-                        "vat_rate": 0,
-                        "description": f"Hurda — {kg:,.0f} kg"
-                    },
-                    "relationships": {
-                        "product": {"data": {"type": "products", "id": str(_PROD)}}
-                    }
-                }]
-
-            istek = {
-                "data": {
-                    "type": "sales_invoices",
-                    "attributes": {
-                        "item_type": "invoice",
-                        "description": f"Hurda Alım — İrsaliye {parasut_irsaliye_id}",
-                        "issue_date": bugun,
-                        "due_date": bugun,
-                        "currency": "TRL"
-                    },
-                    "relationships": {
-                        "contact": {"data": {"type": "contacts", "id": str(contact_id)}},
-                        "details": {"data": detaylar},
-                        "shipment_document": {"data": {"type": "shipment_documents", "id": str(parasut_irsaliye_id)}}
-                    }
-                }
-            }
-
-            try:
-                sonuc = _post(f"/{_CID}/sales_invoices", istek)
-                fatura_id = sonuc["data"]["id"]
-                logger.info(f"✅ Fatura kesildi: {fatura_id} ← irsaliye {parasut_irsaliye_id}")
-                return json.dumps({"basarili": True, "fatura_no": fatura_id}, ensure_ascii=False)
-            except Exception as e:
-                logger.warning(f"İrsaliye bağlantılı fatura başarısız, bağlantısız deneniyor: {e}")
-                istek["data"]["relationships"].pop("shipment_document", None)
-                try:
-                    sonuc = _post(f"/{_CID}/sales_invoices", istek)
-                    fatura_id = sonuc["data"]["id"]
-                    return json.dumps({
-                        "basarili": True,
-                        "fatura_no": fatura_id,
-                        "uyari": "irsaliye_baglantisi_kurulamadi"
-                    }, ensure_ascii=False)
-                except Exception as e2:
-                    return json.dumps({"basarili": False, "hata": str(e2)}, ensure_ascii=False)
 
         elif tool_name == "tahsilat_ekle":
             from app.parasut.client import tahsilat_ekle
@@ -406,9 +284,17 @@ YAPAMAYACAKLARIN:
 - Fatura kesemezsin — kullanıcıya "bekleyen irsaliyeler butonuna tıklayın" de
 - İrsaliye oluşturamazsın — fiş yükleme işlemi bunu otomatik yapar
 
+BAKİYE KONVANSIYONU (ÇOK ÖNEMLİ):
+- Paraşüt'te bakiye NEGATİF = müşteri bize BORÇLU = TAHSİL EDİLECEK
+- Paraşüt'te bakiye POZİTİF = biz müşteriye borçluyuz
+- Örnek: bakiye=-633280 → "Samsun Makine 633.280 TL borçlu (tahsil edilecek)"
+- hesap_ozeti_getir'den gelen toplam_alacak = bize borçlu olanların toplamı
+- Negatif bakiyeyi "alacağımız" veya "borçlu" olarak göster, "borç" değil
+
 KURALLAR:
 - Bilgi için mutlaka tool kullan, tahmin etme veya uydurma
 - Bilmediğini uydurma
+- Kısa ve net cevap ver, gereksiz markdown kullanma
 - Yeni cari: firma adı→email→tel→vergi no→vergi dairesi→adres sor, özet göster, onay al, cari_olustur çağır"""
 
     gecmis.append({"role": "user", "content": mesaj})
@@ -457,7 +343,6 @@ KURALLAR:
 
         cevap = "".join(b.text for b in response.content if hasattr(b, "text")).strip()
 
-        # Geçmişe sadece text mesajları kaydet — tool JSON'ları atılır
         gecmis_kayit = [m for m in gecmis if isinstance(m.get("content"), str)]
         gecmis_kayit.append({"role": "assistant", "content": cevap})
         if len(gecmis_kayit) > MAX_GECMIS:
