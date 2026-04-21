@@ -382,10 +382,27 @@ def fatura_tahsilat_ekle(fatura_id: str, tutar: float, aciklama: str = None, tar
             }
         }
 
-        sonuc = parasut_post(
+        # Paraşüt'te tahsilat için birkaç farklı endpoint dene
+        endpoints = [
             f"/{PARASUT_COMPANY_ID}/payments",
-            istek
-        )
+            f"/{PARASUT_COMPANY_ID}/sales_invoices/{fatura_id}/payments",
+            f"/{PARASUT_COMPANY_ID}/receipts",
+        ]
+
+        sonuc = None
+        son_hata = None
+        for ep in endpoints:
+            try:
+                logger.info(f"Tahsilat endpoint deneniyor: {ep}")
+                sonuc = parasut_post(ep, istek)
+                logger.info(f"Basarili endpoint: {ep}")
+                break
+            except Exception as e:
+                logger.warning(f"Endpoint basarisiz {ep}: {e}")
+                son_hata = e
+
+        if sonuc is None:
+            raise son_hata
         odeme_id = sonuc["data"]["id"]
         logger.info(f"Tahsilat eklendi: fatura_id={fatura_id} tutar={tutar:,.0f} TL hesap={hesap_id}")
 
