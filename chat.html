@@ -754,6 +754,8 @@
       faturaAkisi = null;
     }
   }
+
+  function parseFiyat(metin) {
     metin = metin.trim().toLowerCase()
       .replace('tl','').replace('lira','').replace('₺','').trim()
       .replace(',','.');
