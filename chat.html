@@ -30,15 +30,19 @@
   .messages::-webkit-scrollbar{width:4px;}
   .messages::-webkit-scrollbar-track{background:transparent;}
   .messages::-webkit-scrollbar-thumb{background:var(--border2);border-radius:4px;}
-  .welcome{display:flex;flex-direction:column;align-items:center;text-align:center;padding:56px 24px 40px;gap:14px;}
+  .welcome{display:flex;flex-direction:column;align-items:center;text-align:center;padding:48px 24px 32px;gap:14px;}
   .welcome-icon{width:52px;height:52px;background:var(--surface);border:1px solid var(--border);border-radius:14px;display:flex;align-items:center;justify-content:center;box-shadow:var(--shadow);margin-bottom:4px;}
   .welcome-icon svg{width:24px;height:24px;stroke:var(--accent);fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;}
-  .welcome h2{font-family:'Instrument Serif',serif;font-size:30px;font-weight:400;color:var(--text);letter-spacing:-0.4px;line-height:1.25;}
+  .welcome h2{font-family:'Instrument Serif',serif;font-size:28px;font-weight:400;color:var(--text);letter-spacing:-0.4px;line-height:1.25;}
   .welcome h2 em{font-style:italic;color:var(--accent);}
-  .welcome p{font-size:13.5px;color:var(--muted);line-height:1.7;max-width:320px;font-weight:300;}
-  .quick-actions{display:flex;flex-wrap:wrap;gap:7px;justify-content:center;max-width:500px;margin-top:6px;}
+  .welcome p{font-size:13px;color:var(--muted);line-height:1.7;max-width:320px;font-weight:300;}
+  .quick-section{width:100%;max-width:520px;}
+  .quick-label{font-size:10.5px;color:var(--muted2);letter-spacing:0.4px;text-transform:uppercase;margin-bottom:7px;text-align:left;}
+  .quick-actions{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:14px;}
   .quick-btn{background:var(--surface);border:1px solid var(--border);color:var(--text);font-family:'DM Sans',sans-serif;font-size:12px;font-weight:400;padding:7px 14px;border-radius:100px;cursor:pointer;transition:all 0.15s ease;box-shadow:var(--shadow-sm);}
   .quick-btn:hover{background:var(--accent-lt);border-color:#c5d9ca;color:var(--accent);transform:translateY(-1px);box-shadow:var(--shadow);}
+  .quick-btn.primary{background:var(--accent);color:#fff;border-color:var(--accent);}
+  .quick-btn.primary:hover{background:#245030;color:#fff;}
   .message{display:flex;flex-direction:column;max-width:72%;animation:pop 0.25s cubic-bezier(0.34,1.56,0.64,1);}
   @keyframes pop{from{opacity:0;transform:translateY(8px) scale(0.97);}to{opacity:1;transform:none;}}
   .message.user{align-self:flex-end;}
@@ -53,6 +57,11 @@
   .irsaliye-btn{margin-top:6px;padding:9px 16px;background:var(--surface);color:var(--text);border:1.5px solid var(--border2);border-radius:9px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:400;cursor:pointer;width:100%;transition:all 0.15s;text-align:left;display:flex;justify-content:space-between;align-items:center;}
   .irsaliye-btn:hover{background:var(--accent-lt);border-color:var(--accent);color:var(--accent);}
   .irsaliye-btn .kg{font-size:11px;color:var(--muted);font-weight:400;}
+  .cari-row{margin-top:6px;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:9px;display:flex;justify-content:space-between;align-items:center;font-size:13px;}
+  .cari-row .cari-ad{font-weight:500;color:var(--text);}
+  .cari-row .cari-bakiye{font-weight:600;font-size:13px;}
+  .cari-row .cari-bakiye.alacak{color:#b45309;}
+  .cari-row .cari-bakiye.sifir{color:var(--muted2);}
   .fiyat-input-wrap{margin-top:10px;display:flex;gap:8px;}
   .fiyat-input{flex:1;padding:9px 12px;border:1.5px solid var(--border2);border-radius:9px;font-family:'DM Sans',sans-serif;font-size:13px;outline:none;background:var(--bg);}
   .fiyat-input:focus{border-color:var(--accent);}
@@ -104,13 +113,22 @@
       <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
     </div>
     <h2>Merhaba,<br><em>Profaix</em>'e hoş geldiniz.</h2>
-    <p>Kantar fişi fotoğrafı yükleyin veya sistem verileri hakkında soru sorun.</p>
-    <div class="quick-actions">
-      <button class="quick-btn" onclick="bekleyenIrsaliyeleriGoster()">📋 Bekleyen irsaliyeler</button>
-      <button class="quick-btn" onclick="quickSend('Bugün kaç ton geldi?')">Bugün kaç ton geldi?</button>
-      <button class="quick-btn" onclick="quickSend('Müşteri bakiyeleri')">Müşteri bakiyeleri</button>
-      <button class="quick-btn" onclick="quickSend('Son 10 fatura')">Son 10 fatura</button>
-      <button class="quick-btn" onclick="quickSend('Bugün kaç fatura kesildi?')">Bugün kesilen faturalar</button>
+    <p>Kantar fişi yükleyin veya aşağıdaki işlemleri kullanın.</p>
+
+    <div class="quick-section">
+      <div class="quick-label">Hızlı İşlemler</div>
+      <div class="quick-actions">
+        <button class="quick-btn primary" onclick="bekleyenIrsaliyeleriGoster()">📋 Bekleyen irsaliyeler</button>
+        <button class="quick-btn primary" onclick="bakiyeleriGoster()">💰 Müşteri bakiyeleri</button>
+        <button class="quick-btn primary" onclick="hesapOzetiGoster()">📊 Hesap özeti</button>
+      </div>
+      <div class="quick-label">Soru Sor</div>
+      <div class="quick-actions">
+        <button class="quick-btn" onclick="quickSend('Bugün kaç ton geldi?')">Bugün kaç ton?</button>
+        <button class="quick-btn" onclick="quickSend('Son kesilen faturalar')">Son faturalar</button>
+        <button class="quick-btn" onclick="quickSend('Bugün kaç fatura kesildi?')">Bugün faturalar</button>
+        <button class="quick-btn" onclick="quickSend('Hangi plakalar geldi?')">Hangi plakalar?</button>
+      </div>
     </div>
   </div>
 </div>
@@ -134,9 +152,7 @@
   const messagesEl = document.getElementById('messages');
   const inputEl    = document.getElementById('input');
   const sendBtn    = document.getElementById('sendBtn');
-
-  // Aktif fatura akışı state'i
-  let faturaAkisi = null; // { irsaliyeler, index, toplanan_fiyatlar }
+  let faturaAkisi  = null;
 
   function autoResize(el) {
     el.style.height = 'auto';
@@ -229,27 +245,96 @@
     if (el) el.remove();
   }
 
+  // ── MESAJ YÖNLENDİRME ────────────────────────────────────────────
+  // Her endpoint için anahtar kelime grupları
+  const YONLENDIRME = [
+    {
+      fn: () => bekleyenIrsaliyeleriGoster(),
+      label: 'Bekleyen irsaliyeleri getir',
+      kelimeler: [
+        ['bekleyen','irsaliy'], ['bekleyen','fatura'], ['faturalanmamış'],
+        ['irsaliye','getir'], ['irsaliye','listele'], ['irsaliye','göster'],
+        ['irsaliye','var mı'], ['bekleyenler'], ['irsaliyeler'],
+        ['hangi irsaliy'], ['irsaliye listesi'], ['fatura kesilmemiş'],
+        ['faturası kesilmemiş'], ['açık irsaliy']
+      ]
+    },
+    {
+      fn: () => bakiyeleriGoster(),
+      label: 'Müşteri bakiyelerini getir',
+      kelimeler: [
+        ['bakiye'], ['alacak'], ['borç'], ['müşteri bakiy'],
+        ['cari bakiy'], ['kim borçlu'], ['ödenmemiş'], ['tahsilat bekleyen'],
+        ['hesap durumu'], ['müşteri listesi'], ['cariler']
+      ]
+    },
+    {
+      fn: () => hesapOzetiGoster(),
+      label: 'Hesap özetini getir',
+      kelimeler: [
+        ['hesap özeti'], ['hesap ozeti'], ['genel özet'], ['genel durum'],
+        ['toplam alacak'], ['toplam borç'], ['özet'], ['özet göster']
+      ]
+    }
+  ];
+
+  function mesajYonlendir(text) {
+    const lower = text.toLowerCase().trim();
+    for (const kural of YONLENDIRME) {
+      for (const grup of kural.kelimeler) {
+        // Grup içindeki tüm kelimeler varsa eşleşti
+        if (grup.every(k => lower.includes(k))) {
+          return kural;
+        }
+      }
+    }
+    return null;
+  }
+
+  function teyitButonuGoster(mesaj, label, fn) {
+    // Claude teyit sorusu sormak yerine direkt buton göster
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;';
+
+    const evet = document.createElement('button');
+    evet.className = 'fiyat-gonder-btn';
+    evet.textContent = '✅ Evet, getir';
+    evet.onclick = () => {
+      wrap.querySelectorAll('button').forEach(b => b.disabled = true);
+      fn();
+    };
+
+    const hayir = document.createElement('button');
+    hayir.style.cssText = 'padding:9px 18px;background:var(--surface);color:var(--muted);border:1.5px solid var(--border2);border-radius:9px;font-family:\'DM Sans\',sans-serif;font-size:13px;cursor:pointer;';
+    hayir.textContent = 'Hayır, iptal';
+    hayir.onclick = () => {
+      wrap.querySelectorAll('button').forEach(b => b.disabled = true);
+      addMessage('Tamam, başka bir şey sorabilirsiniz.', 'bot');
+    };
+
+    wrap.appendChild(evet);
+    wrap.appendChild(hayir);
+    addMessage(`"${label}" istiyorsunuz, doğru mu?`, 'bot', wrap);
+  }
+
   // ── CHAT (Claude — sadece bilgi) ──────────────────────────────────
   async function sendMessage() {
     const text = inputEl.value.trim();
     if (!text || sendBtn.disabled) return;
 
-    // "bekleyen irsaliye" gibi yazılırsa direkt Python endpoint
-    const lower = text.toLowerCase();
-    if (lower.includes('bekleyen') && (lower.includes('irsaliy') || lower.includes('fatura'))) {
+    // Kesin eşleşme → direkt endpoint
+    const eslesen = mesajYonlendir(text);
+    if (eslesen) {
       addMessage(text, 'user');
-      inputEl.value = '';
-      inputEl.style.height = 'auto';
-      await bekleyenIrsaliyeleriGoster();
+      inputEl.value = ''; inputEl.style.height = 'auto';
+      await eslesen.fn();
       return;
     }
 
     addMessage(text, 'user');
-    inputEl.value = '';
-    inputEl.style.height = 'auto';
+    inputEl.value = ''; inputEl.style.height = 'auto';
     sendBtn.disabled = true;
     showTyping();
-
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
@@ -272,23 +357,18 @@
   async function uploadFis(input) {
     const file = input.files[0];
     if (!file) return;
-
     const reader = new FileReader();
     reader.onload = (e) => addImageMessage(e.target.result);
     reader.readAsDataURL(file);
-
     sendBtn.disabled = true;
     showTyping();
-
     const formData = new FormData();
     formData.append('file', file);
     formData.append('session_id', SESSION_ID);
-
     try {
       const res = await fetch('/api/upload', { method: 'POST', body: formData });
       const data = await res.json();
       removeTyping();
-
       if (data.bekliyor === 'firma_sec') {
         const wrap = document.createElement('div');
         (data.firma_listesi || []).forEach(firma => {
@@ -333,26 +413,22 @@
     inputEl.focus();
   }
 
-  // ── BEKLEYENİRSALİYELER (Python, Claude yok) ─────────────────────
+  // ── BEKLEYENİRSALİYELER (Python) ─────────────────────────────────
   async function bekleyenIrsaliyeleriGoster() {
     showTyping();
     try {
       const res = await fetch('/api/bekleyen-irsaliyeler');
       const data = await res.json();
       removeTyping();
-
       if (!data.irsaliyeler || data.irsaliyeler.length === 0) {
-        addMessage('📋 Sistemde bekleyen irsaliye yok.', 'bot');
-        return;
+        addMessage('📋 Sistemde bekleyen irsaliye yok.', 'bot'); return;
       }
-
       const wrap = document.createElement('div');
       const baslik = document.createElement('div');
       baslik.style.cssText = 'font-size:12px;color:var(--muted);margin-bottom:8px;';
       baslik.textContent = `${data.irsaliyeler.length} bekleyen irsaliye — fatura kesmek için seçin:`;
       wrap.appendChild(baslik);
-
-      data.irsaliyeler.forEach((irs, idx) => {
+      data.irsaliyeler.forEach(irs => {
         const btn = document.createElement('button');
         btn.className = 'irsaliye-btn';
         const sol = document.createElement('span');
@@ -360,12 +436,10 @@
         const sag = document.createElement('span');
         sag.className = 'kg';
         sag.textContent = `${(irs.toplam_kg/1000).toFixed(2)} ton`;
-        btn.appendChild(sol);
-        btn.appendChild(sag);
+        btn.appendChild(sol); btn.appendChild(sag);
         btn.onclick = () => irsaliyeSecildi(irs, wrap);
         wrap.appendChild(btn);
       });
-
       addMessage('📋 Bekleyen irsaliyeler:', 'bot', wrap);
     } catch {
       removeTyping();
@@ -373,62 +447,107 @@
     }
   }
 
+  // ── BAKİYELER (Python, Paraşüt'ten direkt) ───────────────────────
+  async function bakiyeleriGoster() {
+    showTyping();
+    try {
+      const res = await fetch('/api/cariler');
+      const data = await res.json();
+      removeTyping();
+      if (!data.cariler || data.cariler.length === 0) {
+        addMessage('Kayıtlı cari bulunamadı.', 'bot'); return;
+      }
+      const wrap = document.createElement('div');
+      const baslik = document.createElement('div');
+      baslik.style.cssText = 'font-size:12px;color:var(--muted);margin-bottom:8px;';
+      baslik.textContent = "Paraşüt'ten alınan güncel bakiyeler:";
+      wrap.appendChild(baslik);
+      data.cariler.forEach(c => {
+        const row = document.createElement('div');
+        row.className = 'cari-row';
+        const ad = document.createElement('span');
+        ad.className = 'cari-ad';
+        ad.textContent = c.ad;
+        const bakiye = document.createElement('span');
+        bakiye.className = 'cari-bakiye ' + (c.bakiye > 0 ? 'alacak' : 'sifir');
+        bakiye.textContent = c.bakiye > 0
+          ? `${c.bakiye.toLocaleString('tr-TR', {minimumFractionDigits:2})} TL ⚠️`
+          : '0 TL ✅';
+        row.appendChild(ad); row.appendChild(bakiye);
+        wrap.appendChild(row);
+      });
+      // Toplam
+      const toplam = data.cariler.reduce((s, c) => s + (c.bakiye || 0), 0);
+      if (toplam > 0) {
+        const toplamRow = document.createElement('div');
+        toplamRow.style.cssText = 'margin-top:8px;padding:8px 14px;background:var(--accent-lt);border-radius:9px;font-size:13px;font-weight:600;color:var(--accent);display:flex;justify-content:space-between;';
+        toplamRow.innerHTML = `<span>Toplam Alacak</span><span>${toplam.toLocaleString('tr-TR', {minimumFractionDigits:2})} TL</span>`;
+        wrap.appendChild(toplamRow);
+      }
+      addMessage('💰 Müşteri Bakiyeleri:', 'bot', wrap);
+    } catch {
+      removeTyping();
+      addMessage('❌ Bakiyeler yüklenemedi, tekrar deneyin.', 'bot');
+    }
+  }
+
+  // ── HESAP ÖZETİ (Python, Paraşüt'ten direkt) ─────────────────────
+  async function hesapOzetiGoster() {
+    showTyping();
+    try {
+      const res = await fetch('/api/hesap-ozeti');
+      const data = await res.json();
+      removeTyping();
+      const metin = (
+        `📊 Hesap Özeti\n\n` +
+        `👥 Toplam Cari: ${data.toplam_cari}\n` +
+        `🔴 Toplam Alacak: ${(data.toplam_alacak||0).toLocaleString('tr-TR', {minimumFractionDigits:2})} TL\n` +
+        `🟢 Toplam Borç: ${(data.toplam_borclu||0).toLocaleString('tr-TR', {minimumFractionDigits:2})} TL`
+      );
+      addMessage(metin, 'bot');
+    } catch {
+      removeTyping();
+      addMessage('❌ Hesap özeti yüklenemedi, tekrar deneyin.', 'bot');
+    }
+  }
+
   // ── İRSALİYE SEÇ → FİYAT AKIŞI ──────────────────────────────────
   function irsaliyeSecildi(irs, wrap) {
-    // Diğer butonları devre dışı bırak
     if (wrap) Array.from(wrap.querySelectorAll('button')).forEach(b => b.disabled = true);
-
     addMessage(`✅ Seçildi: ${irs.cari_adi} — ${(irs.toplam_kg/1000).toFixed(2)} ton`, 'user');
-
-    // Malzeme bazlı mı tek fiyat mı?
     const kalemler = irs.kalemler || [];
     if (kalemler.length > 1) {
-      // Malzeme bazlı fiyat akışı
       faturaAkisi = {
         irs,
         malzeme_listesi: kalemler.map(k => k.aciklama),
         malzemeler: Object.fromEntries(kalemler.map(k => [k.aciklama, k.miktar_kg])),
-        toplanan_fiyatlar: {},
-        index: 0
+        toplanan_fiyatlar: {}, index: 0
       };
       const ilk = kalemler[0];
       fiyatSor(`💰 ${ilk.aciklama} fiyatı nedir?\n(${ilk.miktar_kg.toLocaleString()} kg / ${(ilk.miktar_kg/1000).toFixed(2)} ton)\nÖrnek: 14.85 veya 14850`);
     } else {
-      // Tek birim fiyat
-      faturaAkisi = {
-        irs,
-        malzeme_listesi: [],
-        malzemeler: {},
-        toplanan_fiyatlar: {},
-        index: 0
-      };
+      faturaAkisi = { irs, malzeme_listesi: [], malzemeler: {}, toplanan_fiyatlar: {}, index: 0 };
       fiyatSor(`💰 Birim fiyatı nedir? (TL/kg)\n⚖️ ${(irs.toplam_kg/1000).toFixed(2)} ton\nÖrnek: 14.85 veya 14850`);
     }
   }
 
   function fiyatSor(mesaj) {
-    // Fiyat input widget'ı göster
     const wrap = document.createElement('div');
     wrap.className = 'fiyat-input-wrap';
     const inp = document.createElement('input');
-    inp.type = 'text';
-    inp.className = 'fiyat-input';
+    inp.type = 'text'; inp.className = 'fiyat-input';
     inp.placeholder = 'Örn: 14.85 veya 14850';
-    inp.autofocus = true;
     const btn = document.createElement('button');
-    btn.className = 'fiyat-gonder-btn';
-    btn.textContent = 'Gönder';
+    btn.className = 'fiyat-gonder-btn'; btn.textContent = 'Gönder';
     const gonder = () => {
       const deger = inp.value.trim();
       if (!deger) return;
-      inp.disabled = true;
-      btn.disabled = true;
+      inp.disabled = true; btn.disabled = true;
       fiyatGirildi(deger);
     };
     btn.onclick = gonder;
     inp.onkeydown = (e) => { if (e.key === 'Enter') gonder(); };
-    wrap.appendChild(inp);
-    wrap.appendChild(btn);
+    wrap.appendChild(inp); wrap.appendChild(btn);
     addMessage(mesaj, 'bot', wrap);
     setTimeout(() => inp.focus(), 100);
   }
@@ -436,35 +555,26 @@
   async function fiyatGirildi(deger) {
     if (!faturaAkisi) return;
     addMessage(deger, 'user');
-
     const fiyat = parseFiyat(deger);
     if (!fiyat) {
       addMessage('❌ Geçersiz fiyat. Örnek: 14.85 veya 14850', 'bot');
-      fiyatSor('💰 Tekrar deneyin:');
-      return;
+      fiyatSor('💰 Tekrar deneyin:'); return;
     }
-
     const { irs, malzeme_listesi, malzemeler, toplanan_fiyatlar, index } = faturaAkisi;
-
     if (malzeme_listesi.length > 0) {
-      // Malzeme bazlı
       const mevcut = malzeme_listesi[index];
       toplanan_fiyatlar[mevcut] = fiyat;
       const sonraki = index + 1;
-
       if (sonraki < malzeme_listesi.length) {
         faturaAkisi.index = sonraki;
-        const sonrakiMalzeme = malzeme_listesi[sonraki];
-        const sonrakiKg = malzemeler[sonrakiMalzeme] || 0;
-        fiyatSor(`✅ ${mevcut}: ${fiyat.toLocaleString()} TL/kg kaydedildi.\n\n💰 ${sonrakiMalzeme} fiyatı nedir?\n(${sonrakiKg.toLocaleString()} kg / ${(sonrakiKg/1000).toFixed(2)} ton)`);
+        const sm = malzeme_listesi[sonraki];
+        const sk = malzemeler[sm] || 0;
+        fiyatSor(`✅ ${mevcut}: ${fiyat.toLocaleString()} TL/kg kaydedildi.\n\n💰 ${sm} fiyatı nedir?\n(${sk.toLocaleString()} kg / ${(sk/1000).toFixed(2)} ton)`);
       } else {
-        // Tüm fiyatlar toplandı, özet göster ve kes
         await faturaOzetVeKes(irs, malzemeler, toplanan_fiyatlar);
       }
     } else {
-      // Tek fiyat
-      const tf = { 'hurda': fiyat };
-      await faturaOzetVeKes(irs, {}, tf, irs.toplam_kg);
+      await faturaOzetVeKes(irs, {}, { 'hurda': fiyat }, irs.toplam_kg);
     }
   }
 
@@ -478,8 +588,7 @@
           parasut_irsaliye_id: irs.parasut_irsaliye_id,
           cari_adi: irs.cari_adi,
           agirlik_kg: agirlik_kg || irs.toplam_kg,
-          malzemeler,
-          toplanan_fiyatlar
+          malzemeler, toplanan_fiyatlar
         })
       });
       const data = await res.json();
@@ -497,12 +606,12 @@
     metin = metin.trim().toLowerCase()
       .replace('tl','').replace('lira','').replace('₺','').trim()
       .replace(',','.');
-    const noktaSayisi = (metin.match(/\\./g) || []).length;
+    const noktaSayisi = (metin.match(/\./g) || []).length;
     if (noktaSayisi === 1) {
       const parca = metin.split('.');
       if (parca[1].length === 3) metin = metin.replace('.','');
     } else if (noktaSayisi > 1) {
-      metin = metin.replace(/\\./g,'');
+      metin = metin.replace(/\./g,'');
     }
     const f = parseFloat(metin);
     return (f > 0) ? f : null;

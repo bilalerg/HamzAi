@@ -214,6 +214,39 @@ async def firma_sec(request: Request):
         db.close()
 
 
+# ── CARİLER + BAKİYELER (Python, Paraşüt'ten direkt) ─────────────────
+@app.get("/api/cariler")
+async def cariler_getir():
+    """Tüm carileri ve güncel bakiyelerini Paraşüt'ten döndürür."""
+    try:
+        from app.parasut.client import cari_listesi_getir
+        cariler = cari_listesi_getir()
+        # Sadece bakiyesi olan veya aktif carileri döndür
+        sonuc = [
+            {"id": c["id"], "ad": c["ad"], "bakiye": c.get("bakiye", 0)}
+            for c in cariler
+        ]
+        # Bakiyeye göre sırala (en yüksek alacak önce)
+        sonuc.sort(key=lambda x: x["bakiye"], reverse=True)
+        return JSONResponse({"cariler": sonuc, "toplam": len(sonuc)})
+    except Exception as e:
+        logger.error(f"Cariler hatası: {e}")
+        return JSONResponse({"cariler": [], "hata": str(e)})
+
+
+# ── HESAP ÖZETİ (Python, Paraşüt'ten direkt) ─────────────────────────
+@app.get("/api/hesap-ozeti")
+async def hesap_ozeti():
+    """Genel hesap özetini Paraşüt'ten döndürür."""
+    try:
+        from app.parasut.client import hesap_ozeti_getir
+        ozet = hesap_ozeti_getir()
+        return JSONResponse(ozet)
+    except Exception as e:
+        logger.error(f"Hesap özeti hatası: {e}")
+        return JSONResponse({"hata": str(e)})
+
+
 # ── BEKLEYENİRSALİYELER ──────────────────────────────────────────────
 @app.get("/api/bekleyen-irsaliyeler")
 async def bekleyen_irsaliyeler():
