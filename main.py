@@ -721,6 +721,16 @@ async def reset_db():
 async def startup_recovery():
     db = SessionLocal()
     try:
+        # Migration: malzemeler_json kolonu yoksa ekle
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            try:
+                conn.execute(text("ALTER TABLE waybills ADD COLUMN IF NOT EXISTS malzemeler_json TEXT"))
+                conn.commit()
+                logger.info("✅ Migration: malzemeler_json kolonu hazır")
+            except Exception as e:
+                logger.warning(f"Migration atlandı: {e}")
+
         from app.core.database import WeighTicket, TicketStatus
         bekleyenler = db.query(WeighTicket).filter(
             WeighTicket.status == TicketStatus.IRSALIYE_OLUSTURULUYOR
