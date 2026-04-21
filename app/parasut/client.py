@@ -362,31 +362,28 @@ def fatura_tahsilat_ekle(fatura_id: str, tutar: float, aciklama: str = None, tar
         if not hesap_id:
             return {"basarili": False, "hata": "Kasa/banka hesabi bulunamadi."}
 
-        # V1: fatura endpoint + date alanı ile
+        # Dokumantasyona gore dogru alanlar:
+        # date (string), amount (number), account_id (integer), description (string)
         istek_v1 = {
             "data": {
                 "type": "payments",
                 "attributes": {
                     "description": aciklama or "Tahsilat",
                     "date": bugun,
-                    "amount": str(tutar),
-                    "currency": "TRL",
-                    "payment_type": "cash",
+                    "amount": tutar,
                     "account_id": int(hesap_id),
                 }
             }
         }
 
-        # V2: payment_date ile
+        # V2: ayni ama amount string olarak
         istek_v2 = {
             "data": {
                 "type": "payments",
                 "attributes": {
                     "description": aciklama or "Tahsilat",
-                    "payment_date": bugun,
+                    "date": bugun,
                     "amount": str(tutar),
-                    "currency": "TRL",
-                    "payment_type": "cash",
                     "account_id": int(hesap_id),
                 }
             }
