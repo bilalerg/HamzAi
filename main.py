@@ -636,6 +636,28 @@ async def fatura_onayla(request: Request):
         db.close()
 
 
+@app.get("/admin/accounts-debug")
+async def accounts_debug():
+    """Parasut'teki tum hesaplari listeler — tahsilat icin dogru hesap ID'sini bulmak icin."""
+    try:
+        from app.parasut.client import parasut_get
+        from app.core.config import PARASUT_COMPANY_ID
+        sonuc = parasut_get(f"/{PARASUT_COMPANY_ID}/accounts")
+        hesaplar = []
+        for h in sonuc.get("data", []):
+            attr = h.get("attributes", {})
+            hesaplar.append({
+                "id": h["id"],
+                "ad": attr.get("name"),
+                "tip": attr.get("account_type"),
+                "para_birimi": attr.get("currency"),
+                "bakiye": attr.get("balance"),
+            })
+        return JSONResponse({"hesaplar": hesaplar})
+    except Exception as e:
+        return JSONResponse({"hata": str(e)})
+
+
 @app.get("/admin/reset-db")
 async def reset_db():
     from sqlalchemy import text
