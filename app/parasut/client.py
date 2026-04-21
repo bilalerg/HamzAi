@@ -356,33 +356,13 @@ def fatura_tahsilat_ekle(fatura_id: str, tutar: float, aciklama: str = None, tar
     try:
         from datetime import datetime
         bugun = tarih or datetime.now().strftime("%Y-%m-%d")
+        logger.info(f"Tahsilat tarihi: {bugun}")
 
         hesap_id = _kasa_hesabi_bul()
         if not hesap_id:
             return {"basarili": False, "hata": "Kasa/banka hesabi bulunamadi."}
 
-        istek = {
-            "data": {
-                "type": "payments",
-                "attributes": {
-                    "description": aciklama or "Tahsilat",
-                    "payment_date": bugun,
-                    "amount": str(tutar),
-                    "currency": "TRL",
-                    "payment_type": "cash",
-                },
-                "relationships": {
-                    "payable": {
-                        "data": {"type": "sales_invoices", "id": str(fatura_id)}
-                    },
-                    "account": {
-                        "data": {"type": "accounts", "id": str(hesap_id)}
-                    }
-                }
-            }
-        }
-
-        # Paraşüt tahsilat — account_id attribute olarak gonder
+        # V1: fatura endpoint + account_id attribute olarak
         istek_v1 = {
             "data": {
                 "type": "payments",
@@ -397,7 +377,7 @@ def fatura_tahsilat_ekle(fatura_id: str, tutar: float, aciklama: str = None, tar
             }
         }
 
-        # Yapı 2: relationship ile
+        # V2: payments endpoint + payable + account relationship
         istek_v2 = {
             "data": {
                 "type": "payments",
