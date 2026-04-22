@@ -41,20 +41,26 @@ async def lifespan(app: FastAPI):
     import asyncio
     logger.info("🚀 Profaix başlatılıyor...")
     validate_config()
+    # DB ve migration'ı arka planda yap — port bind'ı engellemesin
+    asyncio.create_task(_startup_background())
+    logger.info(f"✅ Profaix hazır — Ortam: {ENV}")
+    yield
+    logger.info("Profaix kapanıyor...")
+
+
+async def _startup_background():
+    """DB init ve keep-alive'ı arka planda çalıştır."""
+    import asyncio
     try:
         init_db()
     except Exception as e:
-        logger.warning(f"⚠️ DB başlatma gecikmeli, devam ediliyor: {e}")
+        logger.warning(f"⚠️ DB başlatma gecikmeli: {e}")
     try:
         await startup_recovery()
     except Exception as e:
         logger.warning(f"⚠️ Startup recovery atlandı: {e}")
     # Keep-alive task başlat
-    task = asyncio.create_task(_keep_alive())
-    logger.info(f"✅ Profaix hazır — Ortam: {ENV}")
-    yield
-    task.cancel()
-    logger.info("Profaix kapanıyor...")
+    asyncio.create_task(_keep_alive())
 
 
 app = FastAPI(title="Profaix", description="Muhasebe Otomasyon Ajanı", version="1.0.0", lifespan=lifespan)
