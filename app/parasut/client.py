@@ -20,7 +20,7 @@ _token_expires_at = 0
 # ── CARİ CACHE (in-memory, 5 dakika) ─────────────────────────────────
 _cari_cache = None
 _cari_cache_time = 0
-CACHE_SURE = 300  # 5 dakika (bakiye değişimleri hızlı yansısın)
+CACHE_SURE = 60  # 1 dakika — bakiyeler hızlı güncellensin
 
 
 def _token_al() -> dict:

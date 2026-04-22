@@ -548,6 +548,14 @@ async def fatura_kes_endpoint(request: Request):
         ozet += f"\n💵 Toplam: {int(toplam_tutar):,} TL\n"
         ozet += f"🧾 Fatura No: {fatura_id}"
 
+        # Cache'i yenile — bakiye değişti
+        try:
+            from app.parasut.client import cari_cache_yenile
+            cari_cache_yenile()
+            logger.info("✅ Cari cache yenilendi")
+        except Exception as e:
+            logger.warning(f"Cache yenileme hatası: {e}")
+
         return JSONResponse({"cevap": ozet, "basarili": True, "fatura_no": fatura_id})
 
     except Exception as e:
