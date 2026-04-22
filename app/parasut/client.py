@@ -100,6 +100,18 @@ def parasut_post(endpoint: str, veri: dict) -> dict:
     return response.json()
 
 
+def parasut_delete(endpoint: str) -> bool:
+    token = get_token()
+    url = f"{PARASUT_BASE_URL}{endpoint}"
+    response = requests.delete(
+        url,
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/vnd.api+json"}
+    )
+    if response.status_code not in [200, 204]:
+        raise Exception(f"Parasut DELETE hatasi: {response.status_code} — {response.text[:200]}")
+    return True
+
+
 # ── CARİ CACHE SİSTEMİ ───────────────────────────────────────────────
 
 def _cari_listesi_api() -> list:
@@ -498,7 +510,7 @@ def cari_bekleyen_irsaliyeleri_getir(cari_adi: str) -> list:
             f"/{PARASUT_COMPANY_ID}/shipment_documents",
             params={
                 "filter[contact_id]": cari_id,
-                "filter[invoice_status]": "not_invoiced",
+                "filter[invoice_status]": "uninvoiced",
                 "page[size]": 25,
                 "sort": "-issue_date",
                 "include": "stock_movements"

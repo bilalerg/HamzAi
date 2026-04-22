@@ -559,6 +559,14 @@ async def fatura_kes_endpoint(request: Request):
             logger.error(f"DB güncelleme hatası: {e}")
             # Fatura kesildi, DB hatası kritik değil — devam et
 
+        # ── Paraşüt'ten irsaliyeyi sil — listede bir daha çıkmasın ──
+        try:
+            from app.parasut.client import parasut_delete
+            parasut_delete(f"/{PARASUT_COMPANY_ID}/shipment_documents/{parasut_irsaliye_id}")
+            logger.info(f"✅ Paraşüt irsaliye silindi: {parasut_irsaliye_id}")
+        except Exception as e:
+            logger.warning(f"⚠️ Paraşüt irsaliye silinemedi (kritik değil): {e}")
+
         # Özet mesaj
         ozet = f"✅ Fatura kesildi!\n\n🏢 {cari_adi}\n"
         for m, f in toplanan_fiyatlar.items():
@@ -693,6 +701,21 @@ async def fatura_onayla(request: Request):
         return JSONResponse({"cevap": f"❌ Fatura kesilemedi: {str(e)}"})
     finally:
         db.close()
+
+
+@app.get("/admin/irsaliye-debug/{irsaliye_id}")
+async def irsaliye_debug(irsaliye_id: str):
+    """İrsaliyenin ham API verisini döndürür — alan adlarını görmek için."""
+    try:
+        from app.parasut.client import parasut_get
+        from app.core.config import PARASUT_COMPANY_ID
+        sonuc = parasut_get(
+            f"/{PARASUT_COMPANY_ID}/shipment_documents/{irsaliye_id}",
+            params={"include": "stock_movements,contact"}
+        )
+        return JSONResponse(sonuc)
+    except Exception as e:
+        return JSONResponse({"hata": str(e)})
 
 
 @app.get("/admin/payment-debug")
