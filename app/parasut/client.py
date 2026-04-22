@@ -498,6 +498,7 @@ def cari_bekleyen_irsaliyeleri_getir(cari_adi: str) -> list:
             f"/{PARASUT_COMPANY_ID}/shipment_documents",
             params={
                 "filter[contact_id]": cari_id,
+                "filter[invoice_status]": "not_invoiced",
                 "page[size]": 25,
                 "sort": "-issue_date",
                 "include": "stock_movements"

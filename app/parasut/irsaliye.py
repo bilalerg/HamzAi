@@ -14,10 +14,10 @@ def irsaliye_olustur(ticket_id: int, beklet: bool = False) -> dict:
         ticket = db.query(WeighTicket).filter(WeighTicket.id == ticket_id).first()
 
         if not ticket:
-            logger.error(f"Ticket bulunamadı: {ticket_id}")
+            logger.error(f"Ticket bulunamadi: {ticket_id}")
             return {"basarili": False, "hata": "ticket_bulunamadi"}
 
-        logger.info(f"İrsaliye oluşturuluyor: ticket_id={ticket_id} plaka={ticket.plaka} beklet={beklet}")
+        logger.info(f"Irsaliye olusturuluyor: ticket_id={ticket_id} plaka={ticket.plaka} beklet={beklet}")
 
         ticket.status = TicketStatus.IRSALIYE_OLUSTURULUYOR
         db.commit()
@@ -26,24 +26,24 @@ def irsaliye_olustur(ticket_id: int, beklet: bool = False) -> dict:
 
         contact_id = cari_id_bul(ticket.firma)
         if not contact_id:
-            logger.warning(f"Cari bulunamadı: {ticket.firma}, ilk cari kullanılıyor")
+            logger.warning(f"Cari bulunamadi: {ticket.firma}, ilk cari kullaniliyor")
             from app.parasut.client import cari_listesi_getir
             cariler = cari_listesi_getir()
             contact_id = cariler[0]["id"] if cariler else None
 
         if not contact_id:
-            return {"basarili": False, "hata": "Cari bulunamadı"}
+            return {"basarili": False, "hata": "Cari bulunamadi"}
 
         attributes = {
-            "description": f"Kantar Fişi — {ticket.plaka} — {ticket.agirlik_kg} kg",
+            "description": f"Kantar Fisi — {ticket.plaka} — {ticket.agirlik_kg} kg",
             "issue_date": tarih_str,
             "inflow": False,
             "currency": "TRL",
         }
         if ticket.plaka:
-            attributes["vehicle_plate_number"] = ticket.plaka
+            attributes["plate_number"] = ticket.plaka  # DUZELTME: vehicle_plate_number → plate_number
 
-        # Malzeme bazlı stock_movements oluştur
+        # Malzeme bazli stock_movements olustur
         malzemeler = {}
         if ticket.malzemeler:
             try:
@@ -52,7 +52,6 @@ def irsaliye_olustur(ticket_id: int, beklet: bool = False) -> dict:
                 pass
 
         if malzemeler:
-            # Her malzeme için ayrı stock_movement
             stock_movements = []
             for malzeme_adi, kg in malzemeler.items():
                 if kg > 0:
@@ -68,9 +67,8 @@ def irsaliye_olustur(ticket_id: int, beklet: bool = False) -> dict:
                             }
                         }
                     })
-            logger.info(f"Malzeme bazlı irsaliye: {len(stock_movements)} kalem")
+            logger.info(f"Malzeme bazli irsaliye: {len(stock_movements)} kalem")
         else:
-            # Malzeme yoksa tek kalem
             stock_movements = [{
                 "type": "stock_movements",
                 "attributes": {
@@ -101,7 +99,7 @@ def irsaliye_olustur(ticket_id: int, beklet: bool = False) -> dict:
 
         sonuc = parasut_post(f"/{PARASUT_COMPANY_ID}/shipment_documents", istek_verisi)
         parasut_id = sonuc["data"]["id"]
-        logger.info(f"✅ Paraşüt irsaliye oluşturuldu: parasut_id={parasut_id}")
+        logger.info(f"Parasut irsaliye olusturuldu: parasut_id={parasut_id}")
 
         yeni_status = TicketStatus.FABRIKA_BEKLENIYOR if beklet else TicketStatus.IRSALIYE_TAMAMLANDI
 
@@ -118,7 +116,7 @@ def irsaliye_olustur(ticket_id: int, beklet: bool = False) -> dict:
         ticket.status = yeni_status
         db.commit()
 
-        logger.info(f"✅ İrsaliye tamamlandı: parasut_id={parasut_id} waybill_id={waybill.id} status={yeni_status}")
+        logger.info(f"Irsaliye tamamlandi: parasut_id={parasut_id} waybill_id={waybill.id} status={yeni_status}")
 
         return {
             "basarili": True,
@@ -129,7 +127,7 @@ def irsaliye_olustur(ticket_id: int, beklet: bool = False) -> dict:
         }
 
     except Exception as e:
-        logger.error(f"İrsaliye oluşturma hatası: {e}")
+        logger.error(f"Irsaliye olusturma hatasi: {e}")
         try:
             ticket = db.query(WeighTicket).filter(WeighTicket.id == ticket_id).first()
             if ticket:
@@ -151,7 +149,7 @@ def irsaliye_onayla(waybill_id: int) -> dict:
             return {"basarili": False, "hata": "waybill_bulunamadi"}
 
         if waybill.status != TicketStatus.FABRIKA_BEKLENIYOR:
-            return {"basarili": False, "hata": f"Bu irsaliye onay beklemiyur (status: {waybill.status})"}
+            return {"basarili": False, "hata": f"Bu irsaliye onay beklemiyor (status: {waybill.status})"}
 
         waybill.status = TicketStatus.IRSALIYE_TAMAMLANDI
         ticket = db.query(WeighTicket).filter(WeighTicket.id == waybill.ticket_id).first()
@@ -159,11 +157,11 @@ def irsaliye_onayla(waybill_id: int) -> dict:
             ticket.status = TicketStatus.IRSALIYE_TAMAMLANDI
         db.commit()
 
-        logger.info(f"✅ İrsaliye onaylandı: waybill_id={waybill_id}")
+        logger.info(f"Irsaliye onaylandi: waybill_id={waybill_id}")
         return {"basarili": True, "waybill_id": waybill_id}
 
     except Exception as e:
-        logger.error(f"İrsaliye onay hatası: {e}")
+        logger.error(f"Irsaliye onay hatasi: {e}")
         return {"basarili": False, "hata": str(e)}
     finally:
         db.close()
