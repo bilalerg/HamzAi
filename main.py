@@ -21,8 +21,24 @@ def _chat_html() -> str:
     return _HTML_PATH.read_text(encoding="utf-8")
 
 
+async def _keep_alive():
+    """Her 10 dakikada bir kendi health endpoint'ine ping at — Render uyanık kalsın."""
+    import asyncio
+    import httpx
+    await asyncio.sleep(60)  # Başlangıçta 1 dakika bekle
+    while True:
+        try:
+            async with httpx.AsyncClient() as client:
+                await client.get("https://profaix-api.onrender.com/health", timeout=10)
+            logger.info("✅ Keep-alive ping gönderildi")
+        except Exception as e:
+            logger.warning(f"Keep-alive ping başarısız: {e}")
+        await asyncio.sleep(600)  # 10 dakikada bir
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    import asyncio
     logger.info("🚀 Profaix başlatılıyor...")
     validate_config()
     try:
@@ -33,8 +49,11 @@ async def lifespan(app: FastAPI):
         await startup_recovery()
     except Exception as e:
         logger.warning(f"⚠️ Startup recovery atlandı: {e}")
+    # Keep-alive task başlat
+    task = asyncio.create_task(_keep_alive())
     logger.info(f"✅ Profaix hazır — Ortam: {ENV}")
     yield
+    task.cancel()
     logger.info("Profaix kapanıyor...")
 
 
