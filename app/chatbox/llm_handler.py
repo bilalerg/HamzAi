@@ -251,18 +251,12 @@ def soru_cevapla(mesaj: str, db, gonderen: str = "") -> str:
     session = _session_yukle(db, gonderen)
 
     if session is None:
-        _session_kaydet(db, gonderen, isim=None, gecmis=[])
-        return "Merhaba! Ben Profaix asistanıyım 🤖\n\nSize nasıl hitap etmemi istersiniz?"
+        _session_kaydet(db, gonderen, isim="Kullanıcı", gecmis=[])
+        session = _session_yukle(db, gonderen)
 
     if session.isim is None:
-        if _isim_mi(mesaj):
-            isim = mesaj.strip()
-            isim = isim.lower().replace("ben ", "").replace(" ben", "").replace("benim", "").strip().title()
-            _session_kaydet(db, gonderen, isim=isim, gecmis=[])
-            return f"Merhaba {isim}! 👋\n\nProfaix sistemine hoş geldiniz. Size nasıl yardımcı olabilirim?"
-        else:
-            _session_kaydet(db, gonderen, isim="Kullanıcı", gecmis=[])
-            session = _session_yukle(db, gonderen)
+        _session_kaydet(db, gonderen, isim="Kullanıcı", gecmis=[])
+        session = _session_yukle(db, gonderen)
 
     isim       = session.isim or "Kullanıcı"
     gecmis     = json.loads(session.gecmis) if session.gecmis else []
