@@ -444,7 +444,7 @@ def fatura_tahsilat_ekle(fatura_id: str, tutar: float, aciklama: str = None, tar
 def tahsilat_ekle(cari_adi: str, tutar: float, aciklama: str = None, tarih: str = None) -> dict:
     """
     Belirli bir carinin acik faturalarina tahsilat ekler.
-    En yakin tutarli faturaya baglar.
+    Tahsilat tutari birden fazla faturaya bolunebilir.
     """
     try:
         cari_id = cari_id_bul(cari_adi)
@@ -457,43 +457,67 @@ def tahsilat_ekle(cari_adi: str, tutar: float, aciklama: str = None, tarih: str 
                 "filter[contact_id]": cari_id,
                 "filter[payment_status]": "overdue,not_paid",
                 "page[size]": 25,
-                "sort": "-issue_date"
+                "sort": "issue_date"  # Eskiden yeniye — önce eskiyi öde
             }
         )
 
         faturalar = []
         for f in sonuc.get("data", []):
             attr = f.get("attributes", {})
-            faturalar.append({
-                "id": f["id"],
-                "tarih": attr.get("issue_date", "-"),
-                "tutar": attr.get("gross_total", 0),
-                "kalan": attr.get("remaining", 0),
-                "aciklama": attr.get("description", "-"),
-            })
+            kalan = float(attr.get("remaining") or attr.get("gross_total") or 0)
+            if kalan > 0:
+                faturalar.append({
+                    "id": f["id"],
+                    "tarih": attr.get("issue_date", "-"),
+                    "tutar": float(attr.get("gross_total", 0)),
+                    "kalan": kalan,
+                    "aciklama": attr.get("description", "-"),
+                })
 
         if not faturalar:
             return {"basarili": False, "hata": f"{cari_adi} icin acik fatura bulunamadi."}
 
-        # Tutara en yakin faturaya bagla
-        hedef_fatura = min(
-            faturalar,
-            key=lambda f: abs(float(f.get("kalan") or f.get("tutar") or 0) - float(tutar))
-        )
+        # Tahsilatı faturalara böl
+        kalan_tutar = float(tutar)
+        odenen_faturalar = []
+        toplam_odenen = 0.0
 
-        odeme_sonuc = fatura_tahsilat_ekle(
-            fatura_id=hedef_fatura["id"],
-            tutar=tutar,
-            aciklama=aciklama or f"{cari_adi} tahsilat",
-            tarih=tarih
-        )
+        for fatura in faturalar:
+            if kalan_tutar <= 0:
+                break
+            odeme_miktari = min(kalan_tutar, fatura["kalan"])
+            if odeme_miktari <= 0:
+                continue
 
-        if odeme_sonuc.get("basarili"):
-            odeme_sonuc["eslesen_fatura"] = hedef_fatura
-            odeme_sonuc["cari"] = cari_adi
-            logger.info(f"Tahsilat tamamlandi: {cari_adi} — {tutar:,.0f} TL → fatura {hedef_fatura['id']}")
+            odeme_sonuc = fatura_tahsilat_ekle(
+                fatura_id=fatura["id"],
+                tutar=odeme_miktari,
+                aciklama=aciklama or f"{cari_adi} tahsilat",
+                tarih=tarih
+            )
 
-        return odeme_sonuc
+            if odeme_sonuc.get("basarili"):
+                odenen_faturalar.append({
+                    "fatura_id": fatura["id"],
+                    "odenen": odeme_miktari
+                })
+                toplam_odenen += odeme_miktari
+                kalan_tutar -= odeme_miktari
+                logger.info(f"Tahsilat tamamlandi: {cari_adi} — {odeme_miktari:,.0f} TL → fatura {fatura['id']}")
+            else:
+                logger.warning(f"Fatura {fatura['id']} tahsilat basarisiz: {odeme_sonuc.get('hata')}")
+
+        if toplam_odenen > 0:
+            return {
+                "basarili": True,
+                "cari": cari_adi,
+                "tutar": toplam_odenen,
+                "tarih": tarih or "",
+                "odenen_faturalar": odenen_faturalar,
+                "kalan_odenmedi": kalan_tutar if kalan_tutar > 0.01 else 0
+            }
+        else:
+            return {"basarili": False, "hata": "Hicbir faturaya tahsilat eklenemedi."}
 
     except Exception as e:
         logger.error(f"Tahsilat ekleme hatasi: {e}")
