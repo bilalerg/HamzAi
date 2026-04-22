@@ -12,16 +12,14 @@ from datetime import datetime
 from app.core.config import ANTHROPIC_API_KEY
 from app.core.logger import logger
 
-# Modül seviyesinde bir kez init
 _client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
 OCR_MODEL      = "claude-haiku-4-5-20251001"
-OCR_MAX_TOKENS = 400
+OCR_MAX_TOKENS = 500
 
 
 @dataclass
 class FisVerisi:
-    """Kantar fişinden çıkarılan veriler"""
     plaka:            Optional[str]           = None
     fis_no:           Optional[str]           = None
     net_agirlik_kg:   Optional[int]           = None
@@ -36,17 +34,19 @@ class FisVerisi:
     hata:             Optional[str]           = None
 
 
-# Prompt'a KG KURALI eklendi — Haiku ondalıklı sayı döndürme sorununu çözer
 OCR_PROMPT = """Kantar fişi fotoğrafı. Sadece JSON döndür, başka hiçbir şey yazma.
 
 {"plaka":"ana araç plakası (dorse/2.plaka değil)","fis_no":"fiş no","net_tartim_kg":SAYI,"fire_kg":SAYI_YA_DA_0,"tarih":"GG.AA.YYYY","firma":"fişin başlığındaki fabrika adı (hurda tedarikçisi değil)","irsaliye_no":null,"kantar_no":null,"malzemeler":{}}
 
 KURALLAR:
 - plaka: Plaka-1/Ana Araç alanı, birden fazlaysa sadece ilki
-- firma: Fiş başlığındaki fabrika (SAMSUN MAKİNE, KAPTAN DEMİR, İÇDAŞ gibi). "Firma Adı" satırındaki tedarikçiyi yazma.
+- firma: Fiş başlığındaki fabrika (SAMSUN MAKİNE, KAPTAN DEMİR, İÇDAŞ, TOSCELIK gibi). "Firma Adı" satırındaki tedarikçiyi yazma.
 - net_tartim_kg: "Net Tartım/Net/NET AĞIRLIK" değeri (fire düşülmemiş). TAM SAYI yaz, ondalık kullanma. 30.680 değil 30680 yaz.
 - fire_kg: "Fire/Tenzil/Fire Kg" değeri, yoksa 0. TAM SAYI yaz.
-- malzemeler: Malzeme tablosu VARSA → {ad: net_kg} şeklinde TAM SAYI kg değerleri. YOKSA → {}
+- malzemeler: Malzeme tablosu VARSA doldur, YOKSA boş bırak {}.
+  FORMAT 1 — Kroman tipi tablo: Hurda Tipi | Miktar | Tenzil.Miktar sütunları → {malzeme_adi: net_miktar} (net_miktar = Miktar - Tenzil.Miktar)
+  FORMAT 2 — Tosyalı/UHT tipi liste: "1-) DKP ... 0", "2-) Topsis ... 26.950" şeklinde → sadece değeri 0'dan büyük olanları al → {"Topsis": 26950}
+  FORMAT 3 — Tek malzeme: "MALZEME: HURDA İÇ PİYASA GENEL" gibi → {"HURDA İÇ PİYASA GENEL": net_tartim_kg}
 - malzemelere ASLA ekleme: Brüt, Dara, 1.Tartı, 2.Tartı, Dolu/Boş Tartım
 - TÜM KG DEĞERLERİ TAM SAYI OLMALI: 30680 ✓  30.680 ✗  30,680 ✗"""
 
@@ -71,21 +71,11 @@ def _parse_json(metin: str) -> dict:
 
 
 def _parse_kg(deger) -> int:
-    """
-    Haiku bazen kg değerini ondalıklı döndürüyor: 30.680 veya 30,680
-    Bunlar aslında 30.680 kg = 30680 kg anlamında binlik ayraçlı sayılar.
-
-    Kural:
-    - Tam sayıysa (30680) → direkt int
-    - Ondalıklı ve < 1000 ise (30.680) → binlik ayraç, 1000 ile çarp
-    - Ondalıklı ve >= 1000 ise (1234.5) → gerçek ondalık, yuvarla
-    """
     if deger is None:
         return 0
     try:
         f = float(str(deger).replace(",", "."))
         if f != int(f) and f < 1000:
-            # 30.680 → 30680
             sonuc = int(round(f * 1000))
             logger.warning(f"⚠️ Ondalıklı kg düzeltildi: {deger} → {sonuc}")
             return sonuc
@@ -121,7 +111,6 @@ def claude_fis_oku(fotograf_yolu: str) -> FisVerisi:
     try:
         veri = _parse_json(claude_cevap)
 
-        # _parse_kg ile ondalıklı sayı sorununu da yakala
         net_tartim  = _parse_kg(veri.get("net_tartim_kg"))
         fire        = _parse_kg(veri.get("fire_kg"))
         net_agirlik = net_tartim - fire
