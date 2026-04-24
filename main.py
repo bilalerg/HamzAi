@@ -473,6 +473,7 @@ async def bekleyen_irsaliyeler():
 
                 # Malzeme bilgisini DB'den al — hem string hem int ID dene
                 waybill = waybill_map.get(str(irs["id"])) or waybill_map.get(str(irs["id"]).strip())
+                logger.info(f"Waybill arama: irs_id={irs['id']} (type={type(irs['id']).__name__}) waybill_map_keys={list(waybill_map.keys())[:3]} bulundu={waybill is not None}")
                 kalemler = irs.get("kalemler", [])
                 toplam_kg = irs.get("toplam_kg", 0)
 
