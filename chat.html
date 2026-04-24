@@ -106,7 +106,14 @@
   .send-btn:disabled{opacity:0.3;cursor:not-allowed;transform:none;}
   .send-btn svg{width:15px;height:15px;stroke:#fff;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;}
   .input-hint{font-size:10.5px;color:var(--muted2);margin-top:7px;padding-left:2px;}
-  @media(max-width:600px){.header,.messages,.input-area{padding-left:16px;padding-right:16px;}.message,.typing-wrap{max-width:90%;}.sep,.header-label{display:none;}}
+  .cari-search-wrap{position:relative;margin-bottom:10px;}
+  .cari-search-input{width:100%;padding:9px 12px;border:1.5px solid var(--border2);border-radius:9px;font-family:'DM Sans',sans-serif;font-size:13px;outline:none;background:var(--bg);}
+  .cari-search-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(45,90,61,0.07);}
+  .cari-dropdown{position:absolute;top:100%;left:0;right:0;background:var(--surface);border:1.5px solid var(--accent);border-radius:9px;box-shadow:var(--shadow);z-index:100;max-height:220px;overflow-y:auto;margin-top:4px;}
+  .cari-dropdown-item{padding:9px 14px;font-size:13px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;transition:background 0.1s;}
+  .cari-dropdown-item:hover,.cari-dropdown-item.active{background:var(--accent-lt);}
+  .cari-dropdown-item .dd-bakiye{font-size:12px;font-weight:600;color:#b45309;}
+  .cari-dropdown-empty{padding:10px 14px;font-size:12px;color:var(--muted);}
 </style>
 </head>
 <body>
@@ -595,51 +602,25 @@
     } catch {}
     removeTyping();
 
+    // Alacaklıları önce göster
+    const alacaklilar = cariler.filter(function(c) { return c.bakiye > 0; });
+    const digerler = cariler.filter(function(c) { return c.bakiye <= 0; });
+    const siralanmis = alacaklilar.concat(digerler);
+
     const wrap = document.createElement('div');
     const baslik = document.createElement('div');
     baslik.style.cssText = 'font-size:13px;font-weight:500;color:var(--text);margin-bottom:10px;';
     baslik.textContent = '💵 Tahsilat Ekle';
     wrap.appendChild(baslik);
 
-    const alacaklilar = cariler.filter(function(c) { return c.bakiye > 0; });
-    const digerler = cariler.filter(function(c) { return c.bakiye <= 0; });
-    const siralanmis = alacaklilar.concat(digerler);
-
-    if (siralanmis.length > 0) {
-      const cariBaslik = document.createElement('div');
-      cariBaslik.style.cssText = 'font-size:11px;color:var(--muted);margin-bottom:6px;';
-      cariBaslik.textContent = 'Cari seçin:';
-      wrap.appendChild(cariBaslik);
-
-      siralanmis.forEach(function(c) {
-        const btn = document.createElement('button');
-        btn.className = 'cari-btn';
-        const ad = document.createElement('span');
-        ad.textContent = c.ad;
-        const bak = document.createElement('span');
-        bak.className = 'bakiye ' + (c.bakiye > 0 ? 'alacak' : 'sifir');
-        bak.textContent = c.bakiye > 0
-          ? c.bakiye.toLocaleString('tr-TR', { minimumFractionDigits: 0 }) + ' TL'
-          : '0 TL';
-        btn.appendChild(ad);
-        btn.appendChild(bak);
-        btn.onclick = function() {
-          Array.from(wrap.querySelectorAll('.cari-btn')).forEach(function(b) {
-            b.style.opacity = '0.4';
-            b.disabled = true;
-          });
-          btn.style.opacity = '1';
-          btn.style.background = 'var(--accent-lt)';
-          btn.style.borderColor = 'var(--accent)';
-          tahsilatTutarGir(c.ad, wrap);
-        };
-        wrap.appendChild(btn);
-      });
-    } else {
-      tahsilatManuelGir(wrap);
-    }
+    const { wrap: ddWrap } = cariSecimDropdown(siralanmis, function(c) {
+      ddWrap.querySelector('input').disabled = true;
+      tahsilatTutarGir(c.ad, wrap);
+    }, 'Cari adı yazın...');
+    wrap.appendChild(ddWrap);
 
     addMessage('', 'bot', wrap);
+    setTimeout(function() { ddWrap.querySelector('input').focus(); }, 100);
   }
 
   function tahsilatTutarGir(cariAdi, wrapParent) {
@@ -777,6 +758,73 @@
     wrap.appendChild(formWrap);
   }
 
+  // ── CARİ SEÇİM DROPDOWN ──────────────────────────────────────────
+
+  function cariSecimDropdown(cariler, onSec, placeholder) {
+    placeholder = placeholder || 'Cari adı yazın...';
+    const wrap = document.createElement('div');
+    wrap.className = 'cari-search-wrap';
+
+    const inp = document.createElement('input');
+    inp.type = 'text';
+    inp.className = 'cari-search-input';
+    inp.placeholder = placeholder;
+    inp.autocomplete = 'off';
+
+    const dropdown = document.createElement('div');
+    dropdown.className = 'cari-dropdown';
+    dropdown.style.display = 'none';
+
+    function renderDropdown(filtre) {
+      dropdown.innerHTML = '';
+      const liste = filtre
+        ? cariler.filter(function(c) { return c.ad.toLowerCase().includes(filtre.toLowerCase()); })
+        : cariler;
+      if (liste.length === 0) {
+        const bos = document.createElement('div');
+        bos.className = 'cari-dropdown-empty';
+        bos.textContent = 'Cari bulunamadı';
+        dropdown.appendChild(bos);
+      } else {
+        liste.forEach(function(c) {
+          const item = document.createElement('div');
+          item.className = 'cari-dropdown-item';
+          const ad = document.createElement('span');
+          ad.textContent = c.ad;
+          item.appendChild(ad);
+          if (c.bakiye > 0) {
+            const bak = document.createElement('span');
+            bak.className = 'dd-bakiye';
+            bak.textContent = c.bakiye.toLocaleString('tr-TR', {minimumFractionDigits:0}) + ' TL';
+            item.appendChild(bak);
+          }
+          item.onclick = function(e) {
+            e.stopPropagation();
+            inp.value = c.ad;
+            dropdown.style.display = 'none';
+            onSec(c);
+          };
+          dropdown.appendChild(item);
+        });
+      }
+      dropdown.style.display = 'block';
+    }
+
+    inp.addEventListener('input', function() {
+      renderDropdown(inp.value);
+    });
+    inp.addEventListener('focus', function() {
+      renderDropdown(inp.value);
+    });
+    document.addEventListener('click', function(e) {
+      if (!wrap.contains(e.target)) dropdown.style.display = 'none';
+    });
+
+    wrap.appendChild(inp);
+    wrap.appendChild(dropdown);
+    return { wrap, inp };
+  }
+
   // ── FATURA LİSTESİ & DETAY ───────────────────────────────────────
 
   async function faturaListesiGoster() {
@@ -792,27 +840,13 @@
     const wrap = document.createElement('div');
     const baslik = document.createElement('div');
     baslik.style.cssText = 'font-size:13px;font-weight:500;color:var(--text);margin-bottom:10px;';
-    baslik.textContent = '🔍 Fatura Sorgula — Cari seçin:';
+    baslik.textContent = '🔍 Fatura Sorgula';
     wrap.appendChild(baslik);
 
-    cariler.forEach(function(c) {
-      const btn = document.createElement('button');
-      btn.className = 'cari-btn';
-      const ad = document.createElement('span');
-      ad.textContent = c.ad;
-      const bak = document.createElement('span');
-      bak.className = 'bakiye ' + (c.bakiye > 0 ? 'alacak' : 'sifir');
-      bak.textContent = c.bakiye > 0 ? c.bakiye.toLocaleString('tr-TR', {minimumFractionDigits:0}) + ' TL' : '0 TL';
-      btn.appendChild(ad);
-      btn.appendChild(bak);
-      btn.onclick = function() {
-        Array.from(wrap.querySelectorAll('.cari-btn')).forEach(function(b) { b.disabled = true; b.style.opacity = '0.4'; });
-        btn.style.opacity = '1';
-        btn.style.background = 'var(--accent-lt)';
-        cariFaturalariniGetir(c.ad, wrap);
-      };
-      wrap.appendChild(btn);
-    });
+    const { wrap: ddWrap } = cariSecimDropdown(cariler, function(c) {
+      cariFaturalariniGetir(c.ad, wrap);
+    }, 'Cari adı yazın...');
+    wrap.appendChild(ddWrap);
 
     const iptalBtn = document.createElement('button');
     iptalBtn.className = 'btn-cancel';
@@ -822,6 +856,7 @@
     wrap.appendChild(iptalBtn);
 
     addMessage('', 'bot', wrap);
+    setTimeout(function() { ddWrap.querySelector('input').focus(); }, 100);
   }
 
   async function cariFaturalariniGetir(cariAdi, wrapParent) {
@@ -977,30 +1012,25 @@
         cariMap[irs.cari_adi].push(irs);
       });
 
+      // Dropdown için cari listesi
+      const cariListesi = Object.keys(cariMap).map(function(ad) {
+        return { ad: ad, bakiye: 0, adet: cariMap[ad].length };
+      });
+
       const wrap = document.createElement('div');
       const baslik = document.createElement('div');
       baslik.style.cssText = 'font-size:13px;font-weight:500;color:var(--text);margin-bottom:10px;';
-      baslik.textContent = '🧾 Toplu Fatura — Cari seçin:';
+      baslik.textContent = '🧾 Toplu Fatura';
       wrap.appendChild(baslik);
 
-      Object.keys(cariMap).forEach(function(cariAdi) {
-        const btn = document.createElement('button');
-        btn.className = 'cari-btn';
-        const ad = document.createElement('span');
-        ad.textContent = cariAdi;
-        const adet = document.createElement('span');
-        adet.className = 'bakiye alacak';
-        adet.textContent = cariMap[cariAdi].length + ' irsaliye';
-        btn.appendChild(ad);
-        btn.appendChild(adet);
-        btn.onclick = function() {
-          Array.from(wrap.querySelectorAll('.cari-btn')).forEach(function(b) { b.disabled = true; b.style.opacity = '0.4'; });
-          btn.style.opacity = '1';
-          btn.style.background = 'var(--accent-lt)';
-          topluFaturaIrsaliyeSeç(cariAdi, cariMap[cariAdi], wrap);
-        };
-        wrap.appendChild(btn);
-      });
+      const { wrap: ddWrap } = cariSecimDropdown(cariListesi, function(c) {
+        ddWrap.querySelector('input').disabled = true;
+        topluFaturaIrsaliyeSeç(c.ad, cariMap[c.ad], wrap);
+      }, 'Cari adı yazın...');
+
+      // Dropdown item'larına irsaliye adeti ekle
+      const origRender = ddWrap._renderDropdown;
+      wrap.appendChild(ddWrap);
 
       const iptalBtn = document.createElement('button');
       iptalBtn.className = 'btn-cancel';
@@ -1010,6 +1040,7 @@
       wrap.appendChild(iptalBtn);
 
       addMessage('', 'bot', wrap);
+      setTimeout(function() { ddWrap.querySelector('input').focus(); }, 100);
     } catch {
       removeTyping();
       addMessage('❌ İrsaliyeler yüklenemedi.', 'bot');
