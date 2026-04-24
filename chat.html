@@ -1106,7 +1106,8 @@
           row.style.cssText = 'display:flex;justify-content:space-between;font-size:12px;padding:5px 10px;background:var(--bg);border-radius:7px;margin-bottom:4px;';
           const aciklama = k.aciklama || 'Hurda';
           const tutar = parseFloat(k.tutar||0);
-          row.innerHTML = '<span>' + aciklama + (k.miktar > 0 ? ' (' + parseFloat(k.miktar).toLocaleString('tr-TR') + ' kg)' : '') + '</span><span style="font-weight:600">' + tutar.toLocaleString('tr-TR',{minimumFractionDigits:0}) + ' TL</span>';
+          const miktarStr = k.miktar > 0 ? ' — ' + parseFloat(k.miktar).toLocaleString('tr-TR') + ' kg' : '';
+          row.innerHTML = '<span>' + aciklama + miktarStr + '</span><span style="font-weight:600">' + tutar.toLocaleString('tr-TR',{minimumFractionDigits:0}) + ' TL</span>';
           detayWrap.appendChild(row);
         });
       }

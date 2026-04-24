@@ -8,15 +8,10 @@ from app.core.config import ANTHROPIC_API_KEY
 from app.core.logger import logger
 
 # ── SABİTLER ──────────────────────────────────────────────────────────
-MAX_GECMIS = 6
+MAX_GECMIS = 10
 MODEL      = "claude-haiku-4-5-20251001"
 
 _client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-
-SORU_BELIRTECLERI = [
-    "?", "kaç", "var mı", "nedir", "nerede", "nasıl", "ne zaman",
-    "hangi", "toplam", "bugün", "fatura", "plaka", "irsaliye", "ton"
-]
 
 TOOLS = [
     {
@@ -49,7 +44,7 @@ TOOLS = [
     },
     {
         "name": "cari_irsaliyeleri_getir",
-        "description": "Belirli bir carinin irsaliyelerini listeler.",
+        "description": "Belirli bir carinin Paraşüt'teki irsaliyelerini listeler. NOT: Fatura kesilen irsaliyeler silinir, bu nedenle çoğunlukla boş döner. Bekleyen irsaliyeler için bu tool yerine kullanıcıya 'bekleyen irsaliyeler butonuna tıkla' de.",
         "input_schema": {
             "type": "object",
             "properties": {

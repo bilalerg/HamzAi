@@ -29,15 +29,16 @@ async def _keep_alive():
     """Her 10 dakikada bir kendi health endpoint'ine ping at — Render uyanık kalsın."""
     import asyncio
     import httpx
-    await asyncio.sleep(60)  # Başlangıçta 1 dakika bekle
+    base_url = os.getenv("BASE_URL", "https://profaix-api.onrender.com")
+    await asyncio.sleep(60)
     while True:
         try:
             async with httpx.AsyncClient() as client:
-                await client.get("https://profaix-api.onrender.com/health", timeout=10)
+                await client.get(f"{base_url}/health", timeout=10)
             logger.info("✅ Keep-alive ping gönderildi")
         except Exception as e:
             logger.warning(f"Keep-alive ping başarısız: {e}")
-        await asyncio.sleep(600)  # 10 dakikada bir
+        await asyncio.sleep(600)
 
 
 @asynccontextmanager

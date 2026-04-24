@@ -120,6 +120,13 @@ def claude_fis_oku(fotograf_yolu: str) -> FisVerisi:
             net_agirlik = net_tartim
             fire = 0
 
+        if net_agirlik == 0 or net_tartim == 0:
+            logger.error(f"⚠️ Sıfır ağırlık tespit edildi — fiş geçersiz olabilir")
+            return FisVerisi(
+                hata="Fişteki ağırlık değeri okunamadı veya sıfır. Fotoğrafı daha net çekip tekrar deneyin.",
+                claude_ham_cikti=claude_cevap
+            )
+
         malzemeler_ham = veri.get("malzemeler") or {}
         malzemeler = {k: _parse_kg(v) for k, v in malzemeler_ham.items() if v and _parse_kg(v) > 0}
 
