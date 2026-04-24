@@ -80,7 +80,7 @@ class Waybill(Base):
     teyit_mail_icerik  = Column(Text, nullable=True)
     nlp_karar          = Column(String(20), nullable=True)
     parasut_irsaliye_id = Column(String(100), nullable=True)
-    malzemeler_json    = Column(Text, nullable=True)  # JSON: {"HURDA YERLİ EXTRA": 4627}
+    malzemeler_json    = Column(Text, nullable=True)
     status             = Column(Enum(TicketStatus), default=TicketStatus.IRSALIYE_OLUSTURULUYOR)
     ticket_id          = Column(Integer, ForeignKey("weigh_tickets.id"))
     created_at         = Column(DateTime, server_default=func.now())
@@ -144,8 +144,25 @@ class ChatSession(Base):
     session_id = Column(String(100), unique=True, nullable=False, index=True)
     isim       = Column(String(100), nullable=True)
     gecmis     = Column(Text, nullable=True)
+    tam_gecmis = Column(Text, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+
+class IslemLog(Base):
+    __tablename__ = "islem_logs"
+    id          = Column(Integer, primary_key=True, autoincrement=True)
+    islem_tipi  = Column(String(50), nullable=False, index=True)
+    cari_adi    = Column(String(200), nullable=True, index=True)
+    tutar       = Column(BigInteger, nullable=True)
+    fatura_id   = Column(String(100), nullable=True)
+    irsaliye_id = Column(String(100), nullable=True)
+    plaka       = Column(String(20), nullable=True)
+    aciklama    = Column(Text, nullable=True)
+    session_id  = Column(String(100), nullable=True)
+    created_at  = Column(DateTime, server_default=func.now(), index=True)
+    def __repr__(self): return f"<IslemLog tip={self.islem_tipi} cari={self.cari_adi}>"
 
 
 def init_db():
