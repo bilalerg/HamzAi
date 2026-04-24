@@ -69,6 +69,9 @@ MUHASEBECI_WHATSAPP = os.getenv("MUHASEBECI_WHATSAPP")
 PATRON_WHATSAPP     = os.getenv("PATRON_WHATSAPP")
 
 
+# ── ADMIN ─────────────────────────────────────────────────────────────
+ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "profaix-admin-2026")
+
 # ── DOĞRULAMA ──────────────────────────────────────────────────────────
 def validate_config():
     """Kritik ayarların dolu olduğunu kontrol eder. Eksik varsa hata fırlatır."""
