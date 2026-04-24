@@ -149,13 +149,6 @@
         <button class="quick-btn primary" onclick="faturaListesiGoster()">🔍 Fatura sorgula</button>
         <button class="quick-btn primary" onclick="cariFormGoster()">➕ Yeni cari</button>
       </div>
-      <div class="quick-label">Soru Sor</div>
-      <div class="quick-actions">
-        <button class="quick-btn" onclick="quickSend('Bugün kaç ton geldi?')">Bugün kaç ton?</button>
-        <button class="quick-btn" onclick="quickSend('Son kesilen faturalar')">Son faturalar</button>
-        <button class="quick-btn" onclick="quickSend('Bugün kaç fatura kesildi?')">Bugün faturalar</button>
-        <button class="quick-btn" onclick="quickSend('Hangi plakalar geldi?')">Hangi plakalar?</button>
-      </div>
     </div>
   </div>
 </div>
@@ -777,9 +770,13 @@
 
     function renderDropdown(filtre) {
       dropdown.innerHTML = '';
-      const liste = filtre
-        ? cariler.filter(function(c) { return c.ad.toLowerCase().includes(filtre.toLowerCase()); })
-        : cariler;
+      if (!filtre || filtre.length === 0) {
+        dropdown.style.display = 'none';
+        return;
+      }
+      const liste = cariler.filter(function(c) {
+        return c.ad.toLowerCase().includes(filtre.toLowerCase());
+      });
       if (liste.length === 0) {
         const bos = document.createElement('div');
         bos.className = 'cari-dropdown-empty';
@@ -790,11 +787,13 @@
           const item = document.createElement('div');
           item.className = 'cari-dropdown-item';
           const ad = document.createElement('span');
+          ad.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
           ad.textContent = c.ad;
           item.appendChild(ad);
           if (c.bakiye > 0) {
             const bak = document.createElement('span');
             bak.className = 'dd-bakiye';
+            bak.style.cssText = 'flex-shrink:0;margin-left:8px;white-space:nowrap;';
             bak.textContent = c.bakiye.toLocaleString('tr-TR', {minimumFractionDigits:0}) + ' TL';
             item.appendChild(bak);
           }
@@ -813,8 +812,8 @@
     inp.addEventListener('input', function() {
       renderDropdown(inp.value);
     });
-    inp.addEventListener('focus', function() {
-      renderDropdown(inp.value);
+    inp.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') dropdown.style.display = 'none';
     });
     document.addEventListener('click', function(e) {
       if (!wrap.contains(e.target)) dropdown.style.display = 'none';
