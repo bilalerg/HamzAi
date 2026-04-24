@@ -127,8 +127,12 @@ def claude_fis_oku(fotograf_yolu: str) -> FisVerisi:
                 claude_ham_cikti=claude_cevap
             )
 
+        FIRE_KELIMELERI = {'fire', 'tenzil', 'fire kg', 'kayıp', 'kayip', 'hurda fire'}
         malzemeler_ham = veri.get("malzemeler") or {}
-        malzemeler = {k: _parse_kg(v) for k, v in malzemeler_ham.items() if v and _parse_kg(v) > 0}
+        malzemeler = {
+            k: _parse_kg(v) for k, v in malzemeler_ham.items()
+            if v and _parse_kg(v) > 0 and k.strip().lower() not in FIRE_KELIMELERI
+        }
 
         logger.info(f"OCR sonuç — plaka={veri.get('plaka')} tartım={net_tartim}kg fire={fire}kg net={net_agirlik}kg firma={veri.get('firma')}")
 
