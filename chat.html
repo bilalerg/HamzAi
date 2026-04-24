@@ -114,9 +114,57 @@
   .cari-dropdown-item:hover,.cari-dropdown-item.active{background:var(--accent-lt);}
   .cari-dropdown-item .dd-bakiye{font-size:12px;font-weight:600;color:#b45309;}
   .cari-dropdown-empty{padding:10px 14px;font-size:12px;color:var(--muted);}
+  /* ── QUICK PANEL ─────────────────────────────────────────────── */
+  .panel-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.25);z-index:200;opacity:0;pointer-events:none;transition:opacity 0.25s ease;}
+  .panel-overlay.open{opacity:1;pointer-events:all;}
+  .quick-panel{position:fixed;left:0;top:0;bottom:0;width:260px;background:var(--surface);border-right:1px solid var(--border);box-shadow:4px 0 20px rgba(0,0,0,0.1);z-index:201;transform:translateX(-100%);transition:transform 0.28s cubic-bezier(0.4,0,0.2,1);display:flex;flex-direction:column;overflow:hidden;}
+  .quick-panel.open{transform:translateX(0);}
+  .panel-header{padding:18px 20px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;}
+  .panel-header-title{font-family:'Instrument Serif',serif;font-size:17px;color:var(--text);letter-spacing:-0.2px;}
+  .panel-header-title em{font-style:italic;color:var(--accent);}
+  .panel-close{width:30px;height:30px;background:var(--bg);border:1px solid var(--border);border-radius:7px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:16px;transition:all 0.15s;}
+  .panel-close:hover{background:var(--accent-lt);color:var(--accent);}
+  .panel-body{flex:1;overflow-y:auto;padding:16px;}
+  .panel-section-label{font-size:10px;color:var(--muted2);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;margin-top:12px;}
+  .panel-section-label:first-child{margin-top:0;}
+  .panel-btn{width:100%;padding:10px 14px;background:var(--bg);border:1.5px solid var(--border);border-radius:10px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:400;color:var(--text);cursor:pointer;text-align:left;margin-bottom:6px;transition:all 0.15s;display:flex;align-items:center;gap:10px;}
+  .panel-btn:hover{background:var(--accent-lt);border-color:#c5d9ca;color:var(--accent);}
+  .panel-btn .btn-icon{font-size:15px;flex-shrink:0;}
+  .panel-toggle{position:fixed;left:0;top:50%;transform:translateY(-50%);width:26px;height:52px;background:var(--accent);border-radius:0 10px 10px 0;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:199;box-shadow:2px 0 8px rgba(45,90,61,0.25);transition:all 0.2s;}
+  .panel-toggle:hover{width:30px;background:#245030;}
+  .panel-toggle svg{width:13px;height:13px;stroke:#fff;fill:none;stroke-width:2.5;stroke-linecap:round;}
+  @media(max-width:600px){.quick-panel{width:82vw;}.header,.messages,.input-area{padding-left:16px;padding-right:16px;}.message,.typing-wrap{max-width:90%;}.sep,.header-label{display:none;}}
 </style>
 </head>
 <body>
+
+<div class="panel-overlay" id="panelOverlay" onclick="panelKapat()"></div>
+
+<div class="quick-panel" id="quickPanel">
+  <div class="panel-header">
+    <div class="panel-header-title">Pro<em>faix</em></div>
+    <button class="panel-close" onclick="panelKapat()">✕</button>
+  </div>
+  <div class="panel-body">
+    <div class="panel-section-label">İşlemler</div>
+    <button class="panel-btn" onclick="panelKapat();bekleyenIrsaliyeleriGoster()"><span class="btn-icon">📋</span> Bekleyen irsaliyeler</button>
+    <button class="panel-btn" onclick="panelKapat();topluFaturaGoster()"><span class="btn-icon">🧾</span> Toplu fatura</button>
+    <button class="panel-btn" onclick="panelKapat();faturaListesiGoster()"><span class="btn-icon">🔍</span> Fatura sorgula</button>
+    <button class="panel-btn" onclick="panelKapat();tahsilatFormGoster()"><span class="btn-icon">💵</span> Tahsilat ekle</button>
+    <button class="panel-btn" onclick="panelKapat();cariFormGoster()"><span class="btn-icon">➕</span> Yeni cari</button>
+    <div class="panel-section-label">Raporlar</div>
+    <button class="panel-btn" onclick="panelKapat();bakiyeleriGoster()"><span class="btn-icon">💰</span> Müşteri bakiyeleri</button>
+    <button class="panel-btn" onclick="panelKapat();hesapOzetiGoster()"><span class="btn-icon">📊</span> Hesap özeti</button>
+    <button class="panel-btn" onclick="panelKapat();gunlukOzetGoster()"><span class="btn-icon">📈</span> Günlük özet</button>
+    <button class="panel-btn" onclick="panelKapat();sonFisleriGoster()"><span class="btn-icon">🗂️</span> Son yüklenen fişler</button>
+    <div class="panel-section-label">Sistem</div>
+    <button class="panel-btn" onclick="cacheYenile(this)"><span class="btn-icon">🔄</span> Bakiyeleri yenile</button>
+  </div>
+</div>
+
+<div class="panel-toggle" id="panelToggle" onclick="panelAc()" title="Menü">
+  <svg viewBox="0 0 14 14"><line x1="2" y1="4" x2="12" y2="4"/><line x1="2" y1="7" x2="12" y2="7"/><line x1="2" y1="10" x2="12" y2="10"/></svg>
+</div>
 
 <div class="header">
   <div class="logo-mark">
@@ -137,19 +185,7 @@
       <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
     </div>
     <h2>Merhaba,<br><em>Profaix</em>'e hoş geldiniz.</h2>
-    <p>Kantar fişi yükleyin veya aşağıdaki işlemleri kullanın.</p>
-    <div class="quick-section">
-      <div class="quick-label">Hızlı İşlemler</div>
-      <div class="quick-actions">
-        <button class="quick-btn primary" onclick="bekleyenIrsaliyeleriGoster()">📋 Bekleyen irsaliyeler</button>
-        <button class="quick-btn primary" onclick="bakiyeleriGoster()">💰 Müşteri bakiyeleri</button>
-        <button class="quick-btn primary" onclick="hesapOzetiGoster()">📊 Hesap özeti</button>
-        <button class="quick-btn primary" onclick="tahsilatFormGoster()">💵 Tahsilat ekle</button>
-        <button class="quick-btn primary" onclick="topluFaturaGoster()">🧾 Toplu fatura</button>
-        <button class="quick-btn primary" onclick="faturaListesiGoster()">🔍 Fatura sorgula</button>
-        <button class="quick-btn primary" onclick="cariFormGoster()">➕ Yeni cari</button>
-      </div>
-    </div>
+    <p>Kantar fişi yükleyin veya sol menüden işlem seçin.</p>
   </div>
 </div>
 
@@ -173,6 +209,105 @@
   const inputEl    = document.getElementById('chatInput');
   const sendBtn    = document.getElementById('sendBtn');
   let faturaAkisi  = null;
+
+  // ── GÜNLÜK ÖZET ──────────────────────────────────────────────────
+
+  async function gunlukOzetGoster() {
+    showTyping();
+    try {
+      const res = await fetch('/api/gunluk-ozet');
+      const d = await res.json();
+      removeTyping();
+      const durum = d.bekleyen > 0
+        ? `⚠️ ${d.bekleyen} fiş bekliyor`
+        : '✅ Tüm fişler tamamlandı';
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'font-size:13px;line-height:2;';
+      wrap.innerHTML =
+        `<b>📈 ${d.tarih} Günlük Özet</b><br>` +
+        `📋 Yüklenen fiş: <b>${d.fis_sayisi}</b><br>` +
+        `⚖️ Toplam ağırlık: <b>${(d.toplam_kg||0).toLocaleString('tr-TR')} kg (${d.toplam_ton} ton)</b><br>` +
+        `✅ Tamamlanan: <b>${d.tamamlanan}</b><br>` +
+        `🕐 Bekleyen: <b>${d.bekleyen}</b><br>` +
+        `${durum}`;
+      addMessage('', 'bot', wrap);
+    } catch {
+      removeTyping();
+      addMessage('❌ Günlük özet yüklenemedi.', 'bot');
+    }
+  }
+
+  // ── SON FİŞLER ───────────────────────────────────────────────────
+
+  async function sonFisleriGoster() {
+    showTyping();
+    try {
+      const res = await fetch('/api/son-fisler');
+      const d = await res.json();
+      removeTyping();
+      if (!d.fisler || d.fisler.length === 0) {
+        addMessage('📂 Henüz fiş yüklenmemiş.', 'bot');
+        return;
+      }
+      const wrap = document.createElement('div');
+      const baslik = document.createElement('div');
+      baslik.style.cssText = 'font-size:12px;color:var(--muted);margin-bottom:8px;';
+      baslik.textContent = 'Son ' + d.fisler.length + ' yüklenen fiş:';
+      wrap.appendChild(baslik);
+      d.fisler.forEach(function(f) {
+        const row = document.createElement('div');
+        row.style.cssText = 'padding:8px 12px;background:var(--bg);border-radius:9px;margin-bottom:5px;font-size:12px;';
+        const statusEmoji = f.status === 'TAMAMLANDI' ? '✅' : f.status === 'HATA' ? '❌' : '🕐';
+        row.innerHTML =
+          `<div style="display:flex;justify-content:space-between;margin-bottom:2px;">` +
+          `<b style="font-size:13px;">${f.plaka}</b>` +
+          `<span style="color:var(--muted)">${f.created_at}</span></div>` +
+          `<div style="color:var(--muted)">${f.firma} · ${(f.agirlik_kg||0).toLocaleString('tr-TR')} kg · ${statusEmoji}</div>`;
+        wrap.appendChild(row);
+      });
+      addMessage('🗂️ Son yüklenen fişler:', 'bot', wrap);
+    } catch {
+      removeTyping();
+      addMessage('❌ Fişler yüklenemedi.', 'bot');
+    }
+  }
+
+  // ── CACHE YENİLE ─────────────────────────────────────────────────
+
+  async function cacheYenile(btn) {
+    const orijinal = btn.innerHTML;
+    btn.innerHTML = '<span class="btn-icon">⏳</span> Yenileniyor…';
+    btn.disabled = true;
+    try {
+      await fetch('/api/cariler?refresh=1');
+      btn.innerHTML = '<span class="btn-icon">✅</span> Yenilendi!';
+      setTimeout(function() {
+        btn.innerHTML = orijinal;
+        btn.disabled = false;
+      }, 2000);
+      panelKapat();
+      addMessage('✅ Bakiyeler yenilendi.', 'bot');
+    } catch {
+      btn.innerHTML = orijinal;
+      btn.disabled = false;
+      addMessage('❌ Yenileme başarısız.', 'bot');
+    }
+  }
+
+  // ── PANEL ────────────────────────────────────────────────────────
+  function panelAc() {
+    document.getElementById('quickPanel').classList.add('open');
+    document.getElementById('panelOverlay').classList.add('open');
+    document.getElementById('panelToggle').style.display = 'none';
+  }
+  function panelKapat() {
+    document.getElementById('quickPanel').classList.remove('open');
+    document.getElementById('panelOverlay').classList.remove('open');
+    document.getElementById('panelToggle').style.display = 'flex';
+  }
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') panelKapat();
+  });
 
   function formatTarih(tarih) {
     // "2026-03-27" → "27.03.2026"

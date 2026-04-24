@@ -252,17 +252,15 @@ async def firma_sec(request: Request):
 
 # ── CARİLER + BAKİYELER (Python, Paraşüt'ten direkt) ─────────────────
 @app.get("/api/cariler")
-async def cariler_getir():
+async def cariler_getir(refresh: bool = False):
     """Tüm carileri ve güncel bakiyelerini Paraşüt'ten döndürür."""
     try:
-        from app.parasut.client import cari_listesi_getir
-        cariler = cari_listesi_getir()
-        # Sadece bakiyesi olan veya aktif carileri döndür
+        from app.parasut.client import cari_listesi_getir, cari_cache_yenile
+        cariler = cari_cache_yenile() if refresh else cari_listesi_getir()
         sonuc = [
             {"id": c["id"], "ad": c["ad"], "bakiye": c.get("bakiye", 0)}
             for c in cariler
         ]
-        # Bakiyeye göre sırala (en yüksek alacak önce)
         sonuc.sort(key=lambda x: x["bakiye"], reverse=True)
         return JSONResponse({"cariler": sonuc, "toplam": len(sonuc)})
     except Exception as e:
@@ -449,6 +447,65 @@ async def bekleyen_irsaliyeler():
     except Exception as e:
         logger.error(f"Bekleyen irsaliye hatası: {e}")
         return JSONResponse({"irsaliyeler": [], "hata": str(e)})
+    finally:
+        db.close()
+
+
+@app.get("/api/gunluk-ozet")
+async def gunluk_ozet():
+    """Bugünün özeti: fiş sayısı, toplam kg, fatura sayısı."""
+    db = SessionLocal()
+    try:
+        from app.core.database import WeighTicket, Waybill, TicketStatus
+        from datetime import date
+        bugun = date.today().strftime("%Y-%m-%d")
+        bugun_fisler = db.query(WeighTicket).filter(
+            WeighTicket.created_at >= bugun
+        ).all()
+        toplam_kg = sum(t.agirlik_kg or 0 for t in bugun_fisler)
+        tamamlanan = sum(1 for t in bugun_fisler if t.status == TicketStatus.TAMAMLANDI)
+        bekleyen = sum(1 for t in bugun_fisler if t.status not in [
+            TicketStatus.TAMAMLANDI, TicketStatus.IPTAL, TicketStatus.HATA
+        ])
+        return JSONResponse({
+            "tarih": date.today().strftime("%d.%m.%Y"),
+            "fis_sayisi": len(bugun_fisler),
+            "toplam_kg": toplam_kg,
+            "toplam_ton": round(toplam_kg / 1000, 2),
+            "tamamlanan": tamamlanan,
+            "bekleyen": bekleyen,
+        })
+    except Exception as e:
+        return JSONResponse({"hata": str(e)})
+    finally:
+        db.close()
+
+
+@app.get("/api/son-fisler")
+async def son_fisler():
+    """Son 10 yüklenen fişi döndürür."""
+    db = SessionLocal()
+    try:
+        from app.core.database import WeighTicket
+        fisler = db.query(WeighTicket).order_by(
+            WeighTicket.created_at.desc()
+        ).limit(10).all()
+        return JSONResponse({
+            "fisler": [
+                {
+                    "id": t.id,
+                    "plaka": t.plaka or "-",
+                    "firma": t.firma or "-",
+                    "agirlik_kg": t.agirlik_kg or 0,
+                    "tarih": t.fis_tarihi.strftime("%d.%m.%Y") if t.fis_tarihi else "-",
+                    "status": t.status.value if t.status else "-",
+                    "created_at": t.created_at.strftime("%d.%m.%Y %H:%M") if t.created_at else "-",
+                }
+                for t in fisler
+            ]
+        })
+    except Exception as e:
+        return JSONResponse({"fisler": [], "hata": str(e)})
     finally:
         db.close()
 
