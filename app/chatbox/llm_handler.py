@@ -296,11 +296,11 @@ YAPAMAYACAKLARIN:
 - İrsaliye oluşturamazsın — fiş yükleme işlemi bunu otomatik yapar
 
 BAKİYE KONVANSIYONU (ÇOK ÖNEMLİ):
-- Paraşüt'te bakiye NEGATİF = müşteri bize BORÇLU = TAHSİL EDİLECEK
-- Paraşüt'te bakiye POZİTİF = biz müşteriye borçluyuz
-- Örnek: bakiye=-633280 → "Samsun Makine 633.280 TL borçlu (tahsil edilecek)"
+- Paraşüt'te bakiye POZİTİF = müşteri bize BORÇLU = TAHSİL EDİLECEK
+- Paraşüt'te bakiye NEGATİF = biz müşteriye borçluyuz = ÖDENECEKTİR
+- Örnek: bakiye=60120 → "İçtaş 60.120 TL borçlu, biz tahsil edeceğiz"
 - hesap_ozeti_getir'den gelen toplam_alacak = bize borçlu olanların toplamı
-- Negatif bakiyeyi "alacağımız" veya "borçlu" olarak göster, "borç" değil
+- Pozitif bakiyeyi "alacağımız" veya "müşteri borçlu" olarak göster
 
 KURALLAR:
 - Bilgi için mutlaka tool kullan, tahmin etme veya uydurma
