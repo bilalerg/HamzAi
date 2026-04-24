@@ -471,8 +471,8 @@ async def bekleyen_irsaliyeler():
                 if str(irs["id"]) in tamamlanan_ids:
                     continue
 
-                # Malzeme bilgisini DB'den al
-                waybill = waybill_map.get(str(irs["id"]))
+                # Malzeme bilgisini DB'den al — hem string hem int ID dene
+                waybill = waybill_map.get(str(irs["id"])) or waybill_map.get(str(irs["id"]).strip())
                 kalemler = irs.get("kalemler", [])
                 toplam_kg = irs.get("toplam_kg", 0)
 

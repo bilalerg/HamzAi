@@ -698,19 +698,30 @@
         ad.className = 'cari-ad';
         ad.textContent = c.ad;
         const bak = document.createElement('span');
-        bak.className = 'cari-bakiye ' + (c.bakiye > 0 ? 'alacak' : 'sifir');
-        bak.textContent = c.bakiye > 0
-          ? c.bakiye.toLocaleString('tr-TR', { minimumFractionDigits: 2 }) + ' TL ⚠️'
-          : '0 TL ✅';
+        const bakiye = c.bakiye || 0;
+        if (bakiye > 0) {
+          bak.className = 'cari-bakiye alacak';
+          bak.textContent = bakiye.toLocaleString('tr-TR', { minimumFractionDigits: 2 }) + ' TL ⚠️';
+        } else if (bakiye < 0) {
+          bak.className = 'cari-bakiye';
+          bak.style.color = '#2563eb';
+          bak.textContent = Math.abs(bakiye).toLocaleString('tr-TR', { minimumFractionDigits: 2 }) + ' TL 🔵';
+        } else {
+          bak.className = 'cari-bakiye sifir';
+          bak.textContent = '0 TL ✅';
+        }
         row.appendChild(ad);
         row.appendChild(bak);
         wrap.appendChild(row);
       });
-      const toplam = data.cariler.reduce(function(s, c) { return s + (c.bakiye || 0); }, 0);
-      if (toplam > 0) {
+      const toplamAlacak = data.cariler.reduce(function(s, c) { return s + (c.bakiye > 0 ? c.bakiye : 0); }, 0);
+      const toplamOdeyecek = data.cariler.reduce(function(s, c) { return s + (c.bakiye < 0 ? Math.abs(c.bakiye) : 0); }, 0);
+      if (toplamAlacak > 0 || toplamOdeyecek > 0) {
         const toplamRow = document.createElement('div');
-        toplamRow.style.cssText = 'margin-top:8px;padding:8px 14px;background:var(--accent-lt);border-radius:9px;font-size:13px;font-weight:600;color:var(--accent);display:flex;justify-content:space-between;';
-        toplamRow.innerHTML = '<span>Toplam Alacak</span><span>' + toplam.toLocaleString('tr-TR', { minimumFractionDigits: 2 }) + ' TL</span>';
+        toplamRow.style.cssText = 'margin-top:8px;padding:8px 14px;background:var(--accent-lt);border-radius:9px;font-size:12px;font-weight:600;color:var(--accent);';
+        toplamRow.innerHTML =
+          '<div style="display:flex;justify-content:space-between;margin-bottom:3px;"><span>Toplam Alacak (⚠️)</span><span>' + toplamAlacak.toLocaleString('tr-TR', {minimumFractionDigits:2}) + ' TL</span></div>' +
+          (toplamOdeyecek > 0 ? '<div style="display:flex;justify-content:space-between;color:#2563eb;"><span>Toplam Ödenecek (🔵)</span><span>' + toplamOdeyecek.toLocaleString('tr-TR', {minimumFractionDigits:2}) + ' TL</span></div>' : '');
         wrap.appendChild(toplamRow);
       }
       addMessage('💰 Müşteri Bakiyeleri:', 'bot', wrap);
@@ -946,11 +957,17 @@
           ad.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
           ad.textContent = c.ad;
           item.appendChild(ad);
-          if (c.bakiye > 0) {
+          const bakiye = c.bakiye || 0;
+          if (bakiye !== 0) {
             const bak = document.createElement('span');
             bak.className = 'dd-bakiye';
             bak.style.cssText = 'flex-shrink:0;margin-left:8px;white-space:nowrap;';
-            bak.textContent = c.bakiye.toLocaleString('tr-TR', {minimumFractionDigits:0}) + ' TL';
+            if (bakiye > 0) {
+              bak.textContent = bakiye.toLocaleString('tr-TR', {minimumFractionDigits:0}) + ' TL ⚠️';
+            } else {
+              bak.style.color = '#2563eb';
+              bak.textContent = Math.abs(bakiye).toLocaleString('tr-TR', {minimumFractionDigits:0}) + ' TL 🔵';
+            }
             item.appendChild(bak);
           }
           item.onclick = function(e) {
@@ -1464,6 +1481,7 @@
     if (wrap) Array.from(wrap.querySelectorAll('button')).forEach(function(b) { b.disabled = true; });
     addMessage('✅ Seçildi: ' + irs.cari_adi + ' — ' + (irs.toplam_kg / 1000).toFixed(2) + ' ton', 'user');
     const kalemler = irs.kalemler || [];
+    console.log('irsaliyeSecildi kalemler:', JSON.stringify(kalemler));
     if (kalemler.length > 1) {
       faturaAkisi = {
         irs: irs,
