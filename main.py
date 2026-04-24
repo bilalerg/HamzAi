@@ -73,6 +73,28 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 app.include_router(webhook_router)
 
 
+def _islem_log(db, islem_tipi: str, cari_adi: str = None, tutar: int = None,
+               fatura_id: str = None, irsaliye_id: str = None, plaka: str = None,
+               aciklama: str = None, session_id: str = None):
+    """İşlem logunu DB'ye yazar. Hata olursa sessizce geçer."""
+    try:
+        from app.core.database import IslemLog
+        log = IslemLog(
+            islem_tipi  = islem_tipi,
+            cari_adi    = cari_adi,
+            tutar       = int(tutar) if tutar else None,
+            fatura_id   = fatura_id,
+            irsaliye_id = irsaliye_id,
+            plaka       = plaka,
+            aciklama    = aciklama,
+            session_id  = session_id,
+        )
+        db.add(log)
+        db.commit()
+    except Exception as e:
+        logger.warning(f"İşlem log yazılamadı: {e}")
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok", "version": "1.0.0", "env": ENV}
@@ -137,9 +159,13 @@ async def upload_fis(file: UploadFile = File(...), session_id: str = "web_user")
         fis = fis_oku(tmp_path)
 
         if fis.hata:
+            _islem_log(db, "OCR_HATA", plaka=None, aciklama=fis.hata, session_id=session_id)
             return JSONResponse({"cevap": f"❌ Fiş okunamadı: {fis.hata}\n\nFotoğrafı daha net çekip tekrar deneyin."})
 
         ticket = fis_db_kaydet(fis, tmp_path, db)
+        _islem_log(db, "FIS_YUKLENDI", plaka=fis.plaka,
+                   aciklama=f"Fiş No: {fis.fis_no} | {fis.net_agirlik_kg} kg | OCR firma: {fis.firma}",
+                   session_id=session_id)
 
         from app.ocr.plaka_kontrol import plaka_kontrol_et, PlakaSonuc
         plaka_sonuc = plaka_kontrol_et(fis.plaka, ticket.id, db, fis_no=fis.fis_no)
@@ -647,6 +673,8 @@ async def toplu_fatura_kes_endpoint(request: Request):
 
         fatura_id = sonuc["data"]["id"]
         logger.info(f"✅ Toplu fatura kesildi: {fatura_id} ← {len(irsaliye_ids)} irsaliye cari={cari_adi}")
+        _islem_log(db, "TOPLU_FATURA_KESILDI", cari_adi=cari_adi, tutar=int(toplam_tutar),
+                   fatura_id=fatura_id, aciklama=f"{len(irsaliye_ids)} irsaliye birleştirildi")
 
         # DB güncelle ve irsaliyeleri sil
         for pid in irsaliye_ids:
@@ -777,6 +805,8 @@ async def fatura_kes_endpoint(request: Request):
 
         fatura_id = sonuc["data"]["id"]
         logger.info(f"✅ Fatura kesildi: {fatura_id} ← irsaliye {parasut_irsaliye_id} cari={cari_adi}")
+        _islem_log(db, "FATURA_KESILDI", cari_adi=cari_adi, tutar=int(toplam_tutar),
+                   fatura_id=fatura_id, irsaliye_id=str(parasut_irsaliye_id))
 
         # ── DB'yi güncelle: waybill ve ticket → TAMAMLANDI ──────────
         try:
@@ -826,6 +856,7 @@ async def fatura_kes_endpoint(request: Request):
 
     except Exception as e:
         logger.error(f"Fatura kes hatası: {e}")
+        _islem_log(db, "FATURA_HATA", cari_adi=cari_adi, irsaliye_id=str(parasut_irsaliye_id), aciklama=str(e))
         return JSONResponse({"cevap": f"❌ Fatura kesilemedi: {str(e)}", "basarili": False})
     finally:
         db.close()
@@ -899,6 +930,63 @@ async def payment_debug(request: Request):
         return JSONResponse({"hata": str(e)})
 
 
+@app.get("/admin/islem-loglari")
+async def islem_loglari(request: Request, limit: int = 50, islem_tipi: str = None):
+    if not _admin_kontrol(request):
+        return JSONResponse({"hata": "Yetkisiz erişim"}, status_code=401)
+    db = SessionLocal()
+    try:
+        from app.core.database import IslemLog
+        from sqlalchemy import desc
+        q = db.query(IslemLog).order_by(desc(IslemLog.created_at))
+        if islem_tipi:
+            q = q.filter(IslemLog.islem_tipi == islem_tipi)
+        loglar = q.limit(limit).all()
+        return JSONResponse({"loglar": [
+            {
+                "id": l.id,
+                "islem_tipi": l.islem_tipi,
+                "cari_adi": l.cari_adi,
+                "tutar": l.tutar,
+                "fatura_id": l.fatura_id,
+                "irsaliye_id": l.irsaliye_id,
+                "plaka": l.plaka,
+                "aciklama": l.aciklama,
+                "tarih": l.created_at.strftime("%d.%m.%Y %H:%M") if l.created_at else "-"
+            }
+            for l in loglar
+        ], "toplam": len(loglar)})
+    except Exception as e:
+        return JSONResponse({"hata": str(e)})
+    finally:
+        db.close()
+
+
+@app.get("/admin/konusmalar")
+async def konusmalar(request: Request, limit: int = 20):
+    if not _admin_kontrol(request):
+        return JSONResponse({"hata": "Yetkisiz erişim"}, status_code=401)
+    db = SessionLocal()
+    try:
+        from app.core.database import ChatSession
+        from sqlalchemy import desc
+        sessionlar = db.query(ChatSession).order_by(desc(ChatSession.updated_at)).limit(limit).all()
+        return JSONResponse({"sessionlar": [
+            {
+                "session_id": s.session_id,
+                "isim": s.isim,
+                "mesaj_sayisi": len(_json.loads(s.tam_gecmis)) if s.tam_gecmis else 0,
+                "son_guncelleme": s.updated_at.strftime("%d.%m.%Y %H:%M") if s.updated_at else "-",
+                "tam_gecmis": _json.loads(s.tam_gecmis) if s.tam_gecmis else []
+            }
+            for s in sessionlar
+        ]})
+    except Exception as e:
+        return JSONResponse({"hata": str(e)})
+    finally:
+        db.close()
+
+
 @app.get("/admin/accounts-debug")
 async def accounts_debug(request: Request):
     if not _admin_kontrol(request):
@@ -951,6 +1039,33 @@ async def startup_recovery():
                 logger.info("✅ Migration: malzemeler_json kolonu hazır")
             except Exception as e:
                 logger.warning(f"Migration atlandı: {e}")
+
+            try:
+                conn.execute(text("ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS tam_gecmis TEXT"))
+                conn.commit()
+                logger.info("✅ Migration: tam_gecmis kolonu hazır")
+            except Exception as e:
+                logger.warning(f"Migration tam_gecmis atlandı: {e}")
+
+            try:
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS islem_logs (
+                        id SERIAL PRIMARY KEY,
+                        islem_tipi VARCHAR(50) NOT NULL,
+                        cari_adi VARCHAR(200),
+                        tutar BIGINT,
+                        fatura_id VARCHAR(100),
+                        irsaliye_id VARCHAR(100),
+                        plaka VARCHAR(20),
+                        aciklama TEXT,
+                        session_id VARCHAR(100),
+                        created_at TIMESTAMP DEFAULT NOW()
+                    )
+                """))
+                conn.commit()
+                logger.info("✅ Migration: islem_logs tablosu hazır")
+            except Exception as e:
+                logger.warning(f"Migration islem_logs atlandı: {e}")
 
         from app.core.database import WeighTicket, TicketStatus
         bekleyenler = db.query(WeighTicket).filter(

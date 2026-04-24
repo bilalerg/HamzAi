@@ -11,14 +11,7 @@ import enum
 from app.core.config import DATABASE_URL
 from app.core.logger import logger
 
-engine = create_engine(
-    DATABASE_URL,
-    pool_pre_ping=True,
-    pool_timeout=30,
-    pool_recycle=300,
-    connect_args={"connect_timeout": 10},
-    echo=False
-)
+engine = create_engine(DATABASE_URL, pool_pre_ping=True, echo=False)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -61,7 +54,7 @@ class WeighTicket(Base):
     fire_kg          = Column(Integer, default=0, nullable=True)
     malzeme          = Column(String(100), nullable=True)
     firma            = Column(String(200), nullable=True)
-    malzemeler       = Column(Text, nullable=True)
+    malzemeler       = Column(Text, nullable=True)  # JSON: {"BONUS": 7700, "KARMA": 6000}
     fis_tarihi       = Column(DateTime, nullable=True)
     ocr_ham_cikti    = Column(Text, nullable=True)
     tesseract_agirlik = Column(Integer, nullable=True)
@@ -78,20 +71,19 @@ class WeighTicket(Base):
 
 class Waybill(Base):
     __tablename__ = "waybills"
-    id                  = Column(Integer, primary_key=True, autoincrement=True)
-    irsaliye_no         = Column(String(50), nullable=True, unique=True)
-    ref_kodu            = Column(String(20), nullable=True, unique=True, index=True)
-    fabrika_mail        = Column(String(200), nullable=True)
-    mail_gonderildi_at  = Column(DateTime, nullable=True)
-    teyit_geldi_at      = Column(DateTime, nullable=True)
-    teyit_mail_icerik   = Column(Text, nullable=True)
-    nlp_karar           = Column(String(20), nullable=True)
+    id                 = Column(Integer, primary_key=True, autoincrement=True)
+    irsaliye_no        = Column(String(50), nullable=True, unique=True)
+    ref_kodu           = Column(String(20), nullable=True, unique=True, index=True)
+    fabrika_mail       = Column(String(200), nullable=True)
+    mail_gonderildi_at = Column(DateTime, nullable=True)
+    teyit_geldi_at     = Column(DateTime, nullable=True)
+    teyit_mail_icerik  = Column(Text, nullable=True)
+    nlp_karar          = Column(String(20), nullable=True)
     parasut_irsaliye_id = Column(String(100), nullable=True)
-    malzemeler_json     = Column(Text, nullable=True)
-    status              = Column(Enum(TicketStatus), default=TicketStatus.IRSALIYE_OLUSTURULUYOR)
-    ticket_id           = Column(Integer, ForeignKey("weigh_tickets.id"))
-    created_at          = Column(DateTime, server_default=func.now())
-    updated_at          = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    status             = Column(Enum(TicketStatus), default=TicketStatus.IRSALIYE_OLUSTURULUYOR)
+    ticket_id          = Column(Integer, ForeignKey("weigh_tickets.id"))
+    created_at         = Column(DateTime, server_default=func.now())
+    updated_at         = Column(DateTime, server_default=func.now(), onupdate=func.now())
     ticket  = relationship("WeighTicket", back_populates="waybill")
     invoice = relationship("Invoice", back_populates="waybill", uselist=False)
     def __repr__(self): return f"<Waybill irsaliye_no={self.irsaliye_no}>"
@@ -99,41 +91,41 @@ class Waybill(Base):
 
 class Invoice(Base):
     __tablename__ = "invoices"
-    id                = Column(Integer, primary_key=True, autoincrement=True)
-    fatura_no         = Column(String(50), nullable=True, unique=True)
-    tutar             = Column(BigInteger, nullable=True)
-    birim_fiyat       = Column(Integer, nullable=True)
-    malzeme_fiyatlari = Column(Text, nullable=True)
-    parasut_id        = Column(String(100), nullable=True)
-    parasut_response  = Column(Text, nullable=True)
-    status            = Column(Enum(TicketStatus), default=TicketStatus.FATURA_KESILIYOR)
-    waybill_id        = Column(Integer, ForeignKey("waybills.id"))
-    created_at        = Column(DateTime, server_default=func.now())
-    updated_at        = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    id               = Column(Integer, primary_key=True, autoincrement=True)
+    fatura_no        = Column(String(50), nullable=True, unique=True)
+    tutar            = Column(BigInteger, nullable=True)
+    birim_fiyat      = Column(Integer, nullable=True)
+    malzeme_fiyatlari = Column(Text, nullable=True)  # JSON: {"BONUS": 16, "KARMA": 14}
+    parasut_id       = Column(String(100), nullable=True)
+    parasut_response = Column(Text, nullable=True)
+    status           = Column(Enum(TicketStatus), default=TicketStatus.FATURA_KESILIYOR)
+    waybill_id       = Column(Integer, ForeignKey("waybills.id"))
+    created_at       = Column(DateTime, server_default=func.now())
+    updated_at       = Column(DateTime, server_default=func.now(), onupdate=func.now())
     waybill = relationship("Waybill", back_populates="invoice")
     def __repr__(self): return f"<Invoice fatura_no={self.fatura_no} tutar={self.tutar}>"
 
 
 class Alert(Base):
     __tablename__ = "alerts"
-    id            = Column(Integer, primary_key=True, autoincrement=True)
-    tur           = Column(String(50), nullable=False)
-    mesaj         = Column(Text, nullable=False)
-    ticket_id     = Column(Integer, ForeignKey("weigh_tickets.id"), nullable=True)
+    id           = Column(Integer, primary_key=True, autoincrement=True)
+    tur          = Column(String(50), nullable=False)
+    mesaj        = Column(Text, nullable=False)
+    ticket_id    = Column(Integer, ForeignKey("weigh_tickets.id"), nullable=True)
     gonderildi_mi = Column(Integer, default=0)
-    cevap         = Column(Text, nullable=True)
-    created_at    = Column(DateTime, server_default=func.now())
+    cevap        = Column(Text, nullable=True)
+    created_at   = Column(DateTime, server_default=func.now())
     def __repr__(self): return f"<Alert tur={self.tur}>"
 
 
 class SystemLog(Base):
     __tablename__ = "system_logs"
-    id         = Column(Integer, primary_key=True, autoincrement=True)
-    seviye     = Column(String(10), nullable=False)
-    modul      = Column(String(50), nullable=True)
-    mesaj      = Column(Text, nullable=False)
-    ticket_id  = Column(Integer, ForeignKey("weigh_tickets.id"), nullable=True)
-    sure_ms    = Column(Integer, nullable=True)
+    id        = Column(Integer, primary_key=True, autoincrement=True)
+    seviye    = Column(String(10), nullable=False)
+    modul     = Column(String(50), nullable=True)
+    mesaj     = Column(Text, nullable=False)
+    ticket_id = Column(Integer, ForeignKey("weigh_tickets.id"), nullable=True)
+    sure_ms   = Column(Integer, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
 
 
@@ -150,9 +142,26 @@ class ChatSession(Base):
     id         = Column(Integer, primary_key=True, autoincrement=True)
     session_id = Column(String(100), unique=True, nullable=False, index=True)
     isim       = Column(String(100), nullable=True)
-    gecmis     = Column(Text, nullable=True)
+    gecmis     = Column(Text, nullable=True)      # Son MAX_GECMIS mesaj (Claude bağlamı)
+    tam_gecmis = Column(Text, nullable=True)      # Tüm konuşma geçmişi
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+
+class IslemLog(Base):
+    __tablename__ = "islem_logs"
+    id          = Column(Integer, primary_key=True, autoincrement=True)
+    islem_tipi  = Column(String(50), nullable=False, index=True)  # FATURA_KESILDI, TAHSILAT_EKLENDI, FIS_YUKLENDI, OCR_HATA
+    cari_adi    = Column(String(200), nullable=True, index=True)
+    tutar       = Column(BigInteger, nullable=True)
+    fatura_id   = Column(String(100), nullable=True)
+    irsaliye_id = Column(String(100), nullable=True)
+    plaka       = Column(String(20), nullable=True)
+    aciklama    = Column(Text, nullable=True)
+    session_id  = Column(String(100), nullable=True)
+    created_at  = Column(DateTime, server_default=func.now(), index=True)
+    def __repr__(self): return f"<IslemLog tip={self.islem_tipi} cari={self.cari_adi}>"
 
 
 def init_db():
