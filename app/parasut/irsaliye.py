@@ -41,7 +41,7 @@ def irsaliye_olustur(ticket_id: int, beklet: bool = False) -> dict:
             "currency": "TRL",
         }
         if ticket.plaka:
-            attributes["plate_number"] = ticket.plaka  # DUZELTME: vehicle_plate_number → plate_number
+            attributes["carrier_license_plate"] = ticket.plaka
 
         # Malzeme bazli stock_movements olustur
         malzemeler = {}
