@@ -264,17 +264,6 @@ def _session_kaydet(db, session_id: str, isim: str, gecmis: list, yeni_mesaj: di
         db.rollback()
 
 
-def _isim_mi(metin: str) -> bool:
-    metin_lower = metin.lower().strip()
-    for belirtec in SORU_BELIRTECLERI:
-        if belirtec in metin_lower:
-            return False
-    if len(metin.split()) > 3:
-        return False
-    if re.search(r'\d', metin):
-        return False
-    return True
-
 
 # ── ANA FONKSİYON ─────────────────────────────────────────────────────
 
