@@ -326,9 +326,9 @@
     {
       fn: () => faturaListesiGoster(),
       kelimeler: [
-        ['fatura sorgula'], ['fatura listesi'], ['fatura detay'],
-        ['fatura getir'], ['fatura göster'], ['fatura goster'],
-        ['faturaları göster'], ['faturalari goster']
+        ['fatura sorgula'], ['fatura listesi'],
+        ['faturaları göster'], ['faturalari goster'],
+        ['fatura sorgulamak']
       ]
     },
     {
@@ -810,30 +810,21 @@
   }
 
   async function cariFaturalariniGetir(cariAdi, wrapParent) {
-    const loadDiv = document.createElement('div');
-    loadDiv.style.cssText = 'font-size:12px;color:var(--muted);margin-top:10px;padding-top:10px;border-top:1px solid var(--border);';
-    loadDiv.textContent = 'Faturalar yükleniyor…';
-    wrapParent.appendChild(loadDiv);
-
+    showTyping();
     try {
       const res = await fetch('/api/cari-faturalar/' + encodeURIComponent(cariAdi));
       const data = await res.json();
-      loadDiv.remove();
+      removeTyping();
 
       if (!data.faturalar || data.faturalar.length === 0) {
-        const hata = document.createElement('div');
-        hata.style.cssText = 'font-size:13px;color:var(--muted);margin-top:10px;';
-        hata.textContent = cariAdi + ' için fatura bulunamadı.';
-        wrapParent.appendChild(hata);
+        addMessage(cariAdi + ' için fatura bulunamadı.', 'bot');
         return;
       }
 
       const listWrap = document.createElement('div');
-      listWrap.style.cssText = 'margin-top:10px;border-top:1px solid var(--border);padding-top:10px;';
-
       const listBaslik = document.createElement('div');
       listBaslik.style.cssText = 'font-size:12px;color:var(--muted);margin-bottom:8px;';
-      listBaslik.textContent = cariAdi + ' — ' + data.faturalar.length + ' fatura:';
+      listBaslik.textContent = cariAdi + ' — ' + data.faturalar.length + ' fatura (detay için tıklayın):';
       listWrap.appendChild(listBaslik);
 
       data.faturalar.forEach(function(f) {
@@ -848,57 +839,46 @@
         const sol = document.createElement('span');
         sol.style.fontSize = '13px';
         const durumEmoji = f.durum === 'paid' ? '✅' : f.durum === 'overdue' ? '🔴' : '🟡';
-        sol.textContent = durumEmoji + ' ' + f.tarih + ' — ' + f.aciklama.substring(0, 40);
+        sol.textContent = durumEmoji + ' ' + f.tarih + ' — ' + (f.aciklama || 'Fatura').substring(0, 40);
         const sag = document.createElement('span');
         sag.className = 'kg';
-        sag.textContent = parseFloat(f.tutar).toLocaleString('tr-TR', {minimumFractionDigits:0}) + ' TL';
+        sag.textContent = parseFloat(f.tutar || 0).toLocaleString('tr-TR', {minimumFractionDigits:0}) + ' TL';
         ust.appendChild(sol);
         ust.appendChild(sag);
+        btn.appendChild(ust);
 
         if (f.kalan > 0) {
           const alt = document.createElement('div');
           alt.style.cssText = 'font-size:11px;color:#b45309;';
           alt.textContent = 'Kalan: ' + parseFloat(f.kalan).toLocaleString('tr-TR', {minimumFractionDigits:0}) + ' TL';
-          btn.appendChild(ust);
           btn.appendChild(alt);
-        } else {
-          btn.appendChild(ust);
         }
 
         btn.onclick = function() {
-          Array.from(listWrap.querySelectorAll('.irsaliye-btn')).forEach(function(b) { b.style.opacity = '0.5'; });
+          Array.from(listWrap.querySelectorAll('.irsaliye-btn')).forEach(function(b) { b.style.opacity = '0.5'; b.disabled = true; });
           btn.style.opacity = '1';
           btn.style.background = 'var(--accent-lt)';
-          faturaDetayGoster(f.id, f.aciklama, listWrap);
+          btn.disabled = false;
+          faturaDetayGoster(f.id, f.aciklama);
         };
         listWrap.appendChild(btn);
       });
 
-      wrapParent.appendChild(listWrap);
-    } catch {
-      loadDiv.textContent = '❌ Faturalar yüklenemedi.';
+      addMessage('📄 ' + cariAdi + ' faturaları:', 'bot', listWrap);
+    } catch(e) {
+      removeTyping();
+      addMessage('❌ Faturalar yüklenemedi: ' + e.message, 'bot');
     }
   }
 
-  async function faturaDetayGoster(faturaId, faturaAdi, wrapParent) {
-    const loadDiv = document.createElement('div');
-    loadDiv.style.cssText = 'font-size:12px;color:var(--muted);margin-top:10px;padding-top:10px;border-top:1px solid var(--border);';
-    loadDiv.textContent = 'Fatura detayı yükleniyor…';
-    wrapParent.appendChild(loadDiv);
-
+  async function faturaDetayGoster(faturaId, faturaAdi) {
+    showTyping();
     try {
       const res = await fetch('/api/fatura-detay/' + faturaId);
       const f = await res.json();
-      loadDiv.remove();
+      removeTyping();
 
       const detayWrap = document.createElement('div');
-      detayWrap.style.cssText = 'margin-top:10px;border-top:1px solid var(--border);padding-top:10px;';
-
-      // Başlık
-      const baslik = document.createElement('div');
-      baslik.style.cssText = 'font-size:13px;font-weight:600;color:var(--text);margin-bottom:8px;';
-      baslik.textContent = '🧾 Fatura #' + faturaId;
-      detayWrap.appendChild(baslik);
 
       // Özet
       const ozet = document.createElement('div');
@@ -919,7 +899,9 @@
         f.kalemler.forEach(function(k) {
           const row = document.createElement('div');
           row.style.cssText = 'display:flex;justify-content:space-between;font-size:12px;padding:5px 10px;background:var(--bg);border-radius:7px;margin-bottom:4px;';
-          row.innerHTML = '<span>' + k.aciklama + '</span><span style="font-weight:600">' + parseFloat(k.tutar||0).toLocaleString('tr-TR',{minimumFractionDigits:0}) + ' TL</span>';
+          const aciklama = k.aciklama || 'Hurda';
+          const tutar = parseFloat(k.tutar||0);
+          row.innerHTML = '<span>' + aciklama + (k.miktar > 0 ? ' (' + parseFloat(k.miktar).toLocaleString('tr-TR') + ' kg)' : '') + '</span><span style="font-weight:600">' + tutar.toLocaleString('tr-TR',{minimumFractionDigits:0}) + ' TL</span>';
           detayWrap.appendChild(row);
         });
       }
@@ -952,9 +934,10 @@
         });
       }
 
-      wrapParent.appendChild(detayWrap);
-    } catch {
-      loadDiv.textContent = '❌ Fatura detayı yüklenemedi.';
+      addMessage('🧾 Fatura #' + faturaId, 'bot', detayWrap);
+    } catch(e) {
+      removeTyping();
+      addMessage('❌ Fatura detayı yüklenemedi.', 'bot');
     }
   }
 

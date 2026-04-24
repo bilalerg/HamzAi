@@ -319,11 +319,17 @@ def fatura_detay_getir(fatura_id: str) -> dict:
         for inc in included:
             if inc.get("type") == "sales_invoice_details" and inc["id"] in detail_ids:
                 a = inc.get("attributes", {})
+                try:
+                    miktar = float(a.get("quantity") or 0)
+                    birim_fiyat = float(a.get("unit_price") or 0)
+                    tutar_kalem = miktar * birim_fiyat
+                except (ValueError, TypeError):
+                    miktar = birim_fiyat = tutar_kalem = 0.0
                 kalemler.append({
-                    "aciklama": a.get("description", "-"),
-                    "miktar": float(a.get("quantity", 0)),
-                    "birim_fiyat": float(a.get("unit_price", 0)),
-                    "tutar": float(a.get("quantity", 0)) * float(a.get("unit_price", 0)),
+                    "aciklama": a.get("description") or "Hurda",
+                    "miktar": miktar,
+                    "birim_fiyat": birim_fiyat,
+                    "tutar": tutar_kalem,
                 })
 
         # Tahsilatlar

@@ -305,7 +305,8 @@ BAKİYE KONVANSIYONU (ÇOK ÖNEMLİ):
 KURALLAR:
 - Bilgi için mutlaka tool kullan, tahmin etme veya uydurma
 - Bilmediğini uydurma
-- Fatura listelerken: tarih, tutar, durum, plaka (varsa), irsaliye_id (varsa) göster
+- Cari adı kısaltma veya belirsizse direkt cari_listesi_getir çağır, eşleştir, sonra işlemi yap. Kullanıcıya tekrar sorma.
+- Fatura listelerken: tarih, tutar, durum, irsaliye_id (varsa) göster
 - Kısa ve net cevap ver, gereksiz markdown kullanma
 - Yeni cari: firma adı→email→tel→vergi no→vergi dairesi→adres sor, özet göster, onay al, cari_olustur çağır"""
 
