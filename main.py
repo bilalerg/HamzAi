@@ -476,7 +476,7 @@ async def bekleyen_irsaliyeler():
                 kalemler = irs.get("kalemler", [])
                 toplam_kg = irs.get("toplam_kg", 0)
 
-                if waybill and waybill.malzemeler_json:
+                if waybill and getattr(waybill, 'malzemeler_json', None):
                     try:
                         malzemeler = _json.loads(waybill.malzemeler_json)
                         if malzemeler:
