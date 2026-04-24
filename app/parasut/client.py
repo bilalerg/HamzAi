@@ -240,15 +240,31 @@ def cari_faturalari_getir(cari_id: str, limit: int = 10) -> list:
     try:
         sonuc = parasut_get(
             f"/{PARASUT_COMPANY_ID}/sales_invoices",
-            params={"filter[contact_id]": cari_id, "page[size]": limit, "sort": "-issue_date"}
+            params={
+                "filter[contact_id]": cari_id,
+                "page[size]": limit,
+                "sort": "-issue_date",
+                "include": "contact"
+            }
         )
         faturalar = []
         for f in sonuc.get("data", []):
             attr = f.get("attributes", {})
+            # Kalan tutar
+            try:
+                kalan = float(attr.get("remaining") or 0)
+            except (ValueError, TypeError):
+                kalan = 0.0
+            try:
+                tutar = float(attr.get("gross_total") or 0)
+            except (ValueError, TypeError):
+                tutar = 0.0
             faturalar.append({
                 "id": f["id"],
                 "tarih": attr.get("issue_date", "-"),
-                "tutar": attr.get("gross_total", 0),
+                "vade": attr.get("due_date", "-"),
+                "tutar": tutar,
+                "kalan": kalan,
                 "durum": attr.get("payment_status", "-"),
                 "aciklama": attr.get("description", "-"),
             })
@@ -256,6 +272,70 @@ def cari_faturalari_getir(cari_id: str, limit: int = 10) -> list:
     except Exception as e:
         logger.error(f"Cari fatura hatasi: {e}")
         return []
+
+
+def fatura_detay_getir(fatura_id: str) -> dict:
+    """Fatura detayı: kalemler, tahsilatlar ve bağlı irsaliye ID'leri."""
+    try:
+        sonuc = parasut_get(
+            f"/{PARASUT_COMPANY_ID}/sales_invoices/{fatura_id}",
+            params={"include": "contact,details,details.product,payments"}
+        )
+        data = sonuc.get("data", {})
+        attr = data.get("attributes", {})
+        included = sonuc.get("included", [])
+
+        # Fatura kalemleri
+        detail_ids = {d["id"] for d in data.get("relationships", {}).get("details", {}).get("data", [])}
+        kalemler = []
+        for inc in included:
+            if inc.get("type") == "sales_invoice_details" and inc["id"] in detail_ids:
+                a = inc.get("attributes", {})
+                kalemler.append({
+                    "aciklama": a.get("description", "-"),
+                    "miktar": float(a.get("quantity", 0)),
+                    "birim_fiyat": float(a.get("unit_price", 0)),
+                    "tutar": float(a.get("quantity", 0)) * float(a.get("unit_price", 0)),
+                })
+
+        # Tahsilatlar
+        payment_ids = {p["id"] for p in data.get("relationships", {}).get("payments", {}).get("data", [])}
+        tahsilatlar = []
+        for inc in included:
+            if inc.get("type") == "payments" and inc["id"] in payment_ids:
+                a = inc.get("attributes", {})
+                tahsilatlar.append({
+                    "tarih": a.get("date", "-"),
+                    "tutar": float(a.get("amount", 0)),
+                    "aciklama": a.get("description", "-"),
+                })
+
+        # Bağlı irsaliye ID'leri
+        irsaliye_ids = [
+            d["id"] for d in data.get("relationships", {}).get("shipment_documents", {}).get("data", [])
+        ]
+
+        try:
+            tutar = float(attr.get("gross_total") or 0)
+            kalan = float(attr.get("remaining") or 0)
+        except (ValueError, TypeError):
+            tutar = kalan = 0.0
+
+        return {
+            "id": fatura_id,
+            "tarih": attr.get("issue_date", "-"),
+            "vade": attr.get("due_date", "-"),
+            "tutar": tutar,
+            "kalan": kalan,
+            "durum": attr.get("payment_status", "-"),
+            "aciklama": attr.get("description", "-"),
+            "kalemler": kalemler,
+            "tahsilatlar": tahsilatlar,
+            "irsaliye_ids": irsaliye_ids,
+        }
+    except Exception as e:
+        logger.error(f"Fatura detay hatasi: {e}")
+        return {}
 
 
 def cari_irsaliyeleri_getir(cari_id: str, limit: int = 10) -> list:

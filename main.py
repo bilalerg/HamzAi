@@ -448,6 +448,172 @@ async def bekleyen_irsaliyeler():
         db.close()
 
 
+# ── FATURA DETAY ─────────────────────────────────────────────────────
+@app.get("/api/fatura-detay/{fatura_id}")
+async def fatura_detay_endpoint(fatura_id: str):
+    try:
+        from app.parasut.client import fatura_detay_getir
+        detay = fatura_detay_getir(fatura_id)
+        return JSONResponse(detay)
+    except Exception as e:
+        return JSONResponse({"hata": str(e)})
+
+
+@app.get("/api/cari-faturalar/{cari_adi}")
+async def cari_faturalar_endpoint(cari_adi: str):
+    try:
+        from app.parasut.client import cari_id_bul, cari_faturalari_getir
+        cari_id = cari_id_bul(cari_adi)
+        if not cari_id:
+            return JSONResponse({"faturalar": [], "hata": "Cari bulunamadı"})
+        faturalar = cari_faturalari_getir(cari_id, limit=25)
+        return JSONResponse({"faturalar": faturalar, "toplam": len(faturalar)})
+    except Exception as e:
+        return JSONResponse({"faturalar": [], "hata": str(e)})
+
+
+# ── TOPLU FATURA KES ─────────────────────────────────────────────────
+@app.post("/api/toplu-fatura-kes")
+async def toplu_fatura_kes_endpoint(request: Request):
+    """
+    Seçilen birden fazla irsaliyeyi tek faturada birleştirir.
+    Her irsaliye için ayrı malzeme+fiyat bilgisi alınır.
+    """
+    data = await request.json()
+    cari_adi          = data.get("cari_adi")
+    irsaliyeler_data  = data.get("irsaliyeler", [])  # [{parasut_irsaliye_id, malzemeler, toplanan_fiyatlar, agirlik_kg}]
+
+    if not cari_adi or not irsaliyeler_data:
+        return JSONResponse({"cevap": "❌ Eksik bilgi.", "basarili": False})
+
+    db = SessionLocal()
+    try:
+        from app.parasut.client import cari_id_bul, parasut_post, parasut_delete, cari_cache_yenile
+        from app.core.config import PARASUT_COMPANY_ID, PARASUT_HURDA_PRODUCT_ID
+        from app.core.database import Waybill, WeighTicket, TicketStatus
+        from datetime import datetime
+
+        contact_id = cari_id_bul(cari_adi)
+        if not contact_id:
+            return JSONResponse({"cevap": f"❌ '{cari_adi}' carisi bulunamadı.", "basarili": False})
+
+        bugun = datetime.now().strftime("%Y-%m-%d")
+        detaylar = []
+        shipment_docs = []
+        toplam_tutar = 0
+        irsaliye_ids = []
+
+        for irs in irsaliyeler_data:
+            pid = irs.get("parasut_irsaliye_id")
+            malzemeler = irs.get("malzemeler", {})
+            toplanan_fiyatlar = irs.get("toplanan_fiyatlar", {})
+            agirlik_kg = irs.get("agirlik_kg", 0)
+
+            if not pid:
+                continue
+
+            irsaliye_ids.append(str(pid))
+            shipment_docs.append({"id": str(pid), "type": "shipment_documents"})
+
+            if malzemeler and len(toplanan_fiyatlar) > 1:
+                for malzeme_adi, fiyat in toplanan_fiyatlar.items():
+                    kg = malzemeler.get(malzeme_adi, 0)
+                    if kg <= 0:
+                        continue
+                    toplam_tutar += kg * fiyat
+                    detaylar.append({
+                        "type": "sales_invoice_details",
+                        "attributes": {
+                            "quantity": kg,
+                            "unit_price": str(float(fiyat)),
+                            "vat_rate": 0,
+                            "description": f"{malzeme_adi} — {kg:,} kg"
+                        },
+                        "relationships": {
+                            "product": {"data": {"type": "products", "id": str(PARASUT_HURDA_PRODUCT_ID)}}
+                        }
+                    })
+            else:
+                birim_fiyat = float(list(toplanan_fiyatlar.values())[0]) if toplanan_fiyatlar else 0
+                kg = float(agirlik_kg) if agirlik_kg else 0
+                toplam_tutar += kg * birim_fiyat
+                detaylar.append({
+                    "type": "sales_invoice_details",
+                    "attributes": {
+                        "quantity": kg,
+                        "unit_price": str(birim_fiyat),
+                        "vat_rate": 0,
+                        "description": f"Hurda — {kg:,.0f} kg"
+                    },
+                    "relationships": {
+                        "product": {"data": {"type": "products", "id": str(PARASUT_HURDA_PRODUCT_ID)}}
+                    }
+                })
+
+        if not detaylar:
+            return JSONResponse({"cevap": "❌ Fatura kalemi oluşturulamadı.", "basarili": False})
+
+        istek = {
+            "data": {
+                "type": "sales_invoices",
+                "attributes": {
+                    "item_type": "invoice",
+                    "description": f"Toplu Hurda Alım — {len(irsaliye_ids)} irsaliye",
+                    "issue_date": bugun,
+                    "due_date": bugun,
+                    "currency": "TRL"
+                },
+                "relationships": {
+                    "contact": {"data": {"type": "contacts", "id": str(contact_id)}},
+                    "details": {"data": detaylar},
+                    "shipment_documents": {"data": shipment_docs}
+                }
+            }
+        }
+
+        try:
+            sonuc = parasut_post(f"/{PARASUT_COMPANY_ID}/sales_invoices", istek)
+        except Exception as e:
+            logger.warning(f"İrsaliye bağlantılı toplu fatura başarısız, bağlantısız deneniyor: {e}")
+            istek["data"]["relationships"].pop("shipment_documents", None)
+            sonuc = parasut_post(f"/{PARASUT_COMPANY_ID}/sales_invoices", istek)
+
+        fatura_id = sonuc["data"]["id"]
+        logger.info(f"✅ Toplu fatura kesildi: {fatura_id} ← {len(irsaliye_ids)} irsaliye cari={cari_adi}")
+
+        # DB güncelle ve irsaliyeleri sil
+        for pid in irsaliye_ids:
+            try:
+                waybill = db.query(Waybill).filter(Waybill.parasut_irsaliye_id == pid).first()
+                if waybill:
+                    waybill.status = TicketStatus.TAMAMLANDI
+                    ticket = db.query(WeighTicket).filter(WeighTicket.id == waybill.ticket_id).first()
+                    if ticket:
+                        ticket.status = TicketStatus.TAMAMLANDI
+                    db.commit()
+            except Exception as e:
+                logger.error(f"DB güncelleme hatası ({pid}): {e}")
+            try:
+                parasut_delete(f"/{PARASUT_COMPANY_ID}/shipment_documents/{pid}")
+                logger.info(f"✅ İrsaliye silindi: {pid}")
+            except Exception as e:
+                logger.warning(f"İrsaliye silinemedi ({pid}): {e}")
+
+        try:
+            cari_cache_yenile()
+        except Exception:
+            pass
+
+        ozet = f"✅ Toplu fatura kesildi!\n\n🏢 {cari_adi}\n📦 {len(irsaliye_ids)} irsaliye birleştirildi\n💵 Toplam: {int(toplam_tutar):,} TL\n🧾 Fatura No: {fatura_id}"
+        return JSONResponse({"cevap": ozet, "basarili": True, "fatura_no": fatura_id})
+
+    except Exception as e:
+        logger.error(f"Toplu fatura kes hatası: {e}")
+        return JSONResponse({"cevap": f"❌ Toplu fatura kesilemedi: {str(e)}", "basarili": False})
+    finally:
+        db.close()
+
+
 # ── FATURA KES (Python, Claude yok) ──────────────────────────────────
 @app.post("/api/fatura-kes")
 async def fatura_kes_endpoint(request: Request):
