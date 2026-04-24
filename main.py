@@ -15,10 +15,14 @@ from app.chatbox.webhook import router as webhook_router
 
 # HTML şablonunu dosyadan oku
 _HTML_PATH = Path(__file__).parent / "chat.html"
+_HTML_CACHE: str | None = None
 
 
 def _chat_html() -> str:
-    return _HTML_PATH.read_text(encoding="utf-8")
+    global _HTML_CACHE
+    if _HTML_CACHE is None:
+        _HTML_CACHE = _HTML_PATH.read_text(encoding="utf-8")
+    return _HTML_CACHE
 
 
 async def _keep_alive():
@@ -803,9 +807,9 @@ async def fatura_kes_endpoint(request: Request):
 
         # Özet mesaj
         ozet = f"✅ Fatura kesildi!\n\n🏢 {cari_adi}\n"
-        for m, f in toplanan_fiyatlar.items():
-            kg_val = malzemeler.get(m, agirlik_kg) if malzemeler else agirlik_kg
-            ozet += f"  • {m if malzemeler and len(toplanan_fiyatlar) > 1 else 'Hurda'}: {kg_val:,.0f} kg × {f:,.0f} TL/kg = {int(kg_val * f):,} TL\n"
+        for malzeme_adi_ozet, fiyat_ozet in toplanan_fiyatlar.items():
+            kg_val = malzemeler.get(malzeme_adi_ozet, agirlik_kg) if malzemeler else agirlik_kg
+            ozet += f"  • {malzeme_adi_ozet if malzemeler and len(toplanan_fiyatlar) > 1 else 'Hurda'}: {kg_val:,.0f} kg × {fiyat_ozet:,.0f} TL/kg = {int(kg_val * fiyat_ozet):,} TL\n"
         ozet += f"\n💵 Toplam: {int(toplam_tutar):,} TL\n"
         ozet += f"🧾 Fatura No: {fatura_id}"
 

@@ -209,6 +209,20 @@
   const inputEl    = document.getElementById('chatInput');
   const sendBtn    = document.getElementById('sendBtn');
   let faturaAkisi  = null;
+  let _aktifPanel  = null; // Aktif panel elementi
+
+  function _panelKapat() {
+    if (_aktifPanel) {
+      // Tüm buton ve inputları devre dışı bırak
+      _aktifPanel.querySelectorAll('button, input, select').forEach(function(el) {
+        el.disabled = true;
+        el.style.opacity = '0.4';
+        el.style.cursor = 'not-allowed';
+      });
+      _aktifPanel.style.opacity = '0.5';
+      _aktifPanel = null;
+    }
+  }
 
   // ── GÜNLÜK ÖZET ──────────────────────────────────────────────────
 
@@ -337,6 +351,10 @@
 
   function addMessage(text, type, extraEl) {
     removeWelcome();
+    // Önceki aktif paneli kapat
+    if (extraEl && type === 'bot') {
+      _panelKapat();
+    }
     const wrap = document.createElement('div');
     wrap.className = 'message ' + type;
     const meta = document.createElement('div');
@@ -345,7 +363,10 @@
     const bubble = document.createElement('div');
     bubble.className = 'bubble';
     if (text) bubble.textContent = text;
-    if (extraEl) bubble.appendChild(extraEl);
+    if (extraEl) {
+      bubble.appendChild(extraEl);
+      if (type === 'bot') _aktifPanel = bubble;
+    }
     wrap.appendChild(meta);
     wrap.appendChild(bubble);
     messagesEl.appendChild(wrap);
