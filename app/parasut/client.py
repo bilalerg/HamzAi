@@ -250,7 +250,6 @@ def cari_faturalari_getir(cari_id: str, limit: int = 10) -> list:
         faturalar = []
         for f in sonuc.get("data", []):
             attr = f.get("attributes", {})
-            # Kalan tutar
             try:
                 kalan = float(attr.get("remaining") or 0)
             except (ValueError, TypeError):
@@ -259,6 +258,32 @@ def cari_faturalari_getir(cari_id: str, limit: int = 10) -> list:
                 tutar = float(attr.get("gross_total") or 0)
             except (ValueError, TypeError):
                 tutar = 0.0
+
+            aciklama = attr.get("description") or ""
+
+            # Açıklamadan plaka ve irsaliye ID'si çıkar
+            # Format: "Kantar Fişi — 32PR295 — 13460 kg"
+            # veya: "Hurda Alım — İrsaliye 1002891134"
+            # veya: "Toplu Hurda Alım — 4 irsaliye"
+            plaka = None
+            irsaliye_id = None
+
+            import re as _re
+            # Plaka: büyük harf + rakam kombinasyonu (örn: 32PR295, 44AGD396)
+            plaka_match = _re.search(r'\b(\d{2}[A-ZÇŞĞÜÖİ]{1,3}\d{2,4})\b', aciklama)
+            if plaka_match:
+                plaka = plaka_match.group(1)
+
+            # İrsaliye ID: "İrsaliye XXXXXXXXXX" formatı
+            irsaliye_match = _re.search(r'[İI]rsaliye\s+(\d{8,})', aciklama)
+            if irsaliye_match:
+                irsaliye_id = irsaliye_match.group(1)
+
+            # Bağlı irsaliye ID'lerini relationships'ten al
+            irsaliye_ids = [
+                d["id"] for d in f.get("relationships", {}).get("shipment_documents", {}).get("data", [])
+            ]
+
             faturalar.append({
                 "id": f["id"],
                 "tarih": attr.get("issue_date", "-"),
@@ -266,7 +291,10 @@ def cari_faturalari_getir(cari_id: str, limit: int = 10) -> list:
                 "tutar": tutar,
                 "kalan": kalan,
                 "durum": attr.get("payment_status", "-"),
-                "aciklama": attr.get("description", "-"),
+                "aciklama": aciklama or "-",
+                "plaka": plaka,
+                "irsaliye_id": irsaliye_id or (irsaliye_ids[0] if irsaliye_ids else None),
+                "irsaliye_ids": irsaliye_ids,
             })
         return faturalar
     except Exception as e:

@@ -84,6 +84,17 @@ TOOLS = [
         }
     },
     {
+        "name": "fatura_detay_getir",
+        "description": "Belirli bir faturanın detaylarını getirir: kalemler, tahsilatlar, bağlı irsaliyeler.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "fatura_id": {"type": "string", "description": "Fatura ID (örn: 1083916460)"}
+            },
+            "required": ["fatura_id"]
+        }
+    },
+    {
         "name": "cari_olustur",
         "description": "Paraşüt'te yeni cari oluşturur. Tüm bilgiler toplandıktan sonra çağır.",
         "input_schema": {
@@ -165,6 +176,12 @@ def _tool_calistir(tool_name: str, tool_input: dict) -> str:
                     tarih = None
             sonuc = tahsilat_ekle(cari_adi, tutar, aciklama, tarih)
             return json.dumps(sonuc, ensure_ascii=False)
+
+        elif tool_name == "fatura_detay_getir":
+            from app.parasut.client import fatura_detay_getir
+            fatura_id = tool_input.get("fatura_id", "")
+            detay = fatura_detay_getir(fatura_id)
+            return json.dumps(detay, ensure_ascii=False)
 
         elif tool_name == "cari_olustur":
             sonuc = cari_olustur(
@@ -288,6 +305,7 @@ BAKİYE KONVANSIYONU (ÇOK ÖNEMLİ):
 KURALLAR:
 - Bilgi için mutlaka tool kullan, tahmin etme veya uydurma
 - Bilmediğini uydurma
+- Fatura listelerken: tarih, tutar, durum, plaka (varsa), irsaliye_id (varsa) göster
 - Kısa ve net cevap ver, gereksiz markdown kullanma
 - Yeni cari: firma adı→email→tel→vergi no→vergi dairesi→adres sor, özet göster, onay al, cari_olustur çağır"""
 
