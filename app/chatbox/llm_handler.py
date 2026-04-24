@@ -234,29 +234,27 @@ def _session_kaydet(db, session_id: str, isim: str, gecmis: list, yeni_mesaj: di
         session = db.query(ChatSession).filter(ChatSession.session_id == session_id).first()
         gecmis_json = json.dumps(gecmis, ensure_ascii=False)
 
-        # Tam geçmiş — tüm mesajları kaydet
-        tam_gecmis = []
-        if session and session.tam_gecmis:
-            try:
-                tam_gecmis = json.loads(session.tam_gecmis)
-            except Exception:
-                tam_gecmis = []
-        if yeni_mesaj:
-            tam_gecmis.append(yeni_mesaj)
-
-        tam_gecmis_json = json.dumps(tam_gecmis, ensure_ascii=False)
-
         if session:
-            session.isim       = isim
-            session.gecmis     = gecmis_json
-            session.tam_gecmis = tam_gecmis_json
+            session.isim   = isim
+            session.gecmis = gecmis_json
+            # tam_gecmis varsa güncelle
+            try:
+                tam_gecmis = []
+                if session.tam_gecmis:
+                    tam_gecmis = json.loads(session.tam_gecmis)
+                if yeni_mesaj:
+                    tam_gecmis.append(yeni_mesaj)
+                session.tam_gecmis = json.dumps(tam_gecmis, ensure_ascii=False)
+            except Exception:
+                pass
         else:
-            session = ChatSession(
-                session_id = session_id,
-                isim       = isim,
-                gecmis     = gecmis_json,
-                tam_gecmis = tam_gecmis_json
-            )
+            kwargs = {"session_id": session_id, "isim": isim, "gecmis": gecmis_json}
+            try:
+                if yeni_mesaj:
+                    kwargs["tam_gecmis"] = json.dumps([yeni_mesaj], ensure_ascii=False)
+            except Exception:
+                pass
+            session = ChatSession(**kwargs)
             db.add(session)
         db.commit()
     except Exception as e:
@@ -274,12 +272,16 @@ def soru_cevapla(mesaj: str, db, gonderen: str = "") -> str:
         _session_kaydet(db, gonderen, isim="Kullanıcı", gecmis=[])
         session = _session_yukle(db, gonderen)
 
-    if session.isim is None:
-        _session_kaydet(db, gonderen, isim="Kullanıcı", gecmis=[])
-        session = _session_yukle(db, gonderen)
-
-    isim       = session.isim or "Kullanıcı"
-    gecmis     = json.loads(session.gecmis) if session.gecmis else []
+    if session is None:
+        # DB'ye yazılamıyorsa bile devam et
+        isim = "Kullanıcı"
+        gecmis = []
+    else:
+        if session.isim is None:
+            _session_kaydet(db, gonderen, isim="Kullanıcı", gecmis=[])
+            session = _session_yukle(db, gonderen)
+        isim   = (session.isim if session else None) or "Kullanıcı"
+        gecmis = json.loads(session.gecmis) if session and session.gecmis else []
     db_context = db_context_hazirla(db)
 
     sistem_promptu = f"""Sen Profaix muhasebe asistanısın. Hurda metal kantar takip ve muhasebe sistemi.
