@@ -1,4 +1,4 @@
-# main.py — Profaix FastAPI Uygulaması
+v# main.py — Profaix FastAPI Uygulaması
 
 import os
 import tempfile
@@ -243,10 +243,15 @@ async def firma_sec(request: Request):
         sonuc = irsaliye_olustur(ticket_id, beklet=True)
 
         if not sonuc.get("basarili"):
+            _islem_log(db, "IRSALIYE_HATA", cari_adi=secilen_firma,
+                      aciklama="İrsaliye oluşturulamadı")
             return JSONResponse({"cevap": "❌ İrsaliye oluşturulamadı, tekrar deneyin."})
 
         waybill_id = sonuc["waybill_id"]
         parasut_id = sonuc.get("parasut_id", "-")
+        _islem_log(db, "IRSALIYE_OLUSTURULDU", cari_adi=secilen_firma,
+                  irsaliye_id=str(parasut_id), plaka=ticket.plaka,
+                  aciklama=f"{ticket.agirlik_kg} kg")
 
         waybill_obj = db.query(Waybill).filter(Waybill.id == waybill_id).first()
         if waybill_obj:
@@ -345,6 +350,13 @@ async def tahsilat_ekle_endpoint(request: Request):
 
         if sonuc.get("basarili"):
             logger.info(f"✅ Tahsilat eklendi: {cari_adi} — {tutar:,.0f} TL")
+            db = SessionLocal()
+            try:
+                _islem_log(db, "TAHSILAT_EKLENDI", cari_adi=cari_adi,
+                          tutar=int(float(tutar)),
+                          aciklama=f"Tarih: {tarih or 'Bugün'} | {aciklama or ''}")
+            finally:
+                db.close()
             return JSONResponse({
                 "basarili": True,
                 "cevap": (
@@ -356,6 +368,13 @@ async def tahsilat_ekle_endpoint(request: Request):
                 )
             })
         else:
+            db2 = SessionLocal()
+            try:
+                _islem_log(db2, "TAHSILAT_HATA", cari_adi=cari_adi,
+                          tutar=int(float(tutar)),
+                          aciklama=sonuc.get('hata', 'Bilinmeyen hata'))
+            finally:
+                db2.close()
             return JSONResponse({
                 "basarili": False,
                 "cevap": f"❌ Tahsilat eklenemedi: {sonuc.get('hata', 'Bilinmeyen hata')}"
@@ -389,6 +408,12 @@ async def cari_olustur_endpoint(request: Request):
 
         if sonuc.get("basarili"):
             logger.info(f"✅ Yeni cari oluşturuldu: {firma_adi}")
+            db = SessionLocal()
+            try:
+                _islem_log(db, "CARI_OLUSTURULDU", cari_adi=firma_adi,
+                          aciklama=f"Vergi No: {vergi_no or '-'} | Tel: {telefon or '-'}")
+            finally:
+                db.close()
             return JSONResponse({
                 "basarili": True,
                 "cevap": (
@@ -1016,15 +1041,21 @@ async def reset_db(request: Request):
         return JSONResponse({"hata": "Yetkisiz erişim"}, status_code=401)
     from sqlalchemy import text
     with engine.connect() as conn:
+        conn.execute(text('DELETE FROM islem_logs'))
+        conn.execute(text('DELETE FROM chat_sessions'))
         conn.execute(text('DELETE FROM invoices'))
         conn.execute(text('DELETE FROM waybills'))
         conn.execute(text('DELETE FROM alerts'))
         conn.execute(text('DELETE FROM weigh_tickets'))
         conn.execute(text('DELETE FROM vehicles'))
+        conn.execute(text('DELETE FROM system_logs'))
         conn.execute(text('DELETE FROM processed_mails'))
         conn.commit()
-    logger.info("🗑️ DB temizlendi (admin)")
-    return {"status": "temizlendi"}
+    logger.info("🗑️ DB tamamen temizlendi (admin)")
+    return {"status": "temizlendi", "tablolar": [
+        "islem_logs", "chat_sessions", "invoices", "waybills",
+        "alerts", "weigh_tickets", "vehicles", "system_logs", "processed_mails"
+    ]}
 
 
 async def startup_recovery():
