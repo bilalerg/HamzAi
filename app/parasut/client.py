@@ -410,12 +410,13 @@ def acik_faturalar_getir() -> list:
 def hesap_ozeti_getir() -> dict:
     try:
         cariler = cari_listesi_getir(force_refresh=True)
+        # Pozitif = bize borçlu (tahsil edilecek), Negatif = biz borçluyuz (ödenecek)
         toplam_alacak = sum(c["bakiye"] for c in cariler if c["bakiye"] > 0)
-        toplam_borclu = sum(abs(c["bakiye"]) for c in cariler if c["bakiye"] < 0)
+        toplam_odeyecek = sum(abs(c["bakiye"]) for c in cariler if c["bakiye"] < 0)
         return {
             "toplam_cari": len(cariler),
-            "toplam_alacak": toplam_alacak,
-            "toplam_borclu": toplam_borclu,
+            "toplam_alacak": toplam_alacak,       # Bize borçlu
+            "toplam_borclu": toplam_odeyecek,      # Biz borçluyuz
         }
     except Exception as e:
         logger.error(f"Hesap ozeti hatasi: {e}")
@@ -640,16 +641,21 @@ def tum_bekleyen_irsaliyeleri_getir() -> dict:
                 sm_attr = sm_map.get(sm_ref["id"], {})
                 miktar = float(sm_attr.get("quantity", 0))
                 if miktar > 0:
-                    desc = sm_attr.get("description") or "Hurda"
-                    malzeme_adi = desc
-                    try:
-                        parcalar = [p.strip() for p in desc.split("—")]
-                        if len(parcalar) >= 3 and "kg" in parcalar[-1].lower():
-                            malzeme_adi = parcalar[1].strip()
-                        elif len(parcalar) == 2 and "kg" not in parcalar[1].lower():
-                            malzeme_adi = parcalar[1].strip()
-                    except Exception:
-                        pass
+                    desc = sm_attr.get("description") or ""
+                    detail_no = sm_attr.get("detail_no", len(kalemler) + 1)
+                    malzeme_adi = f"Malzeme {detail_no}"
+                    if desc:
+                        try:
+                            norm = desc.replace(' - ', '—').replace('–', '—')
+                            parcalar = [p.strip() for p in norm.split("—")]
+                            if len(parcalar) >= 3 and "kg" in parcalar[-1].lower():
+                                malzeme_adi = parcalar[1].strip()
+                            elif len(parcalar) == 2 and "kg" not in parcalar[1].lower():
+                                malzeme_adi = parcalar[1].strip()
+                            elif len(parcalar) == 1 and parcalar[0]:
+                                malzeme_adi = parcalar[0].strip()
+                        except Exception:
+                            pass
                     kalemler.append({"aciklama": malzeme_adi, "miktar_kg": miktar})
 
             irs = {
@@ -709,16 +715,21 @@ def cari_bekleyen_irsaliyeleri_getir(cari_adi: str) -> list:
                 sm_attr = sm_map.get(sm_ref["id"], {})
                 miktar = float(sm_attr.get("quantity", 0))
                 if miktar > 0:
-                    desc = sm_attr.get("description") or "Hurda"
-                    malzeme_adi = desc
-                    try:
-                        parcalar = [p.strip() for p in desc.split("—")]
-                        if len(parcalar) >= 3 and "kg" in parcalar[-1].lower():
-                            malzeme_adi = parcalar[1].strip()
-                        elif len(parcalar) == 2 and "kg" not in parcalar[1].lower():
-                            malzeme_adi = parcalar[1].strip()
-                    except Exception:
-                        pass
+                    desc = sm_attr.get("description") or ""
+                    detail_no = sm_attr.get("detail_no", len(kalemler) + 1)
+                    malzeme_adi = f"Malzeme {detail_no}"
+                    if desc:
+                        try:
+                            norm = desc.replace(' - ', '—').replace('–', '—')
+                            parcalar = [p.strip() for p in norm.split("—")]
+                            if len(parcalar) >= 3 and "kg" in parcalar[-1].lower():
+                                malzeme_adi = parcalar[1].strip()
+                            elif len(parcalar) == 2 and "kg" not in parcalar[1].lower():
+                                malzeme_adi = parcalar[1].strip()
+                            elif len(parcalar) == 1 and parcalar[0]:
+                                malzeme_adi = parcalar[0].strip()
+                        except Exception:
+                            pass
                     kalemler.append({"aciklama": malzeme_adi, "miktar_kg": miktar})
 
             irsaliyeler.append({

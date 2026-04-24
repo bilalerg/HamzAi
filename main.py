@@ -490,6 +490,10 @@ async def bekleyen_irsaliyeler():
                             logger.info(f"DB'den malzeme okundu: {list(malzemeler.keys())}")
                     except Exception as e:
                         logger.warning(f"malzemeler_json parse hatası: {e}")
+                elif len(kalemler) > 1:
+                    # DB'de waybill yok — Paraşüt'ten gelen detail_no sırasını kullan
+                    # Kalemler zaten detail_no sırasında geliyor, isimler "Malzeme N" olacak
+                    logger.info(f"DB waybill bulunamadı, {len(kalemler)} kalem Paraşüt'ten alındı")
 
                 sonuc.append({
                     "parasut_irsaliye_id": irs["id"],
