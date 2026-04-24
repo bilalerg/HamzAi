@@ -1,4 +1,4 @@
-v# main.py — Profaix FastAPI Uygulaması
+# main.py — Profaix FastAPI Uygulaması
 
 import os
 import tempfile
