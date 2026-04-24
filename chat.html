@@ -174,6 +174,14 @@
   const sendBtn    = document.getElementById('sendBtn');
   let faturaAkisi  = null;
 
+  function formatTarih(tarih) {
+    // "2026-03-27" → "27.03.2026"
+    if (!tarih || tarih === '-') return tarih;
+    const m = tarih.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (m) return m[3] + '.' + m[2] + '.' + m[1];
+    return tarih;
+  }
+
   function autoResize(el) {
     el.style.height = 'auto';
     el.style.height = Math.min(el.scrollHeight, 120) + 'px';
@@ -493,7 +501,7 @@
         const btn = document.createElement('button');
         btn.className = 'irsaliye-btn';
         const sol = document.createElement('span');
-        sol.textContent = '🏭 ' + irs.cari_adi + ' · ' + irs.tarih;
+        sol.textContent = '🏭 ' + irs.cari_adi + ' · ' + formatTarih(irs.tarih);
         const sag = document.createElement('span');
         sag.className = 'kg';
         sag.textContent = (irs.toplam_kg / 1000).toFixed(2) + ' ton';
@@ -845,7 +853,7 @@
         const sol = document.createElement('span');
         sol.style.fontSize = '13px';
         const durumEmoji = f.durum === 'paid' ? '✅' : f.durum === 'overdue' ? '🔴' : '🟡';
-        sol.textContent = durumEmoji + ' ' + f.tarih + ' — ' + (f.aciklama || 'Fatura').substring(0, 40);
+        sol.textContent = durumEmoji + ' ' + formatTarih(f.tarih) + ' — ' + (f.aciklama || 'Fatura').substring(0, 40);
         const sag = document.createElement('span');
         sag.className = 'kg';
         sag.textContent = parseFloat(f.tutar || 0).toLocaleString('tr-TR', {minimumFractionDigits:0}) + ' TL';
@@ -890,7 +898,7 @@
       const ozet = document.createElement('div');
       ozet.style.cssText = 'font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.8;';
       const durumEmoji = f.durum === 'paid' ? '✅ Ödendi' : f.durum === 'overdue' ? '🔴 Gecikmiş' : '🟡 Bekliyor';
-      ozet.innerHTML = '📅 Tarih: ' + f.tarih + ' &nbsp;|&nbsp; Vade: ' + f.vade + '<br>' +
+      ozet.innerHTML = '📅 Tarih: ' + formatTarih(f.tarih) + ' &nbsp;|&nbsp; Vade: ' + formatTarih(f.vade) + '<br>' +
         '💰 Toplam: <b>' + parseFloat(f.tutar||0).toLocaleString('tr-TR',{minimumFractionDigits:0}) + ' TL</b>' +
         (f.kalan > 0 ? ' &nbsp;|&nbsp; Kalan: <b style="color:#b45309">' + parseFloat(f.kalan).toLocaleString('tr-TR',{minimumFractionDigits:0}) + ' TL</b>' : '') + '<br>' +
         '📌 Durum: ' + durumEmoji;
@@ -1028,7 +1036,7 @@
 
       const info = document.createElement('div');
       info.style.cssText = 'flex:1;font-size:13px;';
-      info.textContent = irs.tarih + ' · ' + (irs.toplam_kg / 1000).toFixed(2) + ' ton';
+      info.textContent = formatTarih(irs.tarih) + ' · ' + (irs.toplam_kg / 1000).toFixed(2) + ' ton';
       if (irs.kalemler && irs.kalemler.length > 1) {
         const alt = document.createElement('div');
         alt.style.cssText = 'font-size:11px;color:var(--muted);margin-top:2px;';
@@ -1095,7 +1103,7 @@
       const ilk = kalemler[0];
       topluFiyatSor('🧾 [' + (index+1) + '/' + irsaliyeler.length + '] ' + irs.cari_adi + '\n' + ilk.aciklama + ' fiyatı?\n(' + ilk.miktar_kg.toLocaleString('tr-TR') + ' kg)');
     } else {
-      topluFiyatSor('🧾 [' + (index+1) + '/' + irsaliyeler.length + '] ' + irs.tarih + ' — ' + (irs.toplam_kg/1000).toFixed(2) + ' ton\nBirim fiyat? (TL/kg)');
+      topluFiyatSor('🧾 [' + (index+1) + '/' + irsaliyeler.length + '] ' + formatTarih(irs.tarih) + ' — ' + (irs.toplam_kg/1000).toFixed(2) + ' ton\nBirim fiyat? (TL/kg)');
     }
   }
 

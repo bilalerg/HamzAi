@@ -386,28 +386,33 @@ async def cari_olustur_endpoint(request: Request):
 @app.get("/api/bekleyen-irsaliyeler")
 async def bekleyen_irsaliyeler():
     """
-    Tüm carilerin bekleyen irsaliyelerini getirir.
-    Malzeme bilgisi DB'den okunur (Paraşüt ürün adını override ediyor).
+    Tüm bekleyen irsaliyeleri TEK API isteğiyle getirir.
+    Malzeme bilgisi DB'den okunur.
     """
     db = SessionLocal()
     try:
-        from app.parasut.client import cari_listesi_getir, cari_bekleyen_irsaliyeleri_getir
+        from app.parasut.client import tum_bekleyen_irsaliyeleri_getir, cari_listesi_getir
         from app.core.database import Waybill, TicketStatus
 
-        # DB'deki tüm waybill'leri çek — malzeme bilgisi ve status için
+        # DB'deki tüm waybill'leri çek
         tum_waybiller = db.query(Waybill).all()
         waybill_map = {w.parasut_irsaliye_id: w for w in tum_waybiller if w.parasut_irsaliye_id}
-
         tamamlanan_ids = {
             w.parasut_irsaliye_id for w in tum_waybiller
             if w.status == TicketStatus.TAMAMLANDI and w.parasut_irsaliye_id
         }
         logger.info(f"Tamamlanmış irsaliye ID'leri: {tamamlanan_ids}")
 
+        # Cari ID → ad eşlemesi için cache kullan
         cariler = cari_listesi_getir()
+        cari_id_to_ad = {c["id"]: c["ad"] for c in cariler}
+
+        # Tek API isteğiyle tüm irsaliyeler
+        gruplu = tum_bekleyen_irsaliyeleri_getir()
+
         sonuc = []
-        for cari in cariler:
-            irsaliyeler = cari_bekleyen_irsaliyeleri_getir(cari["ad"])
+        for contact_id, irsaliyeler in gruplu.items():
+            cari_adi = cari_id_to_ad.get(contact_id, irsaliyeler[0].get("cari_adi", "-") if irsaliyeler else "-")
             for irs in irsaliyeler:
                 if str(irs["id"]) in tamamlanan_ids:
                     continue
@@ -433,7 +438,7 @@ async def bekleyen_irsaliyeler():
 
                 sonuc.append({
                     "parasut_irsaliye_id": irs["id"],
-                    "cari_adi": cari["ad"],
+                    "cari_adi": cari_adi,
                     "tarih": irs.get("tarih", "-"),
                     "toplam_kg": toplam_kg,
                     "kalemler": kalemler,
@@ -733,8 +738,8 @@ async def fatura_kes_endpoint(request: Request):
 
         # ── Paraşüt'ten irsaliyeyi sil — listede bir daha çıkmasın ──
         try:
-            from app.parasut.client import parasut_delete
-            parasut_delete(f"/{PARASUT_COMPANY_ID}/shipment_documents/{parasut_irsaliye_id}")
+            from app.parasut.client import parasut_delete as _delete
+            _delete(f"/{PARASUT_COMPANY_ID}/shipment_documents/{parasut_irsaliye_id}")
             logger.info(f"✅ Paraşüt irsaliye silindi: {parasut_irsaliye_id}")
         except Exception as e:
             logger.warning(f"⚠️ Paraşüt irsaliye silinemedi (kritik değil): {e}")
@@ -764,120 +769,21 @@ async def fatura_kes_endpoint(request: Request):
         db.close()
 
 
-# ── ESKİ ENDPOINT'LER (geriye dönük uyumluluk) ───────────────────────
-@app.post("/api/fiyat")
-async def fiyat_gir(request: Request):
-    data = await request.json()
-    waybill_id        = data.get("waybill_id")
-    fiyat_str         = data.get("fiyat", "").strip()
-    malzeme_listesi   = data.get("malzeme_listesi", [])
-    malzeme_index     = data.get("malzeme_index", 0)
-    toplanan_fiyatlar = data.get("toplanan_fiyatlar", {})
-    malzemeler        = data.get("malzemeler", {})
-
-    db = SessionLocal()
-    try:
-        from app.chatbox.webhook import birim_fiyat_cikar
-        from app.parasut.fatura import fatura_kes
-
-        birim_fiyat = birim_fiyat_cikar(fiyat_str)
-        if not birim_fiyat:
-            return JSONResponse({"cevap": "❌ Geçersiz fiyat. Örnek: 14.85 veya 14850"})
-
-        if malzeme_listesi:
-            mevcut_malzeme = malzeme_listesi[malzeme_index]
-            toplanan_fiyatlar[mevcut_malzeme] = birim_fiyat
-            sonraki_index = malzeme_index + 1
-
-            if sonraki_index < len(malzeme_listesi):
-                sonraki_malzeme = malzeme_listesi[sonraki_index]
-                sonraki_kg = malzemeler.get(sonraki_malzeme, 0)
-                return JSONResponse({
-                    "cevap": (
-                        f"✅ {mevcut_malzeme}: {birim_fiyat:,} TL/kg kaydedildi.\n\n"
-                        f"💰 {sonraki_malzeme} fiyatı nedir? ({sonraki_kg:,} kg / {sonraki_kg/1000:.2f} ton)\n"
-                        f"Örnek: 14.85 veya 14850"
-                    ),
-                    "bekliyor": "malzeme_fiyat",
-                    "waybill_id": waybill_id,
-                    "malzemeler": malzemeler,
-                    "malzeme_listesi": malzeme_listesi,
-                    "malzeme_index": sonraki_index,
-                    "toplanan_fiyatlar": toplanan_fiyatlar
-                })
-            else:
-                ozet = "📋 Fiyat Özeti:\n"
-                toplam_tutar = 0
-                for malzeme_adi, fiyat in toplanan_fiyatlar.items():
-                    kg = malzemeler.get(malzeme_adi, 0)
-                    tutar = kg * fiyat
-                    toplam_tutar += tutar
-                    ozet += f"  • {malzeme_adi}: {kg:,} kg × {fiyat:,} TL/kg = {int(tutar):,} TL\n"
-                ozet += f"\n💵 TOPLAM: {int(toplam_tutar):,} TL\n\nFatura kesilsin mi? (evet/hayır)"
-                return JSONResponse({
-                    "cevap": ozet,
-                    "bekliyor": "onay",
-                    "waybill_id": waybill_id,
-                    "malzemeler": malzemeler,
-                    "toplanan_fiyatlar": toplanan_fiyatlar,
-                    "toplam_tutar": toplam_tutar
-                })
-        else:
-            sonuc = fatura_kes(waybill_id, birim_fiyat)
-            if not sonuc.get("basarili"):
-                return JSONResponse({"cevap": f"❌ Fatura kesilemedi: {sonuc.get('hata')}"})
-            toplam = sonuc.get("toplam_tutar", 0)
-            return JSONResponse({
-                "cevap": (
-                    f"✅ Fatura kesildi!\n\n"
-                    f"💰 Birim Fiyat: {birim_fiyat:,} TL/kg\n"
-                    f"💵 Toplam Tutar: {int(toplam):,} TL\n"
-                    f"🧾 Fatura No: {sonuc.get('fatura_no', '-')}\n"
-                    f"Fatura Paraşüt'e kaydedildi."
-                )
-            })
-    except Exception as e:
-        logger.error(f"Fiyat hatası: {e}")
-        return JSONResponse({"cevap": f"❌ Fatura kesilemedi: {str(e)}"})
-    finally:
-        db.close()
 
 
-@app.post("/api/onay")
-async def fatura_onayla(request: Request):
-    data = await request.json()
-    waybill_id        = data.get("waybill_id")
-    toplanan_fiyatlar = data.get("toplanan_fiyatlar", {})
-    malzemeler        = data.get("malzemeler", {})
-    onay              = data.get("onay", "").strip().lower()
 
-    if onay not in ["evet", "e", "yes", "tamam", "ok"]:
-        return JSONResponse({"cevap": "❌ Fatura iptal edildi. Yeni fiş yükleyebilirsiniz."})
-
-    db = SessionLocal()
-    try:
-        from app.parasut.fatura import fatura_kes_malzemeli
-        sonuc = fatura_kes_malzemeli(waybill_id, malzemeler, toplanan_fiyatlar)
-        if not sonuc.get("basarili"):
-            return JSONResponse({"cevap": f"❌ Fatura kesilemedi: {sonuc.get('hata')}"})
-        toplam_tutar = sonuc.get("toplam_tutar", 0)
-        ozet = "✅ Fatura kesildi!\n\n"
-        for malzeme_adi, fiyat in toplanan_fiyatlar.items():
-            kg = malzemeler.get(malzeme_adi, 0)
-            ozet += f"  • {malzeme_adi}: {kg:,} kg × {fiyat:,} TL/kg = {int(kg * fiyat):,} TL\n"
-        ozet += f"\n💵 Toplam: {int(toplam_tutar):,} TL\n"
-        ozet += f"🧾 Fatura No: {sonuc.get('fatura_no', '-')}\n"
-        return JSONResponse({"cevap": ozet})
-    except Exception as e:
-        logger.error(f"Onay hatası: {e}")
-        return JSONResponse({"cevap": f"❌ Fatura kesilemedi: {str(e)}"})
-    finally:
-        db.close()
+# ── ADMIN TOKEN KONTROLÜ ──────────────────────────────────────────────
+def _admin_kontrol(request: Request) -> bool:
+    """Basit admin token kontrolü."""
+    from app.core.config import ADMIN_TOKEN
+    token = request.headers.get("X-Admin-Token") or request.query_params.get("token")
+    return token == ADMIN_TOKEN
 
 
 @app.get("/admin/irsaliye-debug/{irsaliye_id}")
-async def irsaliye_debug(irsaliye_id: str):
-    """İrsaliyenin ham API verisini döndürür — alan adlarını görmek için."""
+async def irsaliye_debug(irsaliye_id: str, request: Request):
+    if not _admin_kontrol(request):
+        return JSONResponse({"hata": "Yetkisiz erişim"}, status_code=401)
     try:
         from app.parasut.client import parasut_get
         from app.core.config import PARASUT_COMPANY_ID
@@ -891,7 +797,9 @@ async def irsaliye_debug(irsaliye_id: str):
 
 
 @app.get("/admin/payment-debug")
-async def payment_debug():
+async def payment_debug(request: Request):
+    if not _admin_kontrol(request):
+        return JSONResponse({"hata": "Yetkisiz erişim"}, status_code=401)
     """Parasut'te odeme yapisini test eder."""
     try:
         from app.parasut.client import parasut_get, parasut_post
@@ -930,8 +838,9 @@ async def payment_debug():
 
 
 @app.get("/admin/accounts-debug")
-async def accounts_debug():
-    """Parasut'teki tum hesaplari listeler — tahsilat icin dogru hesap ID'sini bulmak icin."""
+async def accounts_debug(request: Request):
+    if not _admin_kontrol(request):
+        return JSONResponse({"hata": "Yetkisiz erişim"}, status_code=401)
     try:
         from app.parasut.client import parasut_get
         from app.core.config import PARASUT_COMPANY_ID
@@ -952,7 +861,9 @@ async def accounts_debug():
 
 
 @app.get("/admin/reset-db")
-async def reset_db():
+async def reset_db(request: Request):
+    if not _admin_kontrol(request):
+        return JSONResponse({"hata": "Yetkisiz erişim"}, status_code=401)
     from sqlalchemy import text
     with engine.connect() as conn:
         conn.execute(text('DELETE FROM invoices'))
