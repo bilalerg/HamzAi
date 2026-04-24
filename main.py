@@ -487,13 +487,22 @@ async def bekleyen_irsaliyeler():
                                 if kg > 0
                             ]
                             toplam_kg = sum(k["miktar_kg"] for k in kalemler)
-                            logger.info(f"DB'den malzeme okundu: {list(malzemeler.keys())}")
+                            logger.info(f"DB'den malzeme okundu (waybill): {list(malzemeler.keys())}")
                     except Exception as e:
                         logger.warning(f"malzemeler_json parse hatası: {e}")
-                elif len(kalemler) > 1:
-                    # DB'de waybill yok — Paraşüt'ten gelen detail_no sırasını kullan
-                    # Kalemler zaten detail_no sırasında geliyor, isimler "Malzeme N" olacak
-                    logger.info(f"DB waybill bulunamadı, {len(kalemler)} kalem Paraşüt'ten alındı")
+                elif waybill and waybill.ticket and getattr(waybill.ticket, 'malzemeler', None):
+                    try:
+                        malzemeler = _json.loads(waybill.ticket.malzemeler)
+                        if malzemeler:
+                            kalemler = [
+                                {"aciklama": ad, "miktar_kg": kg}
+                                for ad, kg in malzemeler.items()
+                                if kg > 0
+                            ]
+                            toplam_kg = sum(k["miktar_kg"] for k in kalemler)
+                            logger.info(f"DB'den malzeme okundu (ticket): {list(malzemeler.keys())}")
+                    except Exception as e:
+                        logger.warning(f"ticket.malzemeler parse hatası: {e}")
 
                 sonuc.append({
                     "parasut_irsaliye_id": irs["id"],
