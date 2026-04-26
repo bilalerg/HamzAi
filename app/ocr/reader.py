@@ -15,7 +15,7 @@ from app.core.logger import logger
 _client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
 OCR_MODEL      = "claude-haiku-4-5-20251001"
-OCR_MAX_TOKENS = 500
+OCR_MAX_TOKENS = 600
 
 
 @dataclass
@@ -38,19 +38,35 @@ OCR_SYSTEM = "Sen sadece JSON üreten bir API'sin. Yanıtın SADECE '{' ile baş
 
 OCR_PROMPT = """Kantar fişi fotoğrafı. Sadece JSON döndür, başka hiçbir şey yazma.
 
-{"plaka":"ana araç plakası (dorse/2.plaka değil)","fis_no":"fiş no","net_tartim_kg":SAYI,"fire_kg":SAYI_YA_DA_0,"tarih":"GG.AA.YYYY","firma":"fişin başlığındaki fabrika adı (hurda tedarikçisi değil)","irsaliye_no":null,"kantar_no":null,"malzemeler":{}}
+{"plaka":"ana araç plakası","fis_no":"fiş no","net_tartim_kg":SAYI,"fire_kg":SAYI_YA_DA_0,"tarih":"GG.AA.YYYY","firma":"fişin başlığındaki fabrika adı","irsaliye_no":null,"kantar_no":null,"malzemeler":{}}
 
 KURALLAR:
-- plaka: Plaka-1/Ana Araç alanı, birden fazlaysa sadece ilki
-- firma: Fiş başlığındaki fabrika (SAMSUN MAKİNE, KAPTAN DEMİR, İÇDAŞ, TOSCELIK gibi). "Firma Adı" satırındaki tedarikçiyi yazma.
-- net_tartim_kg: "Net Tartım/Net/NET AĞIRLIK" değeri (fire düşülmemiş). TAM SAYI yaz, ondalık kullanma. 30.680 değil 30680 yaz.
-- fire_kg: "Fire/Tenzil/Fire Kg" değeri, yoksa 0. TAM SAYI yaz.
-- malzemeler: Malzeme tablosu VARSA doldur, YOKSA boş bırak {}.
-  FORMAT 1 — Kroman tipi tablo: Hurda Tipi | Miktar | Tenzil.Miktar sütunları → {malzeme_adi: net_miktar} (net_miktar = Miktar - Tenzil.Miktar)
-  FORMAT 2 — Tosyalı/UHT tipi liste: "1-) DKP ... 0", "2-) Topsis ... 26.950" şeklinde → sadece değeri 0'dan büyük olanları al → {"Topsis": 26950}
-  FORMAT 3 — Tek malzeme: "MALZEME: HURDA İÇ PİYASA GENEL" gibi → {"HURDA İÇ PİYASA GENEL": net_tartim_kg}
-- malzemelere ASLA ekleme: Brüt, Dara, 1.Tartı, 2.Tartı, Dolu/Boş Tartım, Fire, Tenzil
-- TÜM KG DEĞERLERİ TAM SAYI OLMALI: 30680 ✓  30.680 ✗  30,680 ✗"""
+
+PLAKA:
+- "Araç - Dorse Plaka", "Plaka-1 / Plaka-2", "Ana Araç / Dorse" gibi alanlarda İLK plakayı al
+- Tire veya bölü ile ayrılmış iki plaka varsa (örn: "37 LK 081 - 34 BSE 559") SADECE soldakini al
+- Plaka formatı: 2 rakam + 1-3 harf + 2-4 rakam (örn: 37LK081, 34ABC123)
+
+FİRMA:
+- Fişin EN ÜSTÜNDEKI başlık satırı — genellikle büyük harfle şirket adı (örn: KAPTAN DEMİR ÇELİK END.A.Ş., SAMSUN MAKİNE, KROMAN ÇELİK)
+- "Firma Adı", "Nakliye Firması", "Ad Soyad" satırlarındaki isimler tedarikçidir — YAZMA
+- Fabrika adı yoksa null döndür
+
+NET AĞIRLIK:
+- ÖNCE "NET" veya "NET AĞIRLIK" satırını ara → bu değeri net_tartim_kg yaz
+- "Fire/Tenzil" ayrıca belirtilmişse fire_kg yaz, yoksa 0
+- BRÜT ve DARA değerlerini ASLA yazma
+- Fiş formatı "BRÜT - DARA = NET" ise: NET satırındaki değeri al
+- TAM SAYI: 15150 ✓  15.150 ✗  15,150 ✗
+
+MALZEMELER:
+- Malzeme tablosu VARSA doldur, YOKSA boş bırak {}
+- FORMAT 1 — Kroman tipi: Hurda Tipi | Miktar | Tenzil sütunları → {malzeme_adi: miktar-tenzil}
+- FORMAT 2 — Liste tipi: "1-) DKP ... 0", "2-) Topsis ... 26.950" → sadece 0'dan büyük olanlar → {"Topsis": 26950}
+- FORMAT 3 — Tek malzeme: "Mal Cinsi: YERLI HURDA" → {"YERLI HURDA": net_tartim_kg}
+- ASLA ekleme: Brüt, Dara, Tartı, Fire, Tenzil satırları
+
+TÜM KG TAM SAYI: 15150 ✓  15.150 ✗"""
 
 
 def _fotograf_to_base64(fotograf_yolu: str) -> tuple[str, str]:
