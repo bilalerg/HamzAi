@@ -282,11 +282,14 @@ def _session_yukle(db, session_id: str):
 
 
 def _session_kaydet(db, session_id: str, isim: str, gecmis_saf: list,
-                    yeni_mesaj_user: dict = None, yeni_mesaj_asistan: dict = None):
+                    yeni_mesaj_user: dict = None, yeni_mesaj_asistan: dict = None,
+                    tool_log: list = None):
     """
-    gecmis_saf: Sadece string content'li (role/content) mesajlar — DB'ye yazılır.
-    yeni_mesaj_user / yeni_mesaj_asistan: tam_gecmis'e eklenir.
-    Tek DB commit ile her iki güncelleme yapılır.
+    gecmis_saf      : Sadece string content mesajlar — gecmis kolonuna yazılır.
+    yeni_mesaj_user : Kullanıcı mesajı — tam_gecmis'e eklenir.
+    yeni_mesaj_asistan: Claude cevabı — tam_gecmis'e eklenir.
+    tool_log        : Tool çağrıları ve sonuçları — tam_gecmis'e eklenir.
+                      Format: [{"tool": "cari_listesi_getir", "input": {}, "sonuc": "...", "ts": "..."}]
     """
     from app.core.database import ChatSession
     try:
@@ -302,14 +305,23 @@ def _session_kaydet(db, session_id: str, isim: str, gecmis_saf: list,
                 tam_gecmis = []
 
         bugun_str = str(date.today())
+
+        # Kullanıcı mesajını ekle
         if yeni_mesaj_user:
             tam_gecmis.append({**yeni_mesaj_user, "ts": bugun_str})
+
+        # Tool çağrılarını ekle (kullanıcı mesajından sonra, cevaptan önce)
+        if tool_log:
+            for t in tool_log:
+                tam_gecmis.append({**t, "ts": bugun_str})
+
+        # Claude cevabını ekle
         if yeni_mesaj_asistan:
             tam_gecmis.append({**yeni_mesaj_asistan, "ts": bugun_str})
 
-        # Max 100 mesaj tut
-        if len(tam_gecmis) > 100:
-            tam_gecmis = tam_gecmis[-100:]
+        # Max 200 kayıt tut (tool logları eklenince daha fazla yer gerekiyor)
+        if len(tam_gecmis) > 200:
+            tam_gecmis = tam_gecmis[-200:]
 
         tam_gecmis_json = json.dumps(tam_gecmis, ensure_ascii=False)
 
@@ -379,9 +391,22 @@ def soru_cevapla(mesaj: str, db, gonderen: str = "") -> str:
     isim   = (session.isim if session else None) or "Kullanıcı"
 
     # Tam geçmişi yükle (tool_use/tool_result blokları dahil)
-    # Bu Claude API'sine gönderilecek gerçek konuşma geçmişidir
+    # gecmis kolonu artık tam geçmişi tutuyor — tool_use bağlamı korunur
     gecmis: list = []
-    if session and session.gecmis:
+    if session and session.tam_gecmis:
+        try:
+            # tam_gecmis'ten yükle — tool_use blokları burada
+            raw = json.loads(session.tam_gecmis)
+            # Sadece role/content yapısındakileri al (ts gibi extra alanlar API'ye gitmemeli)
+            gecmis = [
+                {"role": m["role"], "content": m["content"]}
+                for m in raw
+                if "role" in m and "content" in m
+            ]
+        except Exception:
+            gecmis = []
+    elif session and session.gecmis:
+        # Fallback: eski kayıtlar için
         try:
             gecmis = json.loads(session.gecmis)
         except Exception:
@@ -441,16 +466,18 @@ KURALLAR:
         )
 
         # ── TOOL DÖNGÜSÜ ──────────────────────────────────────────────
+        tool_log = []  # Bu konuşmadaki tüm tool çağrılarını biriktir
+
         while response.stop_reason == "tool_use":
             assistant_content = response.content
 
-            # FIX: Tool_use bloklarını da içeren tam assistant mesajını geçmişe ekle
+            # Tool_use bloklarını da içeren tam assistant mesajını geçmişe ekle
             gecmis.append({
                 "role": "assistant",
                 "content": _content_serialize(assistant_content)
             })
 
-            # Tool'ları çalıştır ve sonuçları topla
+            # Tool'ları çalıştır, sonuçları topla ve logla
             tool_results = []
             for block in assistant_content:
                 if block.type == "tool_use":
@@ -460,6 +487,13 @@ KURALLAR:
                         "type": "tool_result",
                         "tool_use_id": block.id,
                         "content": sonuc
+                    })
+                    # DB'ye kaydedilecek tool logu
+                    tool_log.append({
+                        "type": "tool_call",
+                        "tool": block.name,
+                        "input": block.input,
+                        "sonuc_ozet": sonuc[:300] if isinstance(sonuc, str) else str(sonuc)[:300]
                     })
 
             # Tool sonuçlarını geçmişe ekle
@@ -489,12 +523,13 @@ KURALLAR:
         # FIX: Saf geçmiş (sadece string content'liler) — DB'de kısa özet
         gecmis_saf = _gecmis_saf_cikart(gecmis)
 
-        # FIX: Tek seferde kaydet, iki ayrı çağrı yok
+        # Tek seferde kaydet — user mesajı, tool logları, assistant cevabı
         _session_kaydet(
             db, gonderen, isim=isim,
             gecmis_saf=gecmis_saf,
             yeni_mesaj_user={"role": "user", "content": mesaj},
-            yeni_mesaj_asistan={"role": "assistant", "content": cevap}
+            yeni_mesaj_asistan={"role": "assistant", "content": cevap},
+            tool_log=tool_log if tool_log else None
         )
 
         logger.info(f"🤖 Cevap ({isim}): {cevap[:60]}...")

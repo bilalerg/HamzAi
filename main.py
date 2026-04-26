@@ -155,6 +155,11 @@ async def upload_fis(file: UploadFile = File(...), session_id: str = "web_user")
 
         logger.info(f"📸 Fotoğraf alındı: {tmp_path} ({len(icerik)} bytes)")
 
+        # Dosya boyutu kontrolü — max 15MB
+        if len(icerik) > 15 * 1024 * 1024:
+            os.remove(tmp_path)
+            return JSONResponse({"cevap": "❌ Dosya çok büyük (max 15MB). Fotoğrafı sıkıştırıp tekrar deneyin."})
+
         from app.ocr.reader import fis_oku, fis_db_kaydet
         fis = fis_oku(tmp_path)
 
@@ -219,6 +224,12 @@ async def upload_fis(file: UploadFile = File(...), session_id: str = "web_user")
         return JSONResponse({"cevap": f"❌ Hata oluştu: {str(e)}"})
     finally:
         db.close()
+        try:
+            if 'tmp_path' in locals() and os.path.exists(tmp_path):
+                os.remove(tmp_path)
+                logger.info(f"🗑️ Temp dosya silindi: {tmp_path}")
+        except Exception:
+            pass
 
 
 # ── FİRMA SEÇ → İRSALİYE OLUŞTUR ────────────────────────────────────

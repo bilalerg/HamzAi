@@ -1569,7 +1569,6 @@
     if (wrap) Array.from(wrap.querySelectorAll('button')).forEach(function(b) { b.disabled = true; });
     addMessage('✅ Seçildi: ' + irs.cari_adi + ' — ' + (irs.toplam_kg / 1000).toFixed(2) + ' ton', 'user');
     const kalemler = irs.kalemler || [];
-    console.log('irsaliyeSecildi kalemler:', JSON.stringify(kalemler));
     if (kalemler.length > 1) {
       faturaAkisi = {
         irs: irs,
