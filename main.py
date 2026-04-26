@@ -322,21 +322,57 @@ async def hesap_ozeti():
 async def tahsilat_ekle_endpoint(request: Request):
     """
     Belirli bir cariye tahsilat kaydı ekler.
-    Paraşüt'teki açık faturaya ödeme bağlar.
+    Parasut'teki acik faturaya odeme baglar.
     Claude devreye girmez.
+
+    Bakiye kontrolu:
+    - tutar > carinin guncel bakiyesi ise onaylandi=True olmadan red doner
+    - Frontend onay alip onaylandi=True ile tekrar gonderirse isleme devam eder
     """
     data = await request.json()
-    cari_adi = data.get("cari_adi", "").strip()
-    tutar    = data.get("tutar", 0)
-    aciklama = data.get("aciklama", "")
-    tarih    = data.get("tarih", "")
+    cari_adi  = data.get("cari_adi", "").strip()
+    tutar     = data.get("tutar", 0)
+    aciklama  = data.get("aciklama", "")
+    tarih     = data.get("tarih", "")
+    onaylandi = data.get("onaylandi", False)
 
     if not cari_adi or not tutar:
-        return JSONResponse({"basarili": False, "cevap": "❌ Cari adı ve tutar gerekli."})
+        return JSONResponse({"basarili": False, "cevap": "Cari adi ve tutar gerekli."})
 
     try:
-        from app.parasut.client import tahsilat_ekle
+        from app.parasut.client import tahsilat_ekle, cari_id_bul, cari_detay_getir
         from datetime import datetime
+
+        # ── BAKIYE KONTROLU (onay gelmemisse) ────────────────────────
+        if not onaylandi:
+            try:
+                cari_id = cari_id_bul(cari_adi)
+                if cari_id:
+                    detay = cari_detay_getir(cari_id)
+                    guncel_bakiye = float(detay.get("bakiye", 0))
+                    girilen_tutar = float(tutar)
+
+                    if guncel_bakiye > 0 and girilen_tutar > guncel_bakiye:
+                        logger.warning(
+                            f"Fazla tahsilat girisimi: {cari_adi} | "
+                            f"bakiye={guncel_bakiye:,.0f} TL | girilen={girilen_tutar:,.0f} TL"
+                        )
+                        return JSONResponse({
+                            "basarili": False,
+                            "fazla_tutar": True,
+                            "guncel_bakiye": guncel_bakiye,
+                            "girilen_tutar": girilen_tutar,
+                            "cevap": (
+                                f"Fazla tutar uyarisi!\n\n"
+                                f"{cari_adi}\n"
+                                f"Guncel bakiye: {guncel_bakiye:,.0f} TL\n"
+                                f"Girilen tutar: {girilen_tutar:,.0f} TL\n\n"
+                                f"Girilen tutar bakiyeden {girilen_tutar - guncel_bakiye:,.0f} TL fazla. "
+                                f"Yine de devam etmek istiyor musunuz?"
+                            )
+                        })
+            except Exception as bakiye_err:
+                logger.warning(f"Bakiye kontrolu atlandi: {bakiye_err}")
 
         # Tarih formatla
         tarih_str = None
