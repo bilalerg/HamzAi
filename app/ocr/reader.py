@@ -14,8 +14,8 @@ from app.core.logger import logger
 
 _client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
-OCR_MODEL      = "claude-haiku-4-5-20251001"
-OCR_MAX_TOKENS = 600
+OCR_MODEL      = "claude-sonnet-4-5-20251022"
+OCR_MAX_TOKENS = 800
 
 
 @dataclass
@@ -43,8 +43,9 @@ OCR_PROMPT = """Kantar fişi fotoğrafı. Sadece JSON döndür, başka hiçbir �
 KURALLAR:
 
 PLAKA:
-- "Araç - Dorse Plaka", "Plaka-1 / Plaka-2", "Ana Araç / Dorse" gibi alanlarda İLK plakayı al
-- Tire veya bölü ile ayrılmış iki plaka varsa (örn: "37 LK 081 - 34 BSE 559") SADECE soldakini al
+- "Araç - Dorse Plaka", "Plaka-1 / Plaka-2", "Ana Araç / Dorse" gibi alanlarda İLK (soldaki) plakayı al
+- Tire veya bölü ile ayrılmış iki plaka varsa (örn: "37 LK 081 - 34 BSE 559") SADECE EN SOLDAKI ilk plakayı al → 37LK081
+- Dorse plakası her zaman ikinci sıradadır, onu ASLA alma
 - Plaka formatı: 2 rakam + 1-3 harf + 2-4 rakam (örn: 37LK081, 34ABC123)
 
 FİRMA:
