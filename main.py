@@ -11,7 +11,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from app.core.config import validate_config, ENV
 from app.core.database import init_db, SessionLocal, engine
 from app.core.logger import logger
-from app.chatbox.webhook import router as webhook_router
+
 
 # HTML şablonunu dosyadan oku
 _HTML_PATH = Path(__file__).parent / "chat.html"
@@ -70,7 +70,7 @@ async def _startup_background():
 
 app = FastAPI(title="Profaix", description="Muhasebe Otomasyon Ajanı", version="1.0.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
-app.include_router(webhook_router)
+
 
 
 def _islem_log(db, islem_tipi: str, cari_adi: str = None, tutar: int = None,
@@ -450,9 +450,11 @@ async def bekleyen_irsaliyeler():
 
         # DB'deki tüm waybill'leri çek
         tum_waybiller = db.query(Waybill).all()
-        waybill_map = {w.parasut_irsaliye_id: w for w in tum_waybiller if w.parasut_irsaliye_id}
+        # FIX: Hem Paraşüt hem DB'den gelen ID'ler bazen int bazen string
+        # Tümünü str().strip() ile normalize et
+        waybill_map = {str(w.parasut_irsaliye_id).strip(): w for w in tum_waybiller if w.parasut_irsaliye_id}
         tamamlanan_ids = {
-            w.parasut_irsaliye_id for w in tum_waybiller
+            str(w.parasut_irsaliye_id).strip() for w in tum_waybiller
             if w.status == TicketStatus.TAMAMLANDI and w.parasut_irsaliye_id
         }
         logger.info(f"Tamamlanmış irsaliye ID'leri: {tamamlanan_ids}")
@@ -468,12 +470,11 @@ async def bekleyen_irsaliyeler():
         for contact_id, irsaliyeler in gruplu.items():
             cari_adi = cari_id_to_ad.get(contact_id, irsaliyeler[0].get("cari_adi", "-") if irsaliyeler else "-")
             for irs in irsaliyeler:
-                if str(irs["id"]) in tamamlanan_ids:
+                if str(irs["id"]).strip() in tamamlanan_ids:
                     continue
 
-                # Malzeme bilgisini DB'den al — hem string hem int ID dene
-                waybill = waybill_map.get(str(irs["id"])) or waybill_map.get(str(irs["id"]).strip())
-                logger.info(f"Waybill arama: irs_id={irs['id']} (type={type(irs['id']).__name__}) waybill_map_keys={list(waybill_map.keys())[:3]} bulundu={waybill is not None}")
+                # FIX: ID tipi normalize edildi, artık tek lookup yeterli
+                waybill = waybill_map.get(str(irs["id"]).strip())
                 kalemler = irs.get("kalemler", [])
                 toplam_kg = irs.get("toplam_kg", 0)
 

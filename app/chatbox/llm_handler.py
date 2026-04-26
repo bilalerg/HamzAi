@@ -8,7 +8,7 @@ from app.core.config import ANTHROPIC_API_KEY
 from app.core.logger import logger
 
 # ── SABİTLER ──────────────────────────────────────────────────────────
-MAX_GECMIS = 10
+MAX_GECMIS = 20       # Tool mesajları da dahil olduğu için artırıldı
 MODEL      = "claude-haiku-4-5-20251001"
 
 _client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
@@ -16,8 +16,14 @@ _client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 TOOLS = [
     {
         "name": "cari_listesi_getir",
-        "description": "Paraşüt'teki carileri listeler: ad, id ve bakiye.",
-        "input_schema": {"type": "object", "properties": {}, "required": []}
+        "description": "Paraşüt'teki carilerde arama yapar. arama_metni boş bırakılırsa tümünü listeler.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "arama_metni": {"type": "string", "description": "Aranacak firma adının bir kısmı (örn: 'Kroman', 'UHT'). Boş bırakılırsa tüm cariler gelir."}
+            },
+            "required": []
+        }
     },
     {
         "name": "cari_detay_getir",
@@ -32,12 +38,12 @@ TOOLS = [
     },
     {
         "name": "cari_faturalari_getir",
-        "description": "Belirli bir carinin faturalarını listeler.",
+        "description": "Belirli bir carinin faturalarını listeler. Tahsilat geçmişini görmek için de kullan — her fatura tahsilatları içerir.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "cari_adi": {"type": "string", "description": "Cari adı"},
-                "limit": {"type": "integer", "description": "Kaç fatura (varsayılan 5)", "default": 5}
+                "limit": {"type": "integer", "description": "Kaç fatura (varsayılan 10)", "default": 10}
             },
             "required": ["cari_adi"]
         }
@@ -57,7 +63,13 @@ TOOLS = [
     {
         "name": "acik_faturalar_getir",
         "description": "Tüm ödenmemiş/gecikmiş faturaları listeler.",
-        "input_schema": {"type": "object", "properties": {}, "required": []}
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "Kaç fatura (varsayılan 25)", "default": 25}
+            },
+            "required": []
+        }
     },
     {
         "name": "hesap_ozeti_getir",
@@ -66,14 +78,14 @@ TOOLS = [
     },
     {
         "name": "tahsilat_ekle",
-        "description": "Paraşüt'te belirli bir cariye tahsilat kaydı ekler.",
+        "description": "Paraşüt'te belirli bir cariye tahsilat kaydı ekler. ZORUNLU: Çağırmadan önce kullanıcıya 'X firmasına Y TL tahsilat ekleyeceğim, onaylıyor musunuz?' diye sor ve onay al.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "cari_adi": {"type": "string", "description": "Cari adı"},
                 "tutar": {"type": "number", "description": "Tahsilat tutarı (TL)"},
                 "aciklama": {"type": "string", "description": "Açıklama (opsiyonel)"},
-                "tarih": {"type": "string", "description": "GG.AA.YYYY formatında tarih (opsiyonel)"}
+                "tarih": {"type": "string", "description": "Tarih — GG.AA.YYYY veya YYYY-MM-DD formatında (opsiyonel)"}
             },
             "required": ["cari_adi", "tutar"]
         }
@@ -110,7 +122,11 @@ TOOLS = [
 
 # ── TOOL ÇALIŞTIR ─────────────────────────────────────────────────────
 
-def _tool_calistir(tool_name: str, tool_input: dict) -> str:
+def _tool_calistir(tool_name: str, tool_input: dict, db=None) -> str:
+    """
+    Tool'u çalıştırır ve sonucu string olarak döndürür.
+    db parametresi tahsilat_ekle'de IslemLog için kullanılır.
+    """
     try:
         from app.parasut.client import (
             cari_listesi_getir, cari_detay_getir, cari_faturalari_getir,
@@ -119,7 +135,10 @@ def _tool_calistir(tool_name: str, tool_input: dict) -> str:
         )
 
         if tool_name == "cari_listesi_getir":
+            arama = tool_input.get("arama_metni", "").strip().lower()
             cariler = cari_listesi_getir()
+            if arama:
+                cariler = [c for c in cariler if arama in c["ad"].lower()]
             kirpilmis = [{"id": c["id"], "ad": c["ad"], "bakiye": c.get("bakiye", 0)} for c in cariler]
             return json.dumps(kirpilmis, ensure_ascii=False)
 
@@ -163,13 +182,33 @@ def _tool_calistir(tool_name: str, tool_input: dict) -> str:
             tutar    = tool_input.get("tutar", 0)
             aciklama = tool_input.get("aciklama")
             tarih    = tool_input.get("tarih")
-            if tarih and "." in tarih:
-                try:
-                    from datetime import datetime
-                    tarih = datetime.strptime(tarih, "%d.%m.%Y").strftime("%Y-%m-%d")
-                except Exception:
-                    tarih = None
+            if tarih:
+                from datetime import datetime
+                tarih_parsed = None
+                for fmt in ["%d.%m.%Y", "%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y"]:
+                    try:
+                        tarih_parsed = datetime.strptime(str(tarih).strip(), fmt).strftime("%Y-%m-%d")
+                        break
+                    except Exception:
+                        continue
+                tarih = tarih_parsed
             sonuc = tahsilat_ekle(cari_adi, tutar, aciklama, tarih)
+
+            # FIX: LLM üzerinden yapılan tahsilatları da IslemLog'a yaz
+            if sonuc.get("basarili") and db is not None:
+                try:
+                    from app.core.database import IslemLog
+                    log = IslemLog(
+                        islem_tipi="TAHSILAT_EKLENDI",
+                        cari_adi=cari_adi,
+                        tutar=int(float(tutar)),
+                        aciklama=f"LLM | Tarih: {tarih or 'Bugün'} | {aciklama or ''}",
+                    )
+                    db.add(log)
+                    db.commit()
+                except Exception as log_err:
+                    logger.warning(f"IslemLog yazılamadı: {log_err}")
+
             return json.dumps(sonuc, ensure_ascii=False)
 
         elif tool_name == "fatura_detay_getir":
@@ -194,26 +233,40 @@ def _tool_calistir(tool_name: str, tool_input: dict) -> str:
 
     except Exception as e:
         logger.error(f"Tool çalıştırma hatası ({tool_name}): {e}")
-        return f"Hata: {str(e)}"
+        return json.dumps({"hata": "İşlem sırasında teknik bir sorun oluştu. Kullanıcıdan işlemi tekrar etmesini iste.", "detay": str(e)}, ensure_ascii=False)
 
 
 # ── DB CONTEXT — MİNİMAL ─────────────────────────────────────────────
 
 def db_context_hazirla(db) -> str:
     from app.core.database import WeighTicket, TicketStatus
+    from sqlalchemy import func
     bugun = date.today()
+    bugun_str = bugun.strftime("%Y-%m-%d")
     try:
-        bugun_fisler = db.query(WeighTicket).filter(
-            WeighTicket.created_at >= bugun.strftime("%Y-%m-%d")
-        ).all()
-        bugun_kg   = sum(t.agirlik_kg or 0 for t in bugun_fisler)
-        tamamlanan = sum(1 for t in bugun_fisler if t.status == TicketStatus.TAMAMLANDI)
-        bekleyen   = sum(1 for t in bugun_fisler if t.status not in [
-            TicketStatus.TAMAMLANDI, TicketStatus.IPTAL, TicketStatus.HATA
-        ])
+        toplam_fis = db.query(func.count(WeighTicket.id)).filter(
+            WeighTicket.created_at >= bugun_str
+        ).scalar() or 0
+
+        bugun_kg = db.query(func.sum(WeighTicket.agirlik_kg)).filter(
+            WeighTicket.created_at >= bugun_str
+        ).scalar() or 0
+
+        tamamlanan = db.query(func.count(WeighTicket.id)).filter(
+            WeighTicket.created_at >= bugun_str,
+            WeighTicket.status == TicketStatus.TAMAMLANDI
+        ).scalar() or 0
+
+        bekleyen = db.query(func.count(WeighTicket.id)).filter(
+            WeighTicket.created_at >= bugun_str,
+            WeighTicket.status.notin_([
+                TicketStatus.TAMAMLANDI, TicketStatus.IPTAL, TicketStatus.HATA
+            ])
+        ).scalar() or 0
+
         return (
             f"Bugün ({bugun.strftime('%d.%m.%Y')}): "
-            f"{len(bugun_fisler)} fiş / {bugun_kg/1000:.1f} ton | "
+            f"{toplam_fis} fiş / {bugun_kg/1000:.1f} ton | "
             f"tamamlanan={tamamlanan} bekleyen={bekleyen}"
         )
     except Exception as e:
@@ -228,39 +281,90 @@ def _session_yukle(db, session_id: str):
     return db.query(ChatSession).filter(ChatSession.session_id == session_id).first()
 
 
-def _session_kaydet(db, session_id: str, isim: str, gecmis: list, yeni_mesaj: dict = None):
+def _session_kaydet(db, session_id: str, isim: str, gecmis_saf: list,
+                    yeni_mesaj_user: dict = None, yeni_mesaj_asistan: dict = None):
+    """
+    gecmis_saf: Sadece string content'li (role/content) mesajlar — DB'ye yazılır.
+    yeni_mesaj_user / yeni_mesaj_asistan: tam_gecmis'e eklenir.
+    Tek DB commit ile her iki güncelleme yapılır.
+    """
     from app.core.database import ChatSession
     try:
         session = db.query(ChatSession).filter(ChatSession.session_id == session_id).first()
-        gecmis_json = json.dumps(gecmis, ensure_ascii=False)
+        gecmis_json = json.dumps(gecmis_saf, ensure_ascii=False)
+
+        # tam_gecmis güncellemesi
+        tam_gecmis = []
+        if session and session.tam_gecmis:
+            try:
+                tam_gecmis = json.loads(session.tam_gecmis)
+            except Exception:
+                tam_gecmis = []
+
+        bugun_str = str(date.today())
+        if yeni_mesaj_user:
+            tam_gecmis.append({**yeni_mesaj_user, "ts": bugun_str})
+        if yeni_mesaj_asistan:
+            tam_gecmis.append({**yeni_mesaj_asistan, "ts": bugun_str})
+
+        # Max 100 mesaj tut
+        if len(tam_gecmis) > 100:
+            tam_gecmis = tam_gecmis[-100:]
+
+        tam_gecmis_json = json.dumps(tam_gecmis, ensure_ascii=False)
 
         if session:
-            session.isim   = isim
-            session.gecmis = gecmis_json
-            # tam_gecmis varsa güncelle
-            try:
-                tam_gecmis = []
-                if session.tam_gecmis:
-                    tam_gecmis = json.loads(session.tam_gecmis)
-                if yeni_mesaj:
-                    tam_gecmis.append(yeni_mesaj)
-                session.tam_gecmis = json.dumps(tam_gecmis, ensure_ascii=False)
-            except Exception:
-                pass
+            session.isim       = isim
+            session.gecmis     = gecmis_json
+            session.tam_gecmis = tam_gecmis_json
         else:
-            kwargs = {"session_id": session_id, "isim": isim, "gecmis": gecmis_json}
-            try:
-                if yeni_mesaj:
-                    kwargs["tam_gecmis"] = json.dumps([yeni_mesaj], ensure_ascii=False)
-            except Exception:
-                pass
-            session = ChatSession(**kwargs)
+            session = ChatSession(
+                session_id=session_id,
+                isim=isim,
+                gecmis=gecmis_json,
+                tam_gecmis=tam_gecmis_json
+            )
             db.add(session)
+
         db.commit()
     except Exception as e:
         logger.error(f"Session kaydedilemedi: {e}")
         db.rollback()
 
+
+# ── MESAJ GEÇMİŞİ SERİALİZASYONU ────────────────────────────────────
+
+def _content_serialize(content) -> list | str:
+    """
+    Claude API'sinden gelen content bloklarını JSON-serileştirilebilir hale getirir.
+    Hem string hem liste (tool_use blokları) desteklenir.
+    """
+    if isinstance(content, str):
+        return content
+    result = []
+    for b in content:
+        if hasattr(b, "type"):
+            if b.type == "text":
+                result.append({"type": "text", "text": b.text})
+            elif b.type == "tool_use":
+                result.append({"type": "tool_use", "id": b.id, "name": b.name, "input": b.input})
+        elif isinstance(b, dict):
+            result.append(b)
+    return result
+
+
+def _gecmis_saf_cikart(gecmis: list) -> list:
+    """
+    Tam geçmişten (tool_use/tool_result içerebilir) sadece
+    string content'li user/assistant mesajlarını çıkarır.
+    Bunlar DB'de kısa özet geçmişi olarak tutulur.
+    """
+    saf = []
+    for m in gecmis:
+        content = m.get("content")
+        if isinstance(content, str) and content.strip():
+            saf.append({"role": m["role"], "content": content})
+    return saf
 
 
 # ── ANA FONKSİYON ─────────────────────────────────────────────────────
@@ -269,19 +373,20 @@ def soru_cevapla(mesaj: str, db, gonderen: str = "") -> str:
     session = _session_yukle(db, gonderen)
 
     if session is None:
-        _session_kaydet(db, gonderen, isim="Kullanıcı", gecmis=[])
+        _session_kaydet(db, gonderen, isim="Kullanıcı", gecmis_saf=[])
         session = _session_yukle(db, gonderen)
 
-    if session is None:
-        # DB'ye yazılamıyorsa bile devam et
-        isim = "Kullanıcı"
-        gecmis = []
-    else:
-        if session.isim is None:
-            _session_kaydet(db, gonderen, isim="Kullanıcı", gecmis=[])
-            session = _session_yukle(db, gonderen)
-        isim   = (session.isim if session else None) or "Kullanıcı"
-        gecmis = json.loads(session.gecmis) if session and session.gecmis else []
+    isim   = (session.isim if session else None) or "Kullanıcı"
+
+    # Tam geçmişi yükle (tool_use/tool_result blokları dahil)
+    # Bu Claude API'sine gönderilecek gerçek konuşma geçmişidir
+    gecmis: list = []
+    if session and session.gecmis:
+        try:
+            gecmis = json.loads(session.gecmis)
+        except Exception:
+            gecmis = []
+
     db_context = db_context_hazirla(db)
 
     sistem_promptu = f"""Sen Profaix muhasebe asistanısın. Hurda metal kantar takip ve muhasebe sistemi.
@@ -310,66 +415,88 @@ BAKİYE KONVANSIYONU (ÇOK ÖNEMLİ):
 KURALLAR:
 - Bilgi için mutlaka tool kullan, tahmin etme veya uydurma
 - Bilmediğini uydurma
+- Tahsilat eklemeden önce mutlaka kullanıcıya özetle ve onay al: "X firmasına Y TL tahsilat ekleyeceğim, onaylıyor musunuz?"
 - Cari adı kısaltma veya belirsizse direkt cari_listesi_getir çağır, eşleştir, sonra işlemi yap. Kullanıcıya tekrar sorma.
 - Fatura listelerken: tarih, tutar, durum, irsaliye_id (varsa) göster
 - Kısa ve net cevap ver, gereksiz markdown kullanma
 - Yeni cari: firma adı→email→tel→vergi no→vergi dairesi→adres sor, özet göster, onay al, cari_olustur çağır"""
 
+    # Yeni kullanıcı mesajını geçmişe ekle
     gecmis.append({"role": "user", "content": mesaj})
+
+    # Geçmişi MAX_GECMIS ile sınırla (çiftler halinde kırp — tek mesaj kalmasın)
     if len(gecmis) > MAX_GECMIS:
         gecmis = gecmis[-MAX_GECMIS:]
+        # İlk mesaj assistant ise bir tane daha at — geçmiş user ile başlamalı
+        if gecmis and gecmis[0]["role"] != "user":
+            gecmis = gecmis[1:]
 
     try:
         response = _client.messages.create(
             model=MODEL,
-            max_tokens=800,
+            max_tokens=2000,  # FIX: 800'den 2000'e yükseltildi
             system=sistem_promptu,
             tools=TOOLS,
             messages=gecmis
         )
 
+        # ── TOOL DÖNGÜSÜ ──────────────────────────────────────────────
         while response.stop_reason == "tool_use":
-            tool_results = []
             assistant_content = response.content
 
+            # FIX: Tool_use bloklarını da içeren tam assistant mesajını geçmişe ekle
+            gecmis.append({
+                "role": "assistant",
+                "content": _content_serialize(assistant_content)
+            })
+
+            # Tool'ları çalıştır ve sonuçları topla
+            tool_results = []
             for block in assistant_content:
                 if block.type == "tool_use":
                     logger.info(f"🔧 Tool: {block.name} — {block.input}")
-                    sonuc = _tool_calistir(block.name, block.input)
+                    sonuc = _tool_calistir(block.name, block.input, db=db)
                     tool_results.append({
                         "type": "tool_result",
                         "tool_use_id": block.id,
                         "content": sonuc
                     })
 
-            gecmis.append({"role": "assistant", "content": [
-                {"type": b.type, **(
-                    {"text": b.text} if b.type == "text"
-                    else {"id": b.id, "name": b.name, "input": b.input}
-                )}
-                for b in assistant_content
-            ]})
+            # Tool sonuçlarını geçmişe ekle
             gecmis.append({"role": "user", "content": tool_results})
 
             response = _client.messages.create(
                 model=MODEL,
-                max_tokens=800,
+                max_tokens=2000,
                 system=sistem_promptu,
                 tools=TOOLS,
                 messages=gecmis
             )
 
-        cevap = "".join(b.text for b in response.content if hasattr(b, "text")).strip()
+        # ── SON CEVAP ─────────────────────────────────────────────────
+        cevap_blocks = response.content
+        cevap = "".join(b.text for b in cevap_blocks if hasattr(b, "text")).strip()
 
-        gecmis_kayit = [m for m in gecmis if isinstance(m.get("content"), str)]
-        gecmis_kayit.append({"role": "assistant", "content": cevap})
-        if len(gecmis_kayit) > MAX_GECMIS:
-            gecmis_kayit = gecmis_kayit[-MAX_GECMIS:]
+        # Son assistant mesajını da geçmişe ekle
+        gecmis.append({"role": "assistant", "content": cevap})
 
-        # Yeni mesajları tam geçmişe ekle
-        _session_kaydet(db, gonderen, isim=isim, gecmis=gecmis_kayit, yeni_mesaj={"role": "user", "content": mesaj, "ts": str(date.today())})
-        # Cevabı da ekle
-        _session_kaydet(db, gonderen, isim=isim, gecmis=gecmis_kayit, yeni_mesaj={"role": "assistant", "content": cevap, "ts": str(date.today())})
+        # FIX: Geçmişi sınırla (MAX_GECMIS içinde tut)
+        if len(gecmis) > MAX_GECMIS:
+            gecmis = gecmis[-MAX_GECMIS:]
+            if gecmis and gecmis[0]["role"] != "user":
+                gecmis = gecmis[1:]
+
+        # FIX: Saf geçmiş (sadece string content'liler) — DB'de kısa özet
+        gecmis_saf = _gecmis_saf_cikart(gecmis)
+
+        # FIX: Tek seferde kaydet, iki ayrı çağrı yok
+        _session_kaydet(
+            db, gonderen, isim=isim,
+            gecmis_saf=gecmis_saf,
+            yeni_mesaj_user={"role": "user", "content": mesaj},
+            yeni_mesaj_asistan={"role": "assistant", "content": cevap}
+        )
+
         logger.info(f"🤖 Cevap ({isim}): {cevap[:60]}...")
         return cevap
 

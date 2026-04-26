@@ -5,7 +5,7 @@ from app.parasut.client import parasut_post, cari_id_bul, cari_listesi_getir
 from app.core.config import PARASUT_COMPANY_ID, PARASUT_HURDA_PRODUCT_ID
 from app.core.database import SessionLocal, Waybill, Invoice, WeighTicket, TicketStatus
 from app.core.logger import logger
-from app.chatbox.wp_sender import patrona_bildir, muhasebeciye_bildir
+
 
 
 def _contact_id_bul(firma_adi: str) -> str:
@@ -96,14 +96,7 @@ def fatura_kes(waybill_id: int, birim_fiyat: float = 0) -> dict:
 
         logger.info(f"✅ Fatura tamamlandı: fatura_no={parasut_id} tutar={toplam_tutar:,.0f} TL")
 
-        patrona_bildir(
-            f"✅ Fatura kesildi!\n🚗 Plaka: {ticket.plaka}\n"
-            f"⚖️ {ticket.agirlik_kg:,} kg | 💰 {birim_fiyat:,.0f} TL/kg\n"
-            f"💵 Toplam: {toplam_tutar:,.0f} TL\n🧾 {parasut_id}"
-        )
-        muhasebeciye_bildir(
-            f"✅ Tamamlandı!\n🚗 {ticket.plaka} | 💵 {toplam_tutar:,.0f} TL\n🧾 {parasut_id}"
-        )
+        logger.info(f"✅ Fatura kesildi: plaka={ticket.plaka} tutar={toplam_tutar:,.0f} TL parasut_id={parasut_id}")
 
         return {
             "basarili": True,
@@ -215,14 +208,7 @@ def fatura_kes_malzemeli(waybill_id: int, malzemeler: dict, toplanan_fiyatlar: d
         ticket.status = TicketStatus.TAMAMLANDI
         db.commit()
 
-        ozet_satir = " | ".join([f"{m}: {malzemeler.get(m,0):,}kg×{f:,.0f}₺" for m, f in toplanan_fiyatlar.items()])
-        patrona_bildir(
-            f"✅ Fatura kesildi!\n🚗 Plaka: {ticket.plaka}\n"
-            f"{ozet_satir}\n💵 Toplam: {toplam_tutar:,.0f} TL\n🧾 {parasut_id}"
-        )
-        muhasebeciye_bildir(
-            f"✅ Tamamlandı!\n🚗 {ticket.plaka} | 💵 {toplam_tutar:,.0f} TL\n🧾 {parasut_id}"
-        )
+        logger.info(f"✅ Malzemeli fatura kesildi: plaka={ticket.plaka} tutar={toplam_tutar:,.0f} TL parasut_id={parasut_id}")
 
         return {
             "basarili": True,

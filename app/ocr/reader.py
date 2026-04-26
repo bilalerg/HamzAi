@@ -34,6 +34,8 @@ class FisVerisi:
     hata:             Optional[str]           = None
 
 
+OCR_SYSTEM = "Sen sadece JSON üreten bir API'sin. Yanıtın SADECE '{' ile başlamalı ve '}' ile bitmelidir. Hiçbir açıklama, başlık veya markdown ekleme."
+
 OCR_PROMPT = """Kantar fişi fotoğrafı. Sadece JSON döndür, başka hiçbir şey yazma.
 
 {"plaka":"ana araç plakası (dorse/2.plaka değil)","fis_no":"fiş no","net_tartim_kg":SAYI,"fire_kg":SAYI_YA_DA_0,"tarih":"GG.AA.YYYY","firma":"fişin başlığındaki fabrika adı (hurda tedarikçisi değil)","irsaliye_no":null,"kantar_no":null,"malzemeler":{}}
@@ -47,16 +49,32 @@ KURALLAR:
   FORMAT 1 — Kroman tipi tablo: Hurda Tipi | Miktar | Tenzil.Miktar sütunları → {malzeme_adi: net_miktar} (net_miktar = Miktar - Tenzil.Miktar)
   FORMAT 2 — Tosyalı/UHT tipi liste: "1-) DKP ... 0", "2-) Topsis ... 26.950" şeklinde → sadece değeri 0'dan büyük olanları al → {"Topsis": 26950}
   FORMAT 3 — Tek malzeme: "MALZEME: HURDA İÇ PİYASA GENEL" gibi → {"HURDA İÇ PİYASA GENEL": net_tartim_kg}
-- malzemelere ASLA ekleme: Brüt, Dara, 1.Tartı, 2.Tartı, Dolu/Boş Tartım
+- malzemelere ASLA ekleme: Brüt, Dara, 1.Tartı, 2.Tartı, Dolu/Boş Tartım, Fire, Tenzil
 - TÜM KG DEĞERLERİ TAM SAYI OLMALI: 30680 ✓  30.680 ✗  30,680 ✗"""
 
 
 def _fotograf_to_base64(fotograf_yolu: str) -> tuple[str, str]:
-    with open(fotograf_yolu, "rb") as f:
-        data = base64.standard_b64encode(f.read()).decode("utf-8")
-    uzanti = Path(fotograf_yolu).suffix.lower()
-    media_type = "image/jpeg" if uzanti in [".jpg", ".jpeg"] else "image/png"
-    return data, media_type
+    try:
+        from PIL import Image
+        import io as _io
+        with Image.open(fotograf_yolu) as img:
+            # RGBA → RGB dönüşümü (PNG şeffaflık sorunu)
+            if img.mode in ("RGBA", "P"):
+                img = img.convert("RGB")
+            # Max 1500px — kantar fişi için fazlasıyla yeterli
+            img.thumbnail((1500, 1500), Image.LANCZOS)
+            buffer = _io.BytesIO()
+            img.save(buffer, format="JPEG", quality=85)
+            data = base64.b64encode(buffer.getvalue()).decode("utf-8")
+            logger.info(f"Fotoğraf boyutlandırıldı: {img.size} | {len(data)//1024}KB base64")
+        return data, "image/jpeg"
+    except ImportError:
+        # Pillow yoksa eski yöntem
+        with open(fotograf_yolu, "rb") as f:
+            data = base64.standard_b64encode(f.read()).decode("utf-8")
+        uzanti = Path(fotograf_yolu).suffix.lower()
+        media_type = "image/jpeg" if uzanti in [".jpg", ".jpeg"] else "image/png"
+        return data, media_type
 
 
 def _parse_json(metin: str) -> dict:
@@ -93,6 +111,8 @@ def claude_fis_oku(fotograf_yolu: str) -> FisVerisi:
     response = _client.messages.create(
         model=OCR_MODEL,
         max_tokens=OCR_MAX_TOKENS,
+        temperature=0.0,
+        system=OCR_SYSTEM,
         messages=[{
             "role": "user",
             "content": [
@@ -134,10 +154,14 @@ def claude_fis_oku(fotograf_yolu: str) -> FisVerisi:
             if v and _parse_kg(v) > 0 and k.strip().lower() not in FIRE_KELIMELERI
         }
 
-        logger.info(f"OCR sonuç — plaka={veri.get('plaka')} tartım={net_tartim}kg fire={fire}kg net={net_agirlik}kg firma={veri.get('firma')}")
+        # Plaka normalizasyonu — boşluk/tire kaldır, büyük harf
+        ham_plaka = veri.get("plaka")
+        temiz_plaka = re.sub(r'[\s\-]', '', ham_plaka).upper() if ham_plaka else None
+
+        logger.info(f"OCR sonuç — plaka={temiz_plaka} tartım={net_tartim}kg fire={fire}kg net={net_agirlik}kg firma={veri.get('firma')}")
 
         return FisVerisi(
-            plaka            = veri.get("plaka"),
+            plaka            = temiz_plaka,
             fis_no           = str(veri.get("fis_no")) if veri.get("fis_no") else None,
             net_tartim_kg    = net_tartim,
             fire_kg          = fire,

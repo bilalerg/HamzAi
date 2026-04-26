@@ -9,7 +9,7 @@ from datetime import datetime, date
 from enum import Enum
 from app.core.database import Vehicle, WeighTicket, Alert, TicketStatus
 from app.core.logger import logger
-from app.chatbox.wp_sender import muhasebeciye_bildir
+
 
 
 class PlakaSonuc(Enum):
@@ -67,13 +67,8 @@ def plaka_kontrol_et(plaka: str, ticket_id: int, db, fis_no: str = None) -> Plak
                 db=db
             )
 
-            muhasebeciye_bildir(
-                f"⚠️ Duplicate fiş tespit edildi!\n"
-                f"📋 Fiş No: {fis_no}\n"
-                f"🚗 Plaka: {plaka}\n"
-                f"Bu fiş daha önce işlendi!\n"
-                f"Önceki ticket ID: {mevcut_fis.id}\n"
-                f"Yeni ticket ID: {ticket_id}"
+            logger.warning(
+                f"⚠️ Duplicate fiş: fis_no={fis_no} önceki ticket_id={mevcut_fis.id} yeni ticket_id={ticket_id}"
             )
 
             ticket = db.query(WeighTicket).filter(WeighTicket.id == ticket_id).first()
@@ -105,7 +100,7 @@ def plaka_kontrol_et(plaka: str, ticket_id: int, db, fis_no: str = None) -> Plak
             db=db
         )
 
-        muhasebeciye_bildir(f"🆕 Yeni araç sisteme eklendi: {plaka}\nTicket ID: {ticket_id}")
+        logger.info(f"🆕 Yeni plaka sisteme eklendi: {plaka} ticket_id={ticket_id}")
 
         return PlakaSonuc.YENI
 

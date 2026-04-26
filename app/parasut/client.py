@@ -21,7 +21,7 @@ _token_expires_at = 0
 # ── CARİ CACHE ────────────────────────────────────────────────────────
 _cari_cache = None
 _cari_cache_time = 0
-CACHE_SURE = 60  # 1 dakika
+CACHE_SURE = 300  # 5 dakika (rate limit koruması)
 
 
 def _token_al() -> dict:
@@ -122,7 +122,7 @@ def _cari_listesi_api() -> list:
     while True:
         sonuc = parasut_get(
             f"/{PARASUT_COMPANY_ID}/contacts",
-            params={"page[size]": 25, "page[number]": page}
+            params={"page[size]": 100, "page[number]": page}
         )
         data = sonuc.get("data", [])
         if not data:
@@ -173,30 +173,55 @@ def cari_id_bul(firma_adi: str) -> str | None:
     if not firma_adi:
         return None
     firma_upper = firma_adi.upper().strip()
-    cariler = cari_listesi_getir()
 
-    # 1. Tam eslestirme
+    # 1. Önce cache'de tam eşleşme dene (hızlı)
+    cariler = cari_listesi_getir()
     for c in cariler:
         if c["ad"].upper() == firma_upper:
-            logger.info(f"Cari tam eslestirme: {firma_adi} → {c['ad']} (ID: {c['id']})")
+            logger.info(f"Cari tam eslestirme (cache): {firma_adi} → {c['ad']} (ID: {c['id']})")
             return c["id"]
 
-    # 2. Icerik eslestirmesi
+    # 2. Cache'de bulunamazsa Paraşüt API'sine filter[name] ile sor
+    try:
+        # Aramak için anlamlı kelime seç (ilk 2 kelime yeterli)
+        kelimeler = [k for k in firma_upper.split() if k not in {"A.S.", "LTD.", "ŞTİ.", "SAN.", "TİC.", "VE", "A.Ş"}]
+        arama = " ".join(kelimeler[:2]) if kelimeler else firma_adi
+        sonuc = parasut_get(
+            f"/{PARASUT_COMPANY_ID}/contacts",
+            params={"filter[name]": arama, "page[size]": 25}
+        )
+        api_cariler = sonuc.get("data", [])
+        for item in api_cariler:
+            ad = item.get("attributes", {}).get("name", "")
+            cari_id = item.get("id")
+            if ad.upper() == firma_upper:
+                logger.info(f"Cari tam eslestirme (API): {firma_adi} → {ad} (ID: {cari_id})")
+                return cari_id
+        # Tam eşleşme yoksa ilk sonucu dön
+        if api_cariler:
+            item = api_cariler[0]
+            ad = item.get("attributes", {}).get("name", "")
+            cari_id = item.get("id")
+            logger.info(f"Cari API eslestirme (ilk sonuç): {firma_adi} → {ad} (ID: {cari_id})")
+            return cari_id
+    except Exception as e:
+        logger.warning(f"API cari arama hatasi: {e}")
+
+    # 3. Son çare: cache'de içerik/kelime eşleştirmesi
     for c in cariler:
         cari_upper = c["ad"].upper()
         if firma_upper in cari_upper or cari_upper in firma_upper:
-            logger.info(f"Cari icerik eslestirme: {firma_adi} → {c['ad']} (ID: {c['id']})")
+            logger.info(f"Cari icerik eslestirme (cache): {firma_adi} → {c['ad']} (ID: {c['id']})")
             return c["id"]
 
-    # 3. Kelime bazli eslestirme
     firma_kelimeler = set(firma_upper.split())
     for c in cariler:
         cari_kelimeler = set(c["ad"].upper().split())
         ortak = firma_kelimeler & cari_kelimeler
-        genel = {"A.S", "LTD", "STI", "SAN", "TIC", "VE", "GERI", "DONUSUM", "NAK", "TICARET"}
+        genel = {"A.S", "LTD", "STI", "SAN", "TIC", "VE", "GERI", "DONUSUM"}
         anlamli_ortak = ortak - genel
         if len(anlamli_ortak) >= 2:
-            logger.info(f"Cari kelime eslestirme: {firma_adi} → {c['ad']} (ID: {c['id']})")
+            logger.info(f"Cari kelime eslestirme (cache): {firma_adi} → {c['ad']} (ID: {c['id']})")
             return c["id"]
 
     logger.warning(f"Cari bulunamadi: {firma_adi}")
@@ -570,6 +595,7 @@ def tahsilat_ekle(cari_adi: str, tutar: float, aciklama: str = None, tarih: str 
                 aciklama=aciklama or f"{cari_adi} tahsilat",
                 tarih=tarih
             )
+            time.sleep(0.5)  # Rate limit koruması
 
             if odeme_sonuc.get("basarili"):
                 odenen_faturalar.append({"fatura_id": fatura["id"], "odenen": odeme_miktari})
