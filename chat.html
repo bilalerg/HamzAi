@@ -183,7 +183,7 @@
       <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
     </div>
     <h2>Merhaba,<br><em>Profaix</em>'e hoş geldiniz.</h2>
-    <p>Kantar fişi yükleyin veya sol menüden işlem seçin.</p>
+    <p>Sol menüden işlem seçin veya fiş fotoğrafı yükleyin.</p>
   </div>
 </div>
 
@@ -558,7 +558,10 @@
       kelimeler: [
         ['fatura sorgula'], ['fatura listesi'],
         ['faturaları göster'], ['faturalari goster'],
-        ['fatura sorgulamak']
+        ['fatura sorgulamak'], ['faturaları getir'], ['faturalari getir'],
+        ['fatura getir'], ['faturaları ver'], ['fatura göster'],
+        ['faturalara bak'], ['faturalar'], ['faturalarını getir'],
+        ['faturalarini getir'], ['faturalarını göster']
       ]
     },
     {
@@ -1344,7 +1347,17 @@
 
       row.appendChild(cb);
       row.appendChild(info);
-      row.onclick = function() { cb.checked = !cb.checked; row.style.borderColor = cb.checked ? 'var(--accent)' : 'var(--border2)'; row.style.background = cb.checked ? 'var(--accent-lt)' : ''; };
+      row.onclick = function(e) {
+        // Checkbox'a direkt tıklanınca row.onclick'i tetikleme — çift toggle olmasın
+        if (e.target === cb) return;
+        cb.checked = !cb.checked;
+        row.style.borderColor = cb.checked ? 'var(--accent)' : 'var(--border2)';
+        row.style.background = cb.checked ? 'var(--accent-lt)' : '';
+      };
+      cb.onchange = function() {
+        row.style.borderColor = cb.checked ? 'var(--accent)' : 'var(--border2)';
+        row.style.background = cb.checked ? 'var(--accent-lt)' : '';
+      };
       row.style.borderColor = 'var(--accent)';
       row.style.background = 'var(--accent-lt)';
 
