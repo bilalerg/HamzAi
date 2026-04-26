@@ -14,7 +14,7 @@ from app.core.logger import logger
 
 _client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
-OCR_MODEL      = "claude-sonnet-4-5-20251022"
+OCR_MODEL      = "claude-sonnet-4-5"
 OCR_MAX_TOKENS = 800
 
 
