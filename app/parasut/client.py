@@ -122,7 +122,7 @@ def _cari_listesi_api() -> list:
     while True:
         sonuc = parasut_get(
             f"/{PARASUT_COMPANY_ID}/contacts",
-            params={"page[size]": 100, "page[number]": page}
+            params={"page[size]": 25, "page[number]": page}
         )
         data = sonuc.get("data", [])
         if not data:
@@ -145,7 +145,7 @@ def _cari_listesi_api() -> list:
                 "vergi_dairesi": attr.get("tax_office", "-"),
             })
         if len(data) < 25:
-            break
+            break  # Son sayfa
         page += 1
     logger.info(f"Parasut'ten {len(cariler)} cari cekildi")
     return cariler
