@@ -36,14 +36,11 @@ def tr_kg(sayi: float) -> str:
 
 # HTML şablonunu dosyadan oku
 _HTML_PATH = Path(__file__).parent / "chat.html"
-_HTML_CACHE: str | None = None
 
 
 def _chat_html() -> str:
-    global _HTML_CACHE
-    if _HTML_CACHE is None:
-        _HTML_CACHE = _HTML_PATH.read_text(encoding="utf-8")
-    return _HTML_CACHE
+    # Cache yok — her zaman diskten oku, deploy sonrası eski HTML gelmez
+    return _HTML_PATH.read_text(encoding="utf-8")
 
 
 async def _keep_alive():
