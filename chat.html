@@ -499,9 +499,11 @@
 
   function parseFiyat(metin) {
     // KURAL: Nokta = binlik ayraç (yoksay), Virgül = ondalık ayraç
-    // Örnekler: "14,4567" → 14.4567 | "14.850" → 14850 | "14.850,75" → 14850.75 | "14850" → 14850
+    // Sadece rakam, nokta ve virgül kabul et — harf içeriyorsa geçersiz
     metin = metin.trim()
       .replace(/tl/gi, '').replace(/lira/gi, '').replace('₺', '').trim();
+    // Rakam, nokta ve virgül dışında karakter varsa geçersiz
+    if (/[^0-9.,]/.test(metin)) return null;
     // Önce noktaları kaldır (binlik ayraç), sonra virgülü noktaya çevir (ondalık)
     metin = metin.replace(/\./g, '').replace(',', '.');
     const f = parseFloat(metin);

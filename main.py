@@ -437,7 +437,7 @@ async def tahsilat_ekle_endpoint(request: Request):
                     f"✅ Tahsilat kaydedildi!\n\n"
                     f"🏢 Cari: {cari_adi}\n"
                     f"💰 Tutar: {tr_para(float(tutar),2)} TL\n"
-                    f"📅 Tarih: {tarih or 'Bugün'}\n"
+                    f"📅 Tarih: {datetime.strptime(tarih_str, "%Y-%m-%d").strftime("%d.%m.%Y") if tarih_str else 'Bugün'}\n"
                     f"Paraşüt'e kaydedildi."
                 )
             })
