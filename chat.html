@@ -485,6 +485,18 @@
     if (el) el.remove();
   }
 
+  function fiyatGoster(fiyat) {
+    // Fiyatı tam olarak göster — gereksiz sıfırları kırp ama değeri kesme
+    // 14.4458 → "14,4458" | 14 → "14" | 14.5 → "14,5"
+    if (fiyat === null || fiyat === undefined) return '';
+    // Maksimum 4 ondalık hane, sondaki sıfırları kaldır
+    let str = fiyat.toFixed(4).replace('.', ',').replace(/,?0+$/, '');
+    // Binlik ayraç ekle (tam kısım için)
+    let parcalar = str.split(',');
+    parcalar[0] = parcalar[0].replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+    return parcalar.join(',');
+  }
+
   function parseFiyat(metin) {
     // KURAL: Nokta = binlik ayraç (yoksay), Virgül = ondalık ayraç
     // Örnekler: "14,4567" → 14.4567 | "14.850" → 14850 | "14.850,75" → 14850.75 | "14850" → 14850
@@ -1436,17 +1448,34 @@
       topluAkis = null;
       addMessage('❌ Toplu fatura iptal edildi.', 'bot');
     };
+    const fiyatHintT = document.createElement('div');
+    fiyatHintT.style.cssText = 'font-size:10.5px;color:var(--muted);margin-top:5px;line-height:1.6;';
+    fiyatHintT.innerHTML = '&#128161; Ondalık için <b>virgül</b>: 14,4458 &nbsp;&middot;&nbsp; Binlik için <b>nokta</b>: 14.850';
+
+    const fiyatHataT = document.createElement('div');
+    fiyatHataT.style.cssText = 'font-size:11px;color:#e53e3e;margin-top:5px;display:none;';
+    fiyatHataT.textContent = 'Geçersiz fiyat. Örnek: 14,85 veya 14.850 veya 14,4458';
+
     const gonder = function() {
       const deger = inp.value.trim();
-      if (!deger) return;
+      if (!deger || !parseFiyat(deger)) {
+        fiyatHataT.style.display = 'block';
+        inp.style.borderColor = '#e53e3e';
+        return;
+      }
+      fiyatHataT.style.display = 'none';
+      inp.style.borderColor = '';
       inp.disabled = true; btn.disabled = true; iptalBtn.disabled = true;
       topluFiyatGirildi(deger);
     };
     btn.onclick = gonder;
     inp.onkeydown = function(e) { if (e.key === 'Enter') gonder(); };
+    inp.oninput = function() { fiyatHataT.style.display = 'none'; inp.style.borderColor = ''; };
     wrap.appendChild(inp);
     wrap.appendChild(btn);
     wrap.appendChild(iptalBtn);
+    wrap.appendChild(fiyatHintT);
+    wrap.appendChild(fiyatHataT);
     addMessage(mesaj, 'bot', wrap);
     setTimeout(function() { inp.focus(); }, 100);
   }
@@ -1470,7 +1499,7 @@
       if (sonraki < kalemler.length) {
         topluAkis.kalem_index = sonraki;
         const sm = kalemler[sonraki];
-        topluFiyatSor('✅ ' + mevcut.aciklama + ': ' + fiyat.toLocaleString('tr-TR') + ' TL/kg\n\n💰 ' + sm.aciklama + ' fiyatı?\n(' + sm.miktar_kg.toLocaleString('tr-TR') + ' kg)');
+        topluFiyatSor('✅ ' + mevcut.aciklama + ': ' + fiyatGoster(fiyat) + ' TL/kg\n\n💰 ' + sm.aciklama + ' fiyatı?\n(' + sm.miktar_kg.toLocaleString('tr-TR') + ' kg)');
       } else {
         const yeni = toplanmis.concat([{ parasut_irsaliye_id: irs.parasut_irsaliye_id, malzemeler, toplanan_fiyatlar, agirlik_kg: irs.toplam_kg }]);
         topluFaturaFiyatAkisi(cariAdi, irsaliyeler, index + 1, yeni);
@@ -1634,9 +1663,31 @@
       addMessage('❌ Fatura işlemi iptal edildi.', 'bot');
     };
 
+    // Hint notu
+    const fiyatHint2 = document.createElement('div');
+    fiyatHint2.style.cssText = 'font-size:10.5px;color:var(--muted);margin-top:5px;line-height:1.6;';
+    fiyatHint2.innerHTML = '💡 Ondalık için <b>virgül</b>: 14,4458 &nbsp;·&nbsp; Binlik için <b>nokta</b>: 14.850';
+
+    // Hata mesajı
+    const fiyatHata2 = document.createElement('div');
+    fiyatHata2.style.cssText = 'font-size:11px;color:#e53e3e;margin-top:5px;display:none;';
+    fiyatHata2.textContent = '⚠️ Geçersiz fiyat. Örnek: 14,85 · 14.850 · 14,4458';
+
     const gonder = function() {
       const deger = inp.value.trim();
-      if (!deger) return;
+      if (!deger) {
+        fiyatHata2.style.display = 'block';
+        inp.style.borderColor = '#e53e3e';
+        return;
+      }
+      const fiyat = parseFiyat(deger);
+      if (!fiyat) {
+        fiyatHata2.style.display = 'block';
+        inp.style.borderColor = '#e53e3e';
+        return;
+      }
+      fiyatHata2.style.display = 'none';
+      inp.style.borderColor = '';
       inp.disabled = true;
       btn.disabled = true;
       iptalBtn.disabled = true;
@@ -1644,10 +1695,13 @@
     };
     btn.onclick = gonder;
     inp.onkeydown = function(e) { if (e.key === 'Enter') gonder(); };
+    inp.oninput = function() { fiyatHata2.style.display = 'none'; inp.style.borderColor = ''; };
 
     wrap.appendChild(inp);
     wrap.appendChild(btn);
     wrap.appendChild(iptalBtn);
+    wrap.appendChild(fiyatHint2);
+    wrap.appendChild(fiyatHata2);
     addMessage(mesaj, 'bot', wrap);
     setTimeout(function() { inp.focus(); }, 100);
   }
@@ -1678,7 +1732,7 @@
         faturaAkisi.index = sonraki;
         const sm = malzeme_listesi[sonraki];
         const sk = malzemeler[sm] || 0;
-        fiyatSor('✅ ' + mevcut + ' (' + mevcut_kg.toLocaleString('tr-TR') + ' kg): ' + fiyat.toLocaleString('tr-TR') + ' TL/kg kaydedildi.\n\n💰 ' + sm + ' fiyatı nedir?\n(' + sk.toLocaleString('tr-TR') + ' kg / ' + (sk / 1000).toFixed(2) + ' ton)');
+        fiyatSor('✅ ' + mevcut + ' (' + mevcut_kg.toLocaleString('tr-TR') + ' kg): ' + fiyatGoster(fiyat) + ' TL/kg kaydedildi.\n\n💰 ' + sm + ' fiyatı nedir?\n(' + sk.toLocaleString('tr-TR') + ' kg / ' + (sk / 1000).toFixed(2) + ' ton)');
       } else {
         await faturaKesVeDevam(irs, malzemeler, toplanan_fiyatlar, null, otomatik_kalan, otomatik_index);
       }
