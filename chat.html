@@ -907,8 +907,13 @@
     };
 
     const tahsilatGonder = async function(onaylandi) {
-      const tutar = parseFloat(inp.value.replace(/\./g, '').replace(',', '.'));
-      if (!tutar || tutar <= 0) { inp.style.borderColor = '#e53e3e'; return; }
+      const tutar = parseFiyat(inp.value);
+      if (!tutar || tutar <= 0) {
+        inp.style.borderColor = '#e53e3e';
+        inp.placeholder = 'Geçersiz! Örn: 4.566 veya 4566,50';
+        return;
+      }
+      inp.style.borderColor = '';
       btn.disabled = true;
       iptalBtn.disabled = true;
       btn.textContent = 'Kaydediliyor…';
@@ -1000,7 +1005,7 @@
     kaydetBtn.textContent = 'Tahsilatı Kaydet';
     kaydetBtn.onclick = async function() {
       const cariAdi = inputs.cari_adi.value.trim();
-      const tutar = parseFloat((inputs.tutar.value || '').replace(/\./g, '').replace(',', '.'));
+      const tutar = parseFiyat(inputs.tutar.value || '');
       if (!cariAdi || !tutar || tutar <= 0) { addMessage('❌ Cari adı ve geçerli tutar giriniz.', 'bot'); return; }
       kaydetBtn.disabled = true;
       kaydetBtn.textContent = 'Kaydediliyor…';
