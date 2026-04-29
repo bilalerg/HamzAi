@@ -486,16 +486,12 @@
   }
 
   function parseFiyat(metin) {
-    metin = metin.trim().toLowerCase()
-      .replace('tl', '').replace('lira', '').replace('₺', '').trim()
-      .replace(',', '.');
-    const noktaSayisi = (metin.match(/\./g) || []).length;
-    if (noktaSayisi === 1) {
-      const parca = metin.split('.');
-      if (parca[1] && parca[1].length === 3) metin = metin.replace('.', '');
-    } else if (noktaSayisi > 1) {
-      metin = metin.replace(/\./g, '');
-    }
+    // KURAL: Nokta = binlik ayraç (yoksay), Virgül = ondalık ayraç
+    // Örnekler: "14,4567" → 14.4567 | "14.850" → 14850 | "14.850,75" → 14850.75 | "14850" → 14850
+    metin = metin.trim()
+      .replace(/tl/gi, '').replace(/lira/gi, '').replace('₺', '').trim();
+    // Önce noktaları kaldır (binlik ayraç), sonra virgülü noktaya çevir (ondalık)
+    metin = metin.replace(/\./g, '').replace(',', '.');
     const f = parseFloat(metin);
     return (f > 0) ? f : null;
   }
@@ -874,10 +870,11 @@
     inp.placeholder = 'Örn: 100000';
 
     const tarihInp = document.createElement('input');
-    tarihInp.type = 'text';
+    tarihInp.type = 'date';
     tarihInp.className = 'fiyat-input';
-    tarihInp.style.maxWidth = '120px';
-    tarihInp.placeholder = 'GG.AA.YYYY';
+    tarihInp.style.maxWidth = '150px';
+    // Bugünü default olarak set et
+    tarihInp.value = new Date().toISOString().split('T')[0];
 
     const btn = document.createElement('button');
     btn.className = 'btn-primary';
@@ -948,7 +945,7 @@
 
     const hint = document.createElement('div');
     hint.style.cssText = 'font-size:10.5px;color:var(--muted2);margin-top:5px;';
-    hint.textContent = 'Tarih boş bırakırsanız bugün kullanılır.';
+    hint.textContent = 'Tarih seçilmezse bugün kullanılır.';
     tutarWrap.appendChild(hint);
 
     wrapParent.appendChild(tutarWrap);
@@ -961,7 +958,7 @@
     const alanlar = [
       { key: 'cari_adi', label: 'Cari adı *', placeholder: 'Firma adı', required: true },
       { key: 'tutar',    label: 'Tutar (TL) *', placeholder: '100000', required: true },
-      { key: 'tarih',    label: 'Tarih',        placeholder: 'GG.AA.YYYY', required: false }
+      { key: 'tarih',    label: 'Tarih',        placeholder: '', required: false, type: 'date' }
     ];
     const inputs = {};
     alanlar.forEach(function(alan) {
@@ -971,9 +968,12 @@
       label.className = 'form-label';
       label.textContent = alan.label;
       const inp = document.createElement('input');
-      inp.type = 'text';
+      inp.type = alan.type || 'text';
       inp.className = 'form-input' + (alan.required ? ' required' : '');
       inp.placeholder = alan.placeholder;
+      if (alan.type === 'date') {
+        inp.value = new Date().toISOString().split('T')[0];
+      }
       inputs[alan.key] = inp;
       row.appendChild(label);
       row.appendChild(inp);

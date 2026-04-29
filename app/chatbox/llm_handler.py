@@ -451,7 +451,13 @@ GENEL KURALLAR:
 - Kısa ve net cevap ver, markdown kullanma
 - Tahsilat eklemeden önce mutlaka onay al: "X firmasına Y TL tahsilat ekleyeceğim, onaylıyor musunuz?"
 - Cari adı belirsizse cari_listesi_getir ile eşleştir, kullanıcıya tekrar sorma
-- Fatura kesemezsin, irsaliye oluşturamazsın — bunlar için yönlendir"""
+- Fatura kesemezsin, irsaliye oluşturamazsın — bunlar için yönlendir
+
+SAYI FORMATI (ÇOK ÖNEMLİ):
+- Kg değerlerini DAIMA Türk formatında yaz: nokta = binlik ayraç → 256.890 kg, 14.350 kg
+- TL değerlerini DAIMA Türk formatında yaz: nokta = binlik, virgül = ondalık → 14.850,75 TL, 402,80 TL
+- YANLIŞ: 402.790 kg, 14850.75 TL, 14,850 TL
+- DOĞRU: 402.790 kg, 14.850,75 TL"""
 
     # Yeni kullanıcı mesajını geçmişe ekle
     gecmis.append({"role": "user", "content": mesaj})

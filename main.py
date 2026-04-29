@@ -13,6 +13,27 @@ from app.core.database import init_db, SessionLocal, engine
 from app.core.logger import logger
 
 
+def tr_para(sayi: float, ondalik: int = 2) -> str:
+    """Türk muhasebe formatı: 256.890,84 TL"""
+    try:
+        # Önce virgülle ondalık ayır
+        formatted = f"{sayi:,.{ondalik}f}"          # Amerikan: 256,890.84
+        # Nokta↔virgül değiştir
+        formatted = formatted.replace(",", "X").replace(".", ",").replace("X", ".")
+        return formatted
+    except Exception:
+        return str(sayi)
+
+
+def tr_kg(sayi: float) -> str:
+    """Türk kg formatı: 256.890 kg"""
+    try:
+        formatted = f"{int(sayi):,}".replace(",", ".")
+        return formatted
+    except Exception:
+        return str(sayi)
+
+
 # HTML şablonunu dosyadan oku
 _HTML_PATH = Path(__file__).parent / "chat.html"
 _HTML_CACHE: str | None = None
@@ -366,7 +387,7 @@ async def tahsilat_ekle_endpoint(request: Request):
                     if guncel_bakiye > 0 and girilen_tutar > guncel_bakiye:
                         logger.warning(
                             f"Fazla tahsilat girisimi: {cari_adi} | "
-                            f"bakiye={guncel_bakiye:,.0f} TL | girilen={girilen_tutar:,.0f} TL"
+                            f"bakiye={tr_para(guncel_bakiye,2)} TL | girilen={tr_para(girilen_tutar,2)} TL"
                         )
                         return JSONResponse({
                             "basarili": False,
@@ -376,22 +397,28 @@ async def tahsilat_ekle_endpoint(request: Request):
                             "cevap": (
                                 f"Fazla tutar uyarisi!\n\n"
                                 f"{cari_adi}\n"
-                                f"Guncel bakiye: {guncel_bakiye:,.0f} TL\n"
-                                f"Girilen tutar: {girilen_tutar:,.0f} TL\n\n"
-                                f"Girilen tutar bakiyeden {girilen_tutar - guncel_bakiye:,.0f} TL fazla. "
+                                f"Guncel bakiye: {tr_para(guncel_bakiye,2)} TL\n"
+                                f"Girilen tutar: {tr_para(girilen_tutar,2)} TL\n\n"
+                                f"Girilen tutar bakiyeden {tr_para(girilen_tutar - guncel_bakiye,2)} TL fazla. "
                                 f"Yine de devam etmek istiyor musunuz?"
                             )
                         })
             except Exception as bakiye_err:
                 logger.warning(f"Bakiye kontrolu atlandi: {bakiye_err}")
 
-        # Tarih formatla
+        # Tarih formatla — date picker YYYY-MM-DD veya GG.AA.YYYY formatı kabul et
         tarih_str = None
-        if tarih:
-            try:
-                tarih_str = datetime.strptime(tarih, "%d.%m.%Y").strftime("%Y-%m-%d")
-            except Exception:
-                tarih_str = None
+        if tarih and tarih.strip():
+            tarih = tarih.strip()
+            for fmt in ["%Y-%m-%d", "%d.%m.%Y", "%d-%m-%Y", "%d/%m/%Y"]:
+                try:
+                    tarih_str = datetime.strptime(tarih, fmt).strftime("%Y-%m-%d")
+                    break
+                except Exception:
+                    continue
+            if not tarih_str:
+                logger.warning(f"Geçersiz tarih formatı: {tarih} — bugün kullanılıyor")
+                # Geçersiz tarih gelirse bugünü kullan, hata döndürme
 
         sonuc = tahsilat_ekle(cari_adi, float(tutar), aciklama or f"{cari_adi} tahsilat", tarih_str)
 
@@ -409,7 +436,7 @@ async def tahsilat_ekle_endpoint(request: Request):
                 "cevap": (
                     f"✅ Tahsilat kaydedildi!\n\n"
                     f"🏢 Cari: {cari_adi}\n"
-                    f"💰 Tutar: {float(tutar):,.0f} TL\n"
+                    f"💰 Tutar: {tr_para(float(tutar),2)} TL\n"
                     f"📅 Tarih: {tarih or 'Bugün'}\n"
                     f"Paraşüt'e kaydedildi."
                 )
@@ -705,7 +732,7 @@ async def toplu_fatura_kes_endpoint(request: Request):
                         "type": "sales_invoice_details",
                         "attributes": {
                             "quantity": kg,
-                            "unit_price": str(float(fiyat)),
+                            "unit_price": f"{float(fiyat):.4f}",
                             "vat_rate": 0,
                             "description": f"{malzeme_adi} — {kg:,} kg"
                         },
@@ -721,9 +748,9 @@ async def toplu_fatura_kes_endpoint(request: Request):
                     "type": "sales_invoice_details",
                     "attributes": {
                         "quantity": kg,
-                        "unit_price": str(birim_fiyat),
+                        "unit_price": f"{float(birim_fiyat):.4f}",
                         "vat_rate": 0,
-                        "description": f"Hurda — {kg:,.0f} kg"
+                        "description": f"Hurda — {tr_kg(kg)} kg"
                     },
                     "relationships": {
                         "product": {"data": {"type": "products", "id": str(PARASUT_HURDA_PRODUCT_ID)}}
@@ -840,7 +867,7 @@ async def fatura_kes_endpoint(request: Request):
                     "type": "sales_invoice_details",
                     "attributes": {
                         "quantity": kg,
-                        "unit_price": str(float(fiyat)),
+                        "unit_price": f"{float(fiyat):.4f}",
                         "vat_rate": 0,
                         "description": f"{malzeme_adi} — {kg:,} kg"
                     },
@@ -856,9 +883,9 @@ async def fatura_kes_endpoint(request: Request):
                 "type": "sales_invoice_details",
                 "attributes": {
                     "quantity": kg,
-                    "unit_price": str(birim_fiyat),
+                    "unit_price": f"{float(birim_fiyat):.4f}",
                     "vat_rate": 0,
-                    "description": f"Hurda — {kg:,.0f} kg"
+                    "description": f"Hurda — {tr_kg(kg)} kg"
                 },
                 "relationships": {
                     "product": {"data": {"type": "products", "id": str(PARASUT_HURDA_PRODUCT_ID)}}
@@ -927,7 +954,7 @@ async def fatura_kes_endpoint(request: Request):
         ozet = f"✅ Fatura kesildi!\n\n🏢 {cari_adi}\n"
         for malzeme_adi_ozet, fiyat_ozet in toplanan_fiyatlar.items():
             kg_val = malzemeler.get(malzeme_adi_ozet, agirlik_kg) if malzemeler else agirlik_kg
-            ozet += f"  • {malzeme_adi_ozet if malzemeler and len(toplanan_fiyatlar) > 1 else 'Hurda'}: {kg_val:,.0f} kg × {fiyat_ozet:,.0f} TL/kg = {int(kg_val * fiyat_ozet):,} TL\n"
+            ozet += f"  • {malzeme_adi_ozet if malzemeler and len(toplanan_fiyatlar) > 1 else 'Hurda'}: {tr_kg(kg_val)} kg × {tr_para(fiyat_ozet, 4)} TL/kg = {tr_para(kg_val * fiyat_ozet, 2)} TL\n"
         ozet += f"\n💵 Toplam: {int(toplam_tutar):,} TL\n"
         ozet += f"🧾 Fatura No: {fatura_id}"
 
