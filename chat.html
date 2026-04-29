@@ -855,6 +855,10 @@
     baslik.style.cssText = 'font-size:13px;font-weight:500;color:var(--text);margin-bottom:10px;';
     baslik.textContent = '💵 Tahsilat Ekle';
     wrap.appendChild(baslik);
+    const tahsilatInfo = document.createElement('div');
+    tahsilatInfo.style.cssText = 'font-size:12px;color:var(--muted);margin-bottom:10px;padding:8px 12px;background:var(--accent-lt);border-radius:8px;border-left:3px solid var(--accent);';
+    tahsilatInfo.textContent = 'Tahsilat eklemek istediğiniz müşteriyi aşağıdan seçin.';
+    wrap.appendChild(tahsilatInfo);
 
     const { wrap: ddWrap } = cariSecimDropdown(siralanmis, function(c) {
       ddWrap.querySelector('input').disabled = true;
@@ -1128,6 +1132,10 @@
     baslik.style.cssText = 'font-size:13px;font-weight:500;color:var(--text);margin-bottom:10px;';
     baslik.textContent = '🔍 Fatura Sorgula';
     wrap.appendChild(baslik);
+    const faturaInfo = document.createElement('div');
+    faturaInfo.style.cssText = 'font-size:12px;color:var(--muted);margin-bottom:10px;padding:8px 12px;background:var(--accent-lt);border-radius:8px;border-left:3px solid var(--accent);';
+    faturaInfo.textContent = 'Faturalarını görüntülemek istediğiniz müşteriyi seçin.';
+    wrap.appendChild(faturaInfo);
 
     const { wrap: ddWrap } = cariSecimDropdown(cariler, function(c) {
       cariFaturalariniGetir(c.ad, wrap);
@@ -1309,6 +1317,10 @@
       baslik.style.cssText = 'font-size:13px;font-weight:500;color:var(--text);margin-bottom:10px;';
       baslik.textContent = '🧾 Toplu Fatura';
       wrap.appendChild(baslik);
+      const topluInfo = document.createElement('div');
+      topluInfo.style.cssText = 'font-size:12px;color:var(--muted);margin-bottom:10px;padding:8px 12px;background:var(--accent-lt);border-radius:8px;border-left:3px solid var(--accent);';
+      topluInfo.textContent = 'Toplu fatura kesmek istediğiniz müşteriyi seçin. Birden fazla irsaliyeyi tek faturada birleştirebilirsiniz.';
+      wrap.appendChild(topluInfo);
 
       const { wrap: ddWrap } = cariSecimDropdown(cariListesi, function(c) {
         ddWrap.querySelector('input').disabled = true;
@@ -1544,6 +1556,10 @@
     baslik.style.cssText = 'font-size:13px;font-weight:500;color:var(--text);margin-bottom:10px;';
     baslik.textContent = '➕ Yeni Cari Oluştur';
     wrap.appendChild(baslik);
+    const cariInfo = document.createElement('div');
+    cariInfo.style.cssText = 'font-size:12px;color:var(--muted);margin-bottom:10px;padding:8px 12px;background:var(--accent-lt);border-radius:8px;border-left:3px solid var(--accent);';
+    cariInfo.textContent = 'Yeni müşteri bilgilerini doldurun. Yıldızlı (*) alanlar zorunludur.';
+    wrap.appendChild(cariInfo);
 
     const formWrap = document.createElement('div');
     formWrap.className = 'form-wrap';
