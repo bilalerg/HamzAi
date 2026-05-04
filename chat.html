@@ -816,7 +816,7 @@
     btn.innerHTML = '<span class="btn-icon">⏳</span> Yenileniyor…';
     btn.disabled = true;
     try {
-      await fetch('/api/cariler?refresh=1');
+      await carileriGetir(true);  // Cache'i zorla yenile
       btn.innerHTML = '<span class="btn-icon">✅</span> Yenilendi!';
       setTimeout(function() {
         btn.innerHTML = orijinal;
@@ -1316,15 +1316,14 @@
   async function bakiyeleriGoster(onMusteriFiltreParam) {
     showTyping();
     try {
-      const res = await fetch('/api/cariler');
-      const data = await res.json();
+      const carilerData = await carileriGetir(false);
       removeTyping();
-      if (!data.cariler || data.cariler.length === 0) {
+      if (!carilerData || carilerData.length === 0) {
         addMessage('Kayıtlı cari bulunamadı.', 'bot');
         return;
       }
       // Params'tan müşteri adı geldiyse otomatik filtrele
-      let cariler = data.cariler;
+      let cariler = carilerData;
       if (onMusteriFiltreParam) {
         const filtre = onMusteriFiltreParam.toLowerCase();
         const eslesen = cariler.filter(function(c) { return c.ad.toLowerCase().includes(filtre); });
@@ -1383,9 +1382,7 @@
     showTyping();
     let cariler = [];
     try {
-      const res = await fetch('/api/cariler');
-      const d = await res.json();
-      cariler = d.cariler || [];
+      cariler = await carileriGetir(false);
     } catch {}
     removeTyping();
 
@@ -1594,9 +1591,7 @@
     showTyping();
     let cariler = [];
     try {
-      const res = await fetch('/api/cariler');
-      const data = await res.json();
-      cariler = data.cariler || [];
+      cariler = await carileriGetir(false);
     } catch {}
     removeTyping();
 
@@ -1887,9 +1882,7 @@
     showTyping();
     let cariler = [];
     try {
-      const res = await fetch('/api/cariler');
-      const data = await res.json();
-      cariler = data.cariler || [];
+      cariler = await carileriGetir(false);
     } catch {}
     removeTyping();
 
@@ -2668,6 +2661,37 @@
       fiyatSor(irs.cari_adi + ' — birim fiyat? (TL/kg)\n⚖️ ' + (irs.toplam_kg||0).toLocaleString('tr-TR') + ' kg');
     }
   }
+
+  // ── CARİ ÖN YÜKLEME ─────────────────────────────────────────────
+  // Sayfa açılınca arka planda cari listesini çek ve cache'e al.
+  // Böylece kullanıcı herhangi bir modülü açtığında bekleme olmaz.
+  let _cariCache = null;
+  let _cariCacheZamani = 0;
+  const CARI_CACHE_SURE = 15 * 60 * 1000; // 15 dakika
+
+  async function carileriGetir(forceRefresh) {
+    const simdi = Date.now();
+    if (!forceRefresh && _cariCache && (simdi - _cariCacheZamani) < CARI_CACHE_SURE) {
+      return _cariCache;
+    }
+    try {
+      const res = await fetch('/api/cariler' + (forceRefresh ? '?refresh=1' : ''));
+      const data = await res.json();
+      _cariCache = data.cariler || [];
+      _cariCacheZamani = Date.now();
+      return _cariCache;
+    } catch {
+      return _cariCache || [];
+    }
+  }
+
+  // Sayfa açılınca arka planda yükle — kullanıcı beklemez
+  (async function() {
+    try {
+      await carileriGetir(false);
+      console.log('✅ Cari cache hazır: ' + (_cariCache ? _cariCache.length : 0) + ' cari');
+    } catch {}
+  })();
 
   window.onload = function() { inputEl.focus(); };
 </script>
