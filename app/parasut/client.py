@@ -491,66 +491,80 @@ def hesap_ozeti_getir() -> dict:
 
 def islem_gecmisi_getir(cari_id: str, baslangic: str = None, bitis: str = None) -> dict:
     """
-    Belirli bir carinin tüm işlem geçmişini getirir.
-    GET /transactions?filter[contact_id]=X kullanır.
-    Tarih filtresi Python tarafında yapılır (API native desteklemiyor).
-
-    Returns:
-        {
-            "bakiye": float,
-            "islemler": [{"tarih", "tur", "aciklama", "tutar", "bakiye_sonrasi"}, ...]
-        }
+    Belirli bir carinin işlem geçmişini getirir.
+    sales_invoices + payments ayrı ayrı çekip birleştirir.
+    Tarih filtresi Python tarafında yapılır.
     """
     try:
-        # Cari bakiyesi
         cari = cari_detay_getir(cari_id)
         bakiye = cari.get("bakiye", 0.0)
-
-        # Tüm işlem geçmişi — transactions endpoint
         islemler = []
-        page = 1
-        while True:
-            sonuc = parasut_get(
-                f"/{PARASUT_COMPANY_ID}/transactions",
+
+        # 1. Faturalar
+        fatura_sonuc = parasut_get(
+            f"/{PARASUT_COMPANY_ID}/sales_invoices",
+            params={
+                "filter[contact_id]": cari_id,
+                "page[size]": 25,
+                "sort": "-issue_date"
+            }
+        )
+        for f in fatura_sonuc.get("data", []):
+            attr = f.get("attributes", {})
+            tarih = attr.get("issue_date", "-")
+            if baslangic and tarih < baslangic:
+                continue
+            if bitis and tarih > bitis:
+                continue
+            try:
+                tutar = float(attr.get("gross_total") or 0)
+            except (ValueError, TypeError):
+                tutar = 0.0
+            islemler.append({
+                "id": f.get("id"),
+                "tarih": tarih,
+                "tur": "sales_invoice",
+                "aciklama": attr.get("description") or "Satış Faturası",
+                "tutar": tutar,
+                "durum": attr.get("payment_status", "-"),
+                "kalan": float(attr.get("remaining") or 0),
+            })
+
+        # 2. Tahsilatlar — payments endpoint
+        try:
+            odeme_sonuc = parasut_get(
+                f"/{PARASUT_COMPANY_ID}/payments",
                 params={
                     "filter[contact_id]": cari_id,
                     "page[size]": 25,
-                    "page[number]": page,
                     "sort": "-date"
                 }
             )
-            data = sonuc.get("data", [])
-            if not data:
-                break
-
-            for item in data:
-                attr = item.get("attributes", {})
+            for p in odeme_sonuc.get("data", []):
+                attr = p.get("attributes", {})
                 tarih = attr.get("date", "-")
-
-                # Tarih filtresi — Python tarafında
                 if baslangic and tarih < baslangic:
                     continue
                 if bitis and tarih > bitis:
                     continue
-
                 try:
                     tutar = float(attr.get("amount") or 0)
-                    bakiye_sonrasi = float(attr.get("running_balance") or 0)
                 except (ValueError, TypeError):
-                    tutar = bakiye_sonrasi = 0.0
-
+                    tutar = 0.0
                 islemler.append({
-                    "id": item.get("id"),
+                    "id": p.get("id"),
                     "tarih": tarih,
-                    "tur": attr.get("transaction_type", "-"),
-                    "aciklama": attr.get("description") or "-",
-                    "tutar": tutar,
-                    "bakiye_sonrasi": bakiye_sonrasi,
+                    "tur": "payment",
+                    "aciklama": attr.get("description") or "Tahsilat",
+                    "tutar": -tutar,  # Tahsilat negatif — borcu düşürür
+                    "durum": "paid",
+                    "kalan": 0,
                 })
+        except Exception as pe:
+            logger.warning(f"Tahsilatlar çekilemedi: {pe}")
 
-            if len(data) < 25:
-                break
-            page += 1
+        # Tarihe göre sırala
+        islemler.sort(key=lambda x: x.get("tarih", ""), reverse=True)
 
         logger.info(f"İşlem geçmişi: cari_id={cari_id} toplam={len(islemler)} işlem")
         return {
