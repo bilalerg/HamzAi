@@ -1,272 +1,69 @@
-# llm_handler.py — Profaix Web Chatbot
+# llm_handler.py — Profaix Intent Classifier
+#
+# MİMARİ DEĞİŞİKLİK:
+# Eski: Haiku tool çağırarak Paraşüt'ten veri çekiyor, karar alıyordu (güvensiz)
+# Yeni: Haiku SADECE kullanıcının niyetini tespit eder (intent classifier)
+#       Gerçek veri çekme ve aksiyon tamamen frontend + FastAPI endpoint'lerde
+#
+# NEDEN DAHA GÜVENLİ?
+# - Model hiç veri görmüyor → halüsinasyon riski yok
+# - Paraşüt API'ye model üzerinden istek gitmiyor
+# - 1500 cari / binlerce fatura verisi context'e girmiyor
+# - Her yanıt deterministik — aynı input, aynı output
 
 import json
-import re
 import anthropic
 from datetime import date
 from app.core.config import ANTHROPIC_API_KEY
 from app.core.logger import logger
 
-# ── SABİTLER ──────────────────────────────────────────────────────────
-MAX_GECMIS = 20       # Tool mesajları da dahil olduğu için artırıldı
-MODEL      = "claude-haiku-4-5-20251001"
-
+MODEL = "claude-haiku-4-5-20251001"
 _client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
-TOOLS = [
-    {
-        "name": "cari_listesi_getir",
-        "description": "Paraşüt'teki carilerde arama yapar. arama_metni boş bırakılırsa tümünü listeler.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "arama_metni": {"type": "string", "description": "Aranacak firma adının bir kısmı (örn: 'Kroman', 'UHT'). Boş bırakılırsa tüm cariler gelir."}
-            },
-            "required": []
-        }
-    },
-    {
-        "name": "cari_detay_getir",
-        "description": "Belirli bir carinin detaylarını getirir: adres, telefon, email, vergi no, bakiye.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "cari_adi": {"type": "string", "description": "Cari adı (örn: Samsun Makine, Kroman)"}
-            },
-            "required": ["cari_adi"]
-        }
-    },
-    {
-        "name": "cari_faturalari_getir",
-        "description": "Belirli bir carinin faturalarını listeler. Tahsilat geçmişini görmek için de kullan — her fatura tahsilatları içerir.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "cari_adi": {"type": "string", "description": "Cari adı"},
-                "limit": {"type": "integer", "description": "Kaç fatura (varsayılan 10)", "default": 10}
-            },
-            "required": ["cari_adi"]
-        }
-    },
-    {
-        "name": "cari_irsaliyeleri_getir",
-        "description": "Belirli bir carinin Paraşüt'teki irsaliyelerini listeler. NOT: Fatura kesilen irsaliyeler silinir, bu nedenle çoğunlukla boş döner. Bekleyen irsaliyeler için bu tool yerine kullanıcıya 'bekleyen irsaliyeler butonuna tıkla' de.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "cari_adi": {"type": "string", "description": "Cari adı"},
-                "limit": {"type": "integer", "description": "Kaç irsaliye (varsayılan 5)", "default": 5}
-            },
-            "required": ["cari_adi"]
-        }
-    },
-    {
-        "name": "acik_faturalar_getir",
-        "description": "Tüm ödenmemiş/gecikmiş faturaları listeler.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "limit": {"type": "integer", "description": "Kaç fatura (varsayılan 25)", "default": 25}
-            },
-            "required": []
-        }
-    },
-    {
-        "name": "hesap_ozeti_getir",
-        "description": "Genel hesap özeti: toplam alacak, borç, cari sayısı.",
-        "input_schema": {"type": "object", "properties": {}, "required": []}
-    },
-    {
-        "name": "tahsilat_ekle",
-        "description": "Paraşüt'te belirli bir cariye tahsilat kaydı ekler. ZORUNLU: Çağırmadan önce kullanıcıya 'X firmasına Y TL tahsilat ekleyeceğim, onaylıyor musunuz?' diye sor ve onay al.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "cari_adi": {"type": "string", "description": "Cari adı"},
-                "tutar": {"type": "number", "description": "Tahsilat tutarı (TL)"},
-                "aciklama": {"type": "string", "description": "Açıklama (opsiyonel)"},
-                "tarih": {"type": "string", "description": "Tarih — GG.AA.YYYY veya YYYY-MM-DD formatında (opsiyonel)"}
-            },
-            "required": ["cari_adi", "tutar"]
-        }
-    },
-    {
-        "name": "fatura_detay_getir",
-        "description": "Belirli bir faturanın detaylarını getirir: kalemler, tahsilatlar, bağlı irsaliyeler.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "fatura_id": {"type": "string", "description": "Fatura ID (örn: 1083916460)"}
-            },
-            "required": ["fatura_id"]
-        }
-    },
-    {
-        "name": "cari_olustur",
-        "description": "Paraşüt'te yeni cari oluşturur. Tüm bilgiler toplandıktan sonra çağır.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "firma_adi": {"type": "string", "description": "Firma adı (zorunlu)"},
-                "email": {"type": "string"},
-                "telefon": {"type": "string"},
-                "vergi_no": {"type": "string"},
-                "vergi_dairesi": {"type": "string"},
-                "adres": {"type": "string"}
-            },
-            "required": ["firma_adi"]
-        }
-    },
-]
+# ── INTENT TANIMI ─────────────────────────────────────────────────────
+# Her intent bir frontend fonksiyonuna karşılık gelir.
+# Frontend bu string'i alır, doğru butonu/akışı tetikler.
+# "none" → Genel soru, yönlendirme yok, Haiku cevap yazar
+INTENTLER = {
+    "bekleyen_irsaliyeler":  "Bekleyen (faturalanmamış) irsaliyeleri listeler",
+    "toplu_fatura":          "Toplu fatura kesme akışını başlatır",
+    "fatura_sorgula":        "Fatura listesi ve sorgulama ekranını açar",
+    "tahsilat_ekle":         "Tahsilat ekleme formunu açar",
+    "yeni_cari":             "Yeni cari oluşturma formunu açar",
+    "musteri_bakiyeleri":    "Tüm müşteri bakiyelerini listeler",
+    "hesap_ozeti":           "Genel hesap özetini gösterir",
+    "gunluk_ozet":           "Günlük özeti gösterir",
+    "son_fisler":            "Son yüklenen fişleri listeler",
+    "none":                  "Genel soru veya sistem hakkında bilgi — yönlendirme yok"
+}
 
+INTENT_LISTESI = "\n".join([f"- {k}: {v}" for k, v in INTENTLER.items()])
 
-# ── TOOL ÇALIŞTIR ─────────────────────────────────────────────────────
+SISTEM_PROMPTU = f"""Sen Profaix muhasebe sisteminin intent classifier'ısın.
 
-def _tool_calistir(tool_name: str, tool_input: dict, db=None) -> str:
-    try:
-        from app.parasut.client import (
-            cari_listesi_getir, cari_detay_getir, cari_faturalari_getir,
-            cari_irsaliyeleri_getir, acik_faturalar_getir, hesap_ozeti_getir,
-            cari_olustur, cari_id_bul
-        )
+GÖREVIN TEK VE NET:
+Kullanıcının mesajını oku, hangi işlemi yapmak istediğini anla, sadece JSON döndür.
 
-        if tool_name == "cari_listesi_getir":
-            arama = tool_input.get("arama_metni", "").strip().lower()
-            cariler = cari_listesi_getir()
-            if arama:
-                cariler = [c for c in cariler if arama in c["ad"].lower()]
-            kirpilmis = [{"id": c["id"], "ad": c["ad"], "bakiye": c.get("bakiye", 0)} for c in cariler]
-            return json.dumps(kirpilmis, ensure_ascii=False)
+MEVCUT İNTENTLER:
+{INTENT_LISTESI}
 
-        elif tool_name == "cari_detay_getir":
-            cari_adi = tool_input.get("cari_adi", "")
-            cari_id = cari_id_bul(cari_adi)
-            if not cari_id:
-                return f"'{cari_adi}' adlı cari bulunamadı."
-            return json.dumps(cari_detay_getir(cari_id), ensure_ascii=False)
+YANIT FORMATI (SADECE BU JSON, BAŞKA HİÇBİR ŞEY YAZMA):
+{{"intent": "intent_adi", "mesaj": "Kullanıcıya gösterilecek kısa Türkçe mesaj"}}
 
-        elif tool_name == "cari_faturalari_getir":
-            cari_adi = tool_input.get("cari_adi", "")
-            limit = min(tool_input.get("limit", 5), 10)
-            cari_id = cari_id_bul(cari_adi)
-            if not cari_id:
-                return f"'{cari_adi}' adlı cari bulunamadı."
-            return json.dumps(cari_faturalari_getir(cari_id, limit), ensure_ascii=False)
+KURALLAR:
+- mesaj alanı maksimum 1 cümle, Türkçe, nazik
+- Eğer istek açıkça bir intent'e karşılık geliyorsa o intent'i seç
+- Eğer belirsizse veya genel bir soruysa intent = "none" yaz, mesaj alanında kısa cevap ver
+- ASLA tool çağırma, ASLA veri getirme, ASLA hesaplama yapma
+- Sadece niyeti tespit et
 
-        elif tool_name == "cari_irsaliyeleri_getir":
-            cari_adi = tool_input.get("cari_adi", "")
-            limit = min(tool_input.get("limit", 5), 10)
-            cari_id = cari_id_bul(cari_adi)
-            if not cari_id:
-                return f"'{cari_adi}' adlı cari bulunamadı."
-            return json.dumps(cari_irsaliyeleri_getir(cari_id, limit), ensure_ascii=False)
-
-        elif tool_name == "acik_faturalar_getir":
-            return json.dumps(acik_faturalar_getir(), ensure_ascii=False)
-
-        elif tool_name == "hesap_ozeti_getir":
-            ozet = hesap_ozeti_getir()
-            return json.dumps({
-                "toplam_cari": ozet.get("toplam_cari", 0),
-                "toplam_alacak": ozet.get("toplam_alacak", 0),
-                "toplam_borclu": ozet.get("toplam_borclu", 0),
-            }, ensure_ascii=False)
-
-        elif tool_name == "tahsilat_ekle":
-            from app.parasut.client import tahsilat_ekle
-            cari_adi = tool_input.get("cari_adi", "")
-            tutar    = tool_input.get("tutar", 0)
-            aciklama = tool_input.get("aciklama")
-            tarih    = tool_input.get("tarih")
-            if tarih:
-                from datetime import datetime
-                tarih_parsed = None
-                for fmt in ["%d.%m.%Y", "%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y"]:
-                    try:
-                        tarih_parsed = datetime.strptime(str(tarih).strip(), fmt).strftime("%Y-%m-%d")
-                        break
-                    except Exception:
-                        continue
-                tarih = tarih_parsed
-            sonuc = tahsilat_ekle(cari_adi, tutar, aciklama, tarih)
-
-            if sonuc.get("basarili") and db is not None:
-                try:
-                    from app.core.database import IslemLog
-                    log = IslemLog(
-                        islem_tipi="TAHSILAT_EKLENDI",
-                        cari_adi=cari_adi,
-                        tutar=int(float(tutar)),
-                        aciklama=f"LLM | Tarih: {tarih or 'Bugün'} | {aciklama or ''}",
-                    )
-                    db.add(log)
-                    db.commit()
-                except Exception as log_err:
-                    logger.warning(f"IslemLog yazılamadı: {log_err}")
-
-            return json.dumps(sonuc, ensure_ascii=False)
-
-        elif tool_name == "fatura_detay_getir":
-            from app.parasut.client import fatura_detay_getir
-            fatura_id = tool_input.get("fatura_id", "")
-            detay = fatura_detay_getir(fatura_id)
-            return json.dumps(detay, ensure_ascii=False)
-
-        elif tool_name == "cari_olustur":
-            sonuc = cari_olustur(
-                firma_adi=tool_input.get("firma_adi"),
-                email=tool_input.get("email"),
-                telefon=tool_input.get("telefon"),
-                vergi_no=tool_input.get("vergi_no"),
-                vergi_dairesi=tool_input.get("vergi_dairesi"),
-                adres=tool_input.get("adres")
-            )
-            return json.dumps(sonuc, ensure_ascii=False)
-
-        else:
-            return f"Bilinmeyen tool: {tool_name}"
-
-    except Exception as e:
-        logger.error(f"Tool çalıştırma hatası ({tool_name}): {e}")
-        return json.dumps({"hata": "İşlem sırasında teknik bir sorun oluştu. Kullanıcıdan işlemi tekrar etmesini iste.", "detay": str(e)}, ensure_ascii=False)
-
-
-# ── DB CONTEXT — MİNİMAL ─────────────────────────────────────────────
-
-def db_context_hazirla(db) -> str:
-    from app.core.database import WeighTicket, TicketStatus
-    from sqlalchemy import func
-    bugun = date.today()
-    bugun_str = bugun.strftime("%Y-%m-%d")
-    try:
-        toplam_fis = db.query(func.count(WeighTicket.id)).filter(
-            WeighTicket.created_at >= bugun_str
-        ).scalar() or 0
-
-        bugun_kg = db.query(func.sum(WeighTicket.agirlik_kg)).filter(
-            WeighTicket.created_at >= bugun_str
-        ).scalar() or 0
-
-        tamamlanan = db.query(func.count(WeighTicket.id)).filter(
-            WeighTicket.created_at >= bugun_str,
-            WeighTicket.status == TicketStatus.TAMAMLANDI
-        ).scalar() or 0
-
-        bekleyen = db.query(func.count(WeighTicket.id)).filter(
-            WeighTicket.created_at >= bugun_str,
-            WeighTicket.status.notin_([
-                TicketStatus.TAMAMLANDI, TicketStatus.IPTAL, TicketStatus.HATA
-            ])
-        ).scalar() or 0
-
-        return (
-            f"Bugün ({bugun.strftime('%d.%m.%Y')}): "
-            f"{toplam_fis} fiş / {bugun_kg/1000:.1f} ton | "
-            f"tamamlanan={tamamlanan} bekleyen={bekleyen}"
-        )
-    except Exception as e:
-        logger.error(f"DB context hatası: {e}")
-        return f"Bugün: {bugun.strftime('%d.%m.%Y')}"
+ÖRNEKLER:
+"bekleyen irsaliyeler var mı" → {{"intent": "bekleyen_irsaliyeler", "mesaj": "Bekleyen irsaliyeleriniz getiriliyor..."}}
+"kroman ne kadar borçlu" → {{"intent": "musteri_bakiyeleri", "mesaj": "Müşteri bakiyeleri açılıyor, oradan arayabilirsiniz."}}
+"tahsilat girdim" → {{"intent": "tahsilat_ekle", "mesaj": "Tahsilat ekleme ekranı açılıyor."}}
+"nasıl çalışıyorsun" → {{"intent": "none", "mesaj": "Sol menüden işlem seçebilir veya fiş fotoğrafı yükleyebilirsiniz."}}
+"merhaba" → {{"intent": "none", "mesaj": "Merhaba! Size nasıl yardımcı olabilirim?"}}
+"""
 
 
 # ── SESSION YÖNETİMİ ──────────────────────────────────────────────────
@@ -276,13 +73,11 @@ def _session_yukle(db, session_id: str):
     return db.query(ChatSession).filter(ChatSession.session_id == session_id).first()
 
 
-def _session_kaydet(db, session_id: str, isim: str, gecmis_saf: list,
-                    yeni_mesaj_user: dict = None, yeni_mesaj_asistan: dict = None,
-                    tool_log: list = None):
+def _session_kaydet(db, session_id: str, user_mesaj: str, bot_mesaj: str):
     from app.core.database import ChatSession
     try:
         session = db.query(ChatSession).filter(ChatSession.session_id == session_id).first()
-        gecmis_json = json.dumps(gecmis_saf, ensure_ascii=False)
+        bugun = str(date.today())
 
         tam_gecmis = []
         if session and session.tam_gecmis:
@@ -291,32 +86,20 @@ def _session_kaydet(db, session_id: str, isim: str, gecmis_saf: list,
             except Exception:
                 tam_gecmis = []
 
-        bugun_str = str(date.today())
+        tam_gecmis.append({"role": "user",     "content": user_mesaj, "ts": bugun})
+        tam_gecmis.append({"role": "assistant", "content": bot_mesaj,  "ts": bugun})
 
-        if yeni_mesaj_user:
-            tam_gecmis.append({**yeni_mesaj_user, "ts": bugun_str})
-
-        if tool_log:
-            for t in tool_log:
-                tam_gecmis.append({**t, "ts": bugun_str})
-
-        if yeni_mesaj_asistan:
-            tam_gecmis.append({**yeni_mesaj_asistan, "ts": bugun_str})
-
-        if len(tam_gecmis) > 200:
-            tam_gecmis = tam_gecmis[-200:]
+        if len(tam_gecmis) > 100:
+            tam_gecmis = tam_gecmis[-100:]
 
         tam_gecmis_json = json.dumps(tam_gecmis, ensure_ascii=False)
 
         if session:
-            session.isim       = isim
-            session.gecmis     = gecmis_json
             session.tam_gecmis = tam_gecmis_json
         else:
             session = ChatSession(
                 session_id=session_id,
-                isim=isim,
-                gecmis=gecmis_json,
+                isim="Kullanıcı",
                 tam_gecmis=tam_gecmis_json
             )
             db.add(session)
@@ -327,217 +110,63 @@ def _session_kaydet(db, session_id: str, isim: str, gecmis_saf: list,
         db.rollback()
 
 
-# ── MESAJ GEÇMİŞİ SERİALİZASYONU ────────────────────────────────────
-
-def _content_serialize(content) -> list | str:
-    if isinstance(content, str):
-        return content
-    result = []
-    for b in content:
-        if hasattr(b, "type"):
-            if b.type == "text":
-                result.append({"type": "text", "text": b.text})
-            elif b.type == "tool_use":
-                result.append({"type": "tool_use", "id": b.id, "name": b.name, "input": b.input})
-        elif isinstance(b, dict):
-            result.append(b)
-    return result
-
-
-def _gecmis_saf_cikart(gecmis: list) -> list:
-    """
-    Tam geçmişten (tool_use/tool_result içerebilir) sadece
-    string content'li user/assistant mesajlarını çıkarır.
-    """
-    saf = []
-    for m in gecmis:
-        content = m.get("content")
-        if isinstance(content, str) and content.strip():
-            saf.append({"role": m["role"], "content": content})
-    return saf
-
-
-def _gecmis_kirp(gecmis: list, max_adet: int) -> list:
-    """
-    Geçmişi güvenli şekilde kırpar.
-    - tool_use/tool_result çiftlerini asla ortadan kesmez
-    - Her zaman user mesajıyla başlar
-    - max_adet: tutulacak maksimum mesaj sayısı
-    """
-    if len(gecmis) <= max_adet:
-        return gecmis
-
-    kirpilmis = gecmis[-max_adet:]
-
-    # Baştan user olmayan mesajları at (tool_result veya assistant ile başlamamalı)
-    while kirpilmis and kirpilmis[0].get("role") != "user":
-        kirpilmis = kirpilmis[1:]
-
-    # Başta tool_result içeren user mesajı varsa onu da at
-    # (tool_result, önceki tool_use olmadan geçersizdir)
-    while kirpilmis and kirpilmis[0].get("role") == "user":
-        content = kirpilmis[0].get("content", "")
-        if isinstance(content, list) and any(
-            isinstance(c, dict) and c.get("type") == "tool_result" for c in content
-        ):
-            # Bu user mesajı sadece tool_result içeriyor, önceki tool_use yok — at
-            kirpilmis = kirpilmis[1:]
-        else:
-            break
-
-    return kirpilmis
-
-
 # ── ANA FONKSİYON ─────────────────────────────────────────────────────
 
-def soru_cevapla(mesaj: str, db, gonderen: str = "") -> str:
-    session = _session_yukle(db, gonderen)
+def soru_cevapla(mesaj: str, db, gonderen: str = "") -> dict:
+    """
+    Kullanıcı mesajını alır, intent + mesaj döndürür.
 
-    if session is None:
-        _session_kaydet(db, gonderen, isim="Kullanıcı", gecmis_saf=[])
-        session = _session_yukle(db, gonderen)
+    Return:
+        {
+            "intent": "bekleyen_irsaliyeler",  # veya "none"
+            "mesaj": "Bekleyen irsaliyeler getiriliyor..."
+        }
 
-    isim = (session.isim if session else None) or "Kullanıcı"
-
-    gecmis: list = []
-    if session and session.tam_gecmis:
-        try:
-            raw = json.loads(session.tam_gecmis)
-            gecmis = [
-                {"role": m["role"], "content": m["content"]}
-                for m in raw
-                if "role" in m and "content" in m
-            ]
-        except Exception:
-            gecmis = []
-    elif session and session.gecmis:
-        try:
-            gecmis = json.loads(session.gecmis)
-        except Exception:
-            gecmis = []
-
-    db_context = db_context_hazirla(db)
-
-    sistem_promptu = f"""Sen Profaix muhasebe asistanısın. Hurda metal kantar takip ve muhasebe sistemi.
-Kullanıcı: {isim} | {db_context}
-
-GÖREVIN: Kullanıcıyı doğru butona veya komutu yönlendirmek. Serbest sorguları kendin cevaplama — her işlem için doğru yolu göster.
-
-PANEL BUTONLARI VE KEYWORDLER:
-- Bekleyen irsaliyeler / fatura kes → "bekleyen irsaliyeler" yazın veya sol menüden 📋 Bekleyen irsaliyeler
-- Toplu fatura → "toplu fatura" yazın veya sol menüden 🧾 Toplu fatura
-- Fatura sorgula → "fatura sorgula" yazın veya sol menüden 🔍 Fatura sorgula
-- Tahsilat ekle → "tahsilat ekle" yazın veya sol menüden 💵 Tahsilat ekle
-- Yeni cari → "yeni cari" yazın veya sol menüden ➕ Yeni cari
-- Müşteri bakiyeleri → "müşteri bakiyeleri" yazın veya sol menüden 💰 Müşteri bakiyeleri
-- Hesap özeti → "hesap özeti" yazın veya sol menüden 📊 Hesap özeti
-- Günlük özet → "günlük özet" yazın veya sol menüden 📈 Günlük özet
-- Son fişler → "son fişler" yazın veya sol menüden 🗂️ Son yüklenen fişler
-- Fiş yükle → sol alttaki 📎 butonundan fotoğraf yükleyin
-
-YÖNLENDIRME KURALLARI (ÇOK ÖNEMLİ):
-- Kullanıcı yukarıdaki işlemlerden birini farklı kelimelerle isterse → tool KULLANMA, sadece doğru komutu söyle
-- Örnek: "faturaları getir" → "Fatura sorgulamak için **'fatura sorgula'** yazın veya sol menüden 🔍 Fatura sorgula butonuna tıklayın."
-- Örnek: "bakiyeler ne" → "Bakiyeleri görmek için **'müşteri bakiyeleri'** yazın veya sol menüden 💰 Müşteri bakiyeleri butonuna tıklayın."
-- Örnek: "irsaliye var mı" → "Bekleyen irsaliyeleri görmek için **'bekleyen irsaliyeler'** yazın veya sol menüden 📋 butonuna tıklayın."
-
-SADECE BUNLARI KENDİN YAP (tool kullanabilirsin):
-- Tahsilat ekleme (onay alarak)
-- Yeni cari oluşturma (bilgileri toplayarak)
-- Spesifik cari bakiye veya detay sorusu (örn: "Kroman'ın bakiyesi kaç?")
-
-BAKİYE KONVANSIYONU:
-- POZİTİF bakiye = müşteri bize BORÇLU = tahsil edilecek
-- NEGATİF bakiye = biz müşteriye borçluyuz
-- Pozitif bakiyeyi "alacağımız" veya "müşteri borçlu" olarak göster
-
-GENEL KURALLAR:
-- Kısa ve net cevap ver, markdown kullanma
-- Tahsilat eklemeden önce mutlaka onay al: "X firmasına Y TL tahsilat ekleyeceğim, onaylıyor musunuz?"
-- Cari adı belirsizse cari_listesi_getir ile eşleştir, kullanıcıya tekrar sorma
-- Fatura kesemezsin, irsaliye oluşturamazsın — bunlar için yönlendir
-
-SAYI FORMATI (ÇOK ÖNEMLİ):
-- Kg değerlerini DAIMA Türk formatında yaz: nokta = binlik ayraç → 256.890 kg, 14.350 kg
-- TL değerlerini DAIMA Türk formatında yaz: nokta = binlik, virgül = ondalık → 14.850,75 TL, 402,80 TL
-- YANLIŞ: 402.790 kg, 14850.75 TL, 14,850 TL
-- DOĞRU: 402.790 kg, 14.850,75 TL"""
-
-    # Yeni kullanıcı mesajını geçmişe ekle
-    gecmis.append({"role": "user", "content": mesaj})
-
-    # Geçmişi güvenli şekilde kırp (tool çiftlerini koruyarak)
-    gecmis = _gecmis_kirp(gecmis, MAX_GECMIS)
-
+    Frontend bu dict'i alır:
+    - intent != "none" → ilgili fonksiyonu çağırır
+    - intent == "none" → sadece mesajı chat baloncuğunda gösterir
+    """
     try:
         response = _client.messages.create(
             model=MODEL,
-            max_tokens=2000,
-            system=sistem_promptu,
-            tools=TOOLS,
-            messages=gecmis
+            max_tokens=200,
+            system=SISTEM_PROMPTU,
+            messages=[{"role": "user", "content": mesaj}]
         )
 
-        # ── TOOL DÖNGÜSÜ ──────────────────────────────────────────────
-        tool_log = []
+        ham_cevap = response.content[0].text.strip()
+        logger.info(f"Intent ham cevap: {ham_cevap}")
 
-        while response.stop_reason == "tool_use":
-            assistant_content = response.content
+        try:
+            temiz = ham_cevap.strip()
+            if temiz.startswith("```"):
+                temiz = temiz.split("```")[1]
+                if temiz.startswith("json"):
+                    temiz = temiz[4:]
+            sonuc = json.loads(temiz.strip())
+        except Exception:
+            logger.warning(f"Intent JSON parse hatası: {ham_cevap}")
+            sonuc = {
+                "intent": "none",
+                "mesaj": "Sol menüden işlem seçebilir veya fiş fotoğrafı yükleyebilirsiniz."
+            }
 
-            gecmis.append({
-                "role": "assistant",
-                "content": _content_serialize(assistant_content)
-            })
+        # Geçersiz intent → none'a düşür
+        if sonuc.get("intent") not in INTENTLER:
+            sonuc["intent"] = "none"
 
-            tool_results = []
-            for block in assistant_content:
-                if block.type == "tool_use":
-                    logger.info(f"🔧 Tool: {block.name} — {block.input}")
-                    sonuc = _tool_calistir(block.name, block.input, db=db)
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": sonuc
-                    })
-                    tool_log.append({
-                        "type": "tool_call",
-                        "tool": block.name,
-                        "input": block.input,
-                        "sonuc_ozet": sonuc[:300] if isinstance(sonuc, str) else str(sonuc)[:300]
-                    })
+        if not sonuc.get("mesaj"):
+            sonuc["mesaj"] = "Sol menüden işlem seçebilirsiniz."
 
-            gecmis.append({"role": "user", "content": tool_results})
+        logger.info(f"Intent: {sonuc['intent']} | Mesaj: {sonuc['mesaj'][:60]}")
 
-            response = _client.messages.create(
-                model=MODEL,
-                max_tokens=2000,
-                system=sistem_promptu,
-                tools=TOOLS,
-                messages=gecmis
-            )
+        _session_kaydet(db, gonderen, mesaj, sonuc["mesaj"])
 
-        # ── SON CEVAP ─────────────────────────────────────────────────
-        cevap_blocks = response.content
-        cevap = "".join(b.text for b in cevap_blocks if hasattr(b, "text")).strip()
-
-        gecmis.append({"role": "assistant", "content": cevap})
-
-        # Tool döngüsü bittikten sonra geçmişi kırp (güvenli versiyon)
-        gecmis = _gecmis_kirp(gecmis, MAX_GECMIS)
-
-        gecmis_saf = _gecmis_saf_cikart(gecmis)
-
-        _session_kaydet(
-            db, gonderen, isim=isim,
-            gecmis_saf=gecmis_saf,
-            yeni_mesaj_user={"role": "user", "content": mesaj},
-            yeni_mesaj_asistan={"role": "assistant", "content": cevap},
-            tool_log=tool_log if tool_log else None
-        )
-
-        logger.info(f"🤖 Cevap ({isim}): {cevap[:60]}...")
-        return cevap
+        return sonuc
 
     except Exception as e:
-        logger.error(f"Claude API hatası: {e}")
-        return "❌ Şu an cevap veremiyorum, lütfen tekrar deneyin."
+        logger.error(f"Intent classifier hatası: {e}")
+        return {
+            "intent": "none",
+            "mesaj": "❌ Şu an cevap veremiyorum, lütfen tekrar deneyin."
+        }

@@ -594,11 +594,28 @@
     return null;
   }
 
+  // ── INTENT → FONKSİYON HARİTASI ────────────────────────────────────
+  // Haiku'dan gelen intent string'i doğrudan bu map'e bakarak çözülür.
+  // Yeni bir intent eklemek istersen buraya 1 satır eklemen yeterli.
+  const INTENT_MAP = {
+    'bekleyen_irsaliyeler': () => bekleyenIrsaliyeleriGoster(),
+    'toplu_fatura':         () => topluFaturaGoster(),
+    'fatura_sorgula':       () => faturaListesiGoster(),
+    'tahsilat_ekle':        () => tahsilatFormGoster(),
+    'yeni_cari':            () => cariFormGoster(),
+    'musteri_bakiyeleri':   () => bakiyeleriGoster(),
+    'hesap_ozeti':          () => hesapOzetiGoster(),
+    'gunluk_ozet':          () => gunlukOzetGoster(),
+    'son_fisler':           () => sonFisleriGoster(),
+  };
+
   // ── CHAT ─────────────────────────────────────────────────────────
 
   async function sendMessage() {
     const text = inputEl.value.trim();
     if (!text || sendBtn.disabled) return;
+
+    // 1. Önce frontend keyword eşleştirmesi — hızlı, API isteği yok
     const eslesen = mesajYonlendir(text);
     if (eslesen) {
       addMessage(text, 'user');
@@ -607,11 +624,14 @@
       await eslesen.fn();
       return;
     }
+
+    // 2. Keyword eşleşmedi → Haiku'ya intent sorusu
     addMessage(text, 'user');
     inputEl.value = '';
     inputEl.style.height = 'auto';
     sendBtn.disabled = true;
     showTyping();
+
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
@@ -620,7 +640,19 @@
       });
       const data = await res.json();
       removeTyping();
-      addMessage(data.cevap, 'bot');
+
+      const intent = data.intent || 'none';
+      const mesaj  = data.cevap  || '';
+
+      if (intent !== 'none' && INTENT_MAP[intent]) {
+        // Haiku bir intent tespit etti → önce mesajı göster, sonra akışı tetikle
+        if (mesaj) addMessage(mesaj, 'bot');
+        await INTENT_MAP[intent]();
+      } else {
+        // intent = "none" → sadece mesajı göster
+        addMessage(mesaj, 'bot');
+      }
+
     } catch {
       removeTyping();
       addMessage('❌ Bağlantı hatası, lütfen tekrar deneyin.', 'bot');

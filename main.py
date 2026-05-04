@@ -140,22 +140,26 @@ async def chat_sayfasi():
     return HTMLResponse(content=_chat_html())
 
 
-# ── CHAT (Claude — sadece bilgi sorguları) ────────────────────────────
+# ── CHAT (Intent Classifier) ──────────────────────────────────────────
 @app.post("/api/chat")
 async def chat_api(request: Request):
     data = await request.json()
     mesaj = data.get("mesaj", "").strip()
     session_id = data.get("session_id", "web_user")
     if not mesaj:
-        return JSONResponse({"cevap": "Mesaj boş olamaz."})
+        return JSONResponse({"cevap": "Mesaj boş olamaz.", "intent": "none"})
     db = SessionLocal()
     try:
         from app.chatbox.llm_handler import soru_cevapla
-        cevap = soru_cevapla(mesaj, db, session_id)
-        return JSONResponse({"cevap": cevap})
+        # soru_cevapla artık {"intent": "...", "mesaj": "..."} döndürüyor
+        sonuc = soru_cevapla(mesaj, db, session_id)
+        return JSONResponse({
+            "cevap": sonuc.get("mesaj", ""),
+            "intent": sonuc.get("intent", "none")
+        })
     except Exception as e:
         logger.error(f"Chat API hatası: {e}")
-        return JSONResponse({"cevap": "❌ Bir hata oluştu, lütfen tekrar deneyin."})
+        return JSONResponse({"cevap": "❌ Bir hata oluştu, lütfen tekrar deneyin.", "intent": "none"})
     finally:
         db.close()
 
