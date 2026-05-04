@@ -165,6 +165,44 @@ class IslemLog(Base):
     def __repr__(self): return f"<IslemLog tip={self.islem_tipi} cari={self.cari_adi}>"
 
 
+class User(Base):
+    """
+    Kullanıcı tablosu.
+    - username: giriş adı (benzersiz)
+    - password_hash: bcrypt ile hashlenmiş şifre (düz metin asla saklanmaz)
+    - rol: "admin" veya "staff" — ileride yetki ayrımı için
+    - aktif: 0 yapılırsa kullanıcı giriş yapamaz (silmeden devre dışı bırakma)
+    - son_giris: son giriş zamanı — audit için
+    """
+    __tablename__ = "users"
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    username      = Column(String(50), unique=True, nullable=False, index=True)
+    password_hash = Column(String(200), nullable=False)
+    ad_soyad      = Column(String(100), nullable=True)
+    rol           = Column(String(20), default="staff", nullable=False)  # admin / staff
+    aktif         = Column(Integer, default=1)
+    son_giris     = Column(DateTime, nullable=True)
+    created_at    = Column(DateTime, server_default=func.now())
+    def __repr__(self): return f"<User username={self.username} rol={self.rol}>"
+
+
+class AuditLog(Base):
+    """
+    Denetim kaydı — kim, ne zaman, ne yaptı.
+    Her intent tetiklendiğinde buraya yazılır.
+    Örnek: bilal | 2026-05-04 15:32 | bekleyen_irsaliyeler | params: {}
+    """
+    __tablename__ = "audit_logs"
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    user_id    = Column(Integer, ForeignKey("users.id"), nullable=True)
+    username   = Column(String(50), nullable=True)  # join yapmadan hızlı okuma için
+    intent     = Column(String(50), nullable=True)
+    params     = Column(Text, nullable=True)   # JSON
+    ip_adresi  = Column(String(50), nullable=True)
+    created_at = Column(DateTime, server_default=func.now(), index=True)
+    def __repr__(self): return f"<AuditLog user={self.username} intent={self.intent}>"
+
+
 def init_db():
     logger.info("Veritabanı tabloları oluşturuluyor...")
     Base.metadata.create_all(bind=engine)

@@ -11,6 +11,10 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from app.core.config import validate_config, ENV
 from app.core.database import init_db, SessionLocal, engine
 from app.core.logger import logger
+from app.auth import (
+    kullanici_giris, token_uret, mevcut_kullanici,
+    giris_zorunlu, audit_kaydet, ilk_admin_olustur
+)
 
 
 def tr_para(sayi: float, ondalik: int = 2) -> str:
@@ -136,8 +140,83 @@ async def status():
 
 
 @app.get("/chat", response_class=HTMLResponse)
-async def chat_sayfasi():
+async def chat_sayfasi(request: Request):
+    user = mevcut_kullanici(request)
+    if not user:
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url="/login")
     return HTMLResponse(content=_chat_html())
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_sayfasi(request: Request):
+    user = mevcut_kullanici(request)
+    if user:
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url="/chat")
+    login_html = Path(__file__).parent / "login.html"
+    if login_html.exists():
+        return HTMLResponse(content=login_html.read_text(encoding="utf-8"))
+    return HTMLResponse("<h1>login.html bulunamadi</h1>")
+
+
+# ── AUTH ──────────────────────────────────────────────────────────────
+
+@app.post("/api/login")
+async def login(request: Request):
+    """
+    Kullanıcı adı + şifre alır, doğruysa JWT cookie set eder.
+    beni_hatirla: True → 7 gün, False → 8 saat
+    """
+    data = await request.json()
+    username     = data.get("username", "").strip()
+    sifre        = data.get("password", "").strip()
+    beni_hatirla = data.get("beni_hatirla", False)
+
+    if not username or not sifre:
+        return JSONResponse({"basarili": False, "hata": "Kullanıcı adı ve şifre gerekli"})
+
+    user = kullanici_giris(username, sifre)
+    if not user:
+        logger.warning(f"Başarısız giriş denemesi: {username}")
+        return JSONResponse({"basarili": False, "hata": "Kullanıcı adı veya şifre hatalı"})
+
+    token = token_uret(user.id, user.username, user.rol, beni_hatirla)
+    max_age = 60 * 60 * 24 * 7 if beni_hatirla else 60 * 60 * 8
+
+    logger.info(f"✅ Giriş: {username} (rol={user.rol}, hatırla={beni_hatirla})")
+
+    response = JSONResponse({
+        "basarili": True,
+        "username": user.username,
+        "ad_soyad": user.ad_soyad or user.username,
+        "rol": user.rol
+    })
+    response.set_cookie(
+        key="profaix_token",
+        value=token,
+        max_age=max_age,
+        httponly=True,    # JS ile okunamaz — güvenlik
+        secure=True,      # Sadece HTTPS — production için
+        samesite="lax"
+    )
+    return response
+
+
+@app.post("/api/logout")
+async def logout():
+    """Token cookie'sini siler."""
+    response = JSONResponse({"basarili": True})
+    response.delete_cookie("profaix_token")
+    return response
+
+
+@app.get("/api/me")
+async def me(request: Request):
+    """Giriş yapmış kullanıcının bilgilerini döndürür."""
+    user = mevcut_kullanici(request)
+    if not user:
+        return JSONResponse({"giris_yapildi": False})
+    return JSONResponse({"giris_yapildi": True, **user})
 
 
 # ── CHAT (Intent Classifier) ──────────────────────────────────────────
@@ -148,10 +227,21 @@ async def chat_api(request: Request, background_tasks: BackgroundTasks):
     session_id = data.get("session_id", "web_user")
     if not mesaj:
         return JSONResponse({"cevap": "Mesaj boş olamaz.", "intent": "none"})
+    aktif_user = mevcut_kullanici(request)
     try:
         from app.chatbox.llm_handler import soru_cevapla, session_kaydet_bg
         sonuc = soru_cevapla(mesaj, session_id)
         background_tasks.add_task(session_kaydet_bg, session_id, mesaj, sonuc.get("mesaj", ""))
+        # Audit log — kim, ne zaman, hangi intent
+        if aktif_user and sonuc.get("intent") != "none":
+            background_tasks.add_task(
+                audit_kaydet,
+                aktif_user["id"],
+                aktif_user["username"],
+                sonuc.get("intent", ""),
+                sonuc.get("params", {}),
+                request.client.host if request.client else None
+            )
         return JSONResponse({
             "cevap":   sonuc.get("mesaj", ""),
             "intent":  sonuc.get("intent", "none"),

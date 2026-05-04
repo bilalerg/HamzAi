@@ -676,6 +676,10 @@
     <div class="status-dot"></div>
     <div class="status-label">Çevrimiçi</div>
   </div>
+  <div id="userPill" style="margin-left:8px;display:flex;align-items:center;gap:8px;">
+    <span id="userAdSoyad" style="font-size:12px;font-weight:500;color:var(--text2);"></span>
+    <button id="cikisBtn" onclick="cikisYap()" style="display:none;padding:4px 11px;background:transparent;border:1.5px solid var(--border2);border-radius:100px;font-family:'DM Sans',sans-serif;font-size:11px;color:var(--muted);cursor:pointer;transition:all 0.15s;">Çıkış</button>
+  </div>
 </div>
 
 <div class="messages" id="messages">
@@ -704,6 +708,26 @@
 
 <script>
   const SESSION_ID = 'web_' + Math.random().toString(36).substr(2, 9);
+
+  // ── KULLANICI BİLGİSİ ──────────────────────────────────────────────
+  // Sayfa açılınca /api/me'den kim olduğunu öğren, header'a yaz
+  (async function() {
+    try {
+      const res = await fetch('/api/me');
+      const user = await res.json();
+      if (user.giris_yapildi) {
+        document.getElementById('userAdSoyad').textContent = user.ad_soyad || user.username || '';
+        document.getElementById('cikisBtn').style.display = 'block';
+      }
+    } catch {}
+  })();
+
+  async function cikisYap() {
+    try {
+      await fetch('/api/logout', { method: 'POST' });
+    } catch {}
+    window.location.href = '/login';
+  }
   const messagesEl = document.getElementById('messages');
   const inputEl    = document.getElementById('chatInput');
   const sendBtn    = document.getElementById('sendBtn');
