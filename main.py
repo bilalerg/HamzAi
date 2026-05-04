@@ -148,11 +148,10 @@ async def chat_api(request: Request):
     session_id = data.get("session_id", "web_user")
     if not mesaj:
         return JSONResponse({"cevap": "Mesaj boş olamaz.", "intent": "none"})
-    db = SessionLocal()
     try:
-        from app.chatbox.llm_handler import soru_cevapla
-        # soru_cevapla artık {"intent": "...", "mesaj": "..."} döndürüyor
-        sonuc = soru_cevapla(mesaj, db, session_id)
+        from app.chatbox.llm_handler import soru_cevapla, session_kaydet_bg
+        sonuc = soru_cevapla(mesaj, session_id)
+        background_tasks.add_task(session_kaydet_bg, session_id, mesaj, sonuc.get("mesaj", ""))
         return JSONResponse({
             "cevap":   sonuc.get("mesaj", ""),
             "intent":  sonuc.get("intent", "none"),
@@ -161,8 +160,6 @@ async def chat_api(request: Request):
     except Exception as e:
         logger.error(f"Chat API hatası: {e}")
         return JSONResponse({"cevap": "❌ Bir hata oluştu, lütfen tekrar deneyin.", "intent": "none"})
-    finally:
-        db.close()
 
 
 # ── FİŞ YÜKLE ────────────────────────────────────────────────────────
