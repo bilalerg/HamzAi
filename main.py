@@ -722,7 +722,7 @@ async def bekleyen_irsaliyeler():
 
 
 @app.get("/api/gunluk-ozet")
-async def gunluk_ozet():
+def gunluk_ozet():
     """Bugünün özeti: fiş sayısı, toplam kg, fatura sayısı."""
     db = SessionLocal()
     try:
@@ -752,7 +752,7 @@ async def gunluk_ozet():
 
 
 @app.get("/api/son-fisler")
-async def son_fisler():
+def son_fisler():
     """Son 10 yüklenen fişi döndürür."""
     db = SessionLocal()
     try:
@@ -1108,12 +1108,12 @@ async def fatura_kes_endpoint(request: Request):
 def _admin_kontrol(request: Request) -> bool:
     """Basit admin token kontrolü."""
     from app.core.config import ADMIN_TOKEN
-    token = request.headers.get("X-Admin-Token") or request.query_params.get("token")
+    token = request.headers.get("X-Admin-Token")
     return token == ADMIN_TOKEN
 
 
 @app.get("/admin/irsaliye-debug/{irsaliye_id}")
-async def irsaliye_debug(irsaliye_id: str, request: Request):
+def irsaliye_debug(irsaliye_id: str, request: Request):
     if not _admin_kontrol(request):
         return JSONResponse({"hata": "Yetkisiz erişim"}, status_code=401)
     try:
@@ -1170,7 +1170,7 @@ async def payment_debug(request: Request):
 
 
 @app.get("/admin/islem-loglari")
-async def islem_loglari(request: Request, limit: int = 50, islem_tipi: str = None):
+def islem_loglari(request: Request, limit: int = 50, islem_tipi: str = None):
     if not _admin_kontrol(request):
         return JSONResponse({"hata": "Yetkisiz erişim"}, status_code=401)
     db = SessionLocal()
@@ -1202,7 +1202,7 @@ async def islem_loglari(request: Request, limit: int = 50, islem_tipi: str = Non
 
 
 @app.get("/admin/konusmalar")
-async def konusmalar(request: Request, limit: int = 20):
+def konusmalar(request: Request, limit: int = 20):
     if not _admin_kontrol(request):
         return JSONResponse({"hata": "Yetkisiz erişim"}, status_code=401)
     db = SessionLocal()
@@ -1250,7 +1250,7 @@ async def accounts_debug(request: Request):
 
 
 @app.get("/admin/reset-db")
-async def reset_db(request: Request):
+def reset_db(request: Request):
     if not _admin_kontrol(request):
         return JSONResponse({"hata": "Yetkisiz erişim"}, status_code=401)
     from sqlalchemy import text
