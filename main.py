@@ -180,16 +180,16 @@ async def login(request: Request):
         logger.warning(f"Başarısız giriş denemesi: {username}")
         return JSONResponse({"basarili": False, "hata": "Kullanıcı adı veya şifre hatalı"})
 
-    token = token_uret(user.id, user.username, user.rol, beni_hatirla)
+    token = token_uret(user["id"], user["username"], user["rol"], beni_hatirla)
     max_age = 60 * 60 * 24 * 7 if beni_hatirla else 60 * 60 * 8
 
-    logger.info(f"✅ Giriş: {username} (rol={user.rol}, hatırla={beni_hatirla})")
+    logger.info(f"✅ Giriş: {username} (rol={user['rol']}, hatırla={beni_hatirla})")
 
     response = JSONResponse({
         "basarili": True,
-        "username": user.username,
-        "ad_soyad": user.ad_soyad or user.username,
-        "rol": user.rol
+        "username": user["username"],
+        "ad_soyad": user.get("ad_soyad") or user["username"],
+        "rol": user["rol"]
     })
     response.set_cookie(
         key="profaix_token",

@@ -75,10 +75,10 @@ def token_coz(token: str) -> Optional[dict]:
 
 
 # ── KULLANICI DOĞRULAMA ───────────────────────────────────────────────
-def kullanici_giris(username: str, sifre: str) -> Optional[User]:
+def kullanici_giris(username: str, sifre: str) -> Optional[dict]:
     """
     Kullanıcı adı ve şifreyi kontrol eder.
-    Doğruysa User objesini, yanlışsa None döner.
+    Doğruysa dict döner — session kapandıktan sonra da kullanılabilir.
     """
     db = SessionLocal()
     try:
@@ -90,10 +90,13 @@ def kullanici_giris(username: str, sifre: str) -> Optional[User]:
             return None
         if not sifre_dogrula(sifre, user.password_hash):
             return None
-        # Son giriş zamanını güncelle
+        user_id = user.id
+        user_username = user.username
+        user_rol = user.rol
+        user_ad = user.ad_soyad
         user.son_giris = datetime.utcnow()
         db.commit()
-        return user
+        return {"id": user_id, "username": user_username, "rol": user_rol, "ad_soyad": user_ad}
     except Exception as e:
         logger.error(f"Giriş hatası: {e}")
         return None
