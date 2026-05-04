@@ -164,7 +164,7 @@ def _cari_listesi_api() -> list:
     """Paraşüt'ten tüm carileri çeker (tüm sayfalar, rate limit korumalı)."""
     cariler = []
     page = 1
-    while True:
+    while page <= 100:  # max 100 sayfa = 2500 cari güvenlik limiti
         sonuc = parasut_get(
             f"/{PARASUT_COMPANY_ID}/contacts",
             params={"page[size]": 25, "page[number]": page}
@@ -492,91 +492,95 @@ def hesap_ozeti_getir() -> dict:
 def islem_gecmisi_getir(cari_id: str, baslangic: str = None, bitis: str = None) -> dict:
     """
     Belirli bir carinin işlem geçmişini getirir.
-    sales_invoices + payments ayrı ayrı çekip birleştirir.
+    Fatura listesini include=payments ile TEK istekte çeker — N+1 yok.
     Tarih filtresi Python tarafında yapılır.
     """
     try:
         cari = cari_detay_getir(cari_id)
         bakiye = cari.get("bakiye", 0.0)
         islemler = []
-
-        # 1. Faturalar
-        fatura_sonuc = parasut_get(
-            f"/{PARASUT_COMPANY_ID}/sales_invoices",
-            params={
-                "filter[contact_id]": cari_id,
-                "page[size]": 25,
-                "sort": "-issue_date"
-            }
-        )
-        for f in fatura_sonuc.get("data", []):
-            attr = f.get("attributes", {})
-            tarih = attr.get("issue_date", "-")
-            if baslangic and tarih < baslangic:
-                continue
-            if bitis and tarih > bitis:
-                continue
-            try:
-                tutar = float(attr.get("gross_total") or 0)
-            except (ValueError, TypeError):
-                tutar = 0.0
-            islemler.append({
-                "id": f.get("id"),
-                "tarih": tarih,
-                "tur": "sales_invoice",
-                "aciklama": attr.get("description") or "Satış Faturası",
-                "tutar": tutar,
-                "durum": attr.get("payment_status", "-"),
-                "kalan": float(attr.get("remaining") or 0),
-            })
-
-        # 2. Tahsilatlar — her faturanın ?include=payments ile tahsilatlarını çek
         eklenen_tahsilat_ids = set()
-        for f in fatura_sonuc.get("data", []):
-            fatura_id = f.get("id")
-            if not fatura_id:
-                continue
-            try:
-                detay = parasut_get(
-                    f"/{PARASUT_COMPANY_ID}/sales_invoices/{fatura_id}",
-                    params={"include": "payments"}
-                )
-                included = detay.get("included", [])
-                # relationships'ten payment ID'lerini al
+
+        # Tek istekte faturalar + tahsilatlar — include=payments
+        page = 1
+        while page <= 50:  # Pagination güvenliği: max 50 sayfa
+            fatura_sonuc = parasut_get(
+                f"/{PARASUT_COMPANY_ID}/sales_invoices",
+                params={
+                    "filter[contact_id]": cari_id,
+                    "include": "payments",
+                    "page[size]": 25,
+                    "page[number]": page,
+                    "sort": "-issue_date"
+                }
+            )
+            faturalar = fatura_sonuc.get("data", [])
+            included = fatura_sonuc.get("included", [])
+
+            # included'dan payment map'i oluştur — O(1) erişim için
+            payment_map = {
+                item["id"]: item
+                for item in included
+                if item.get("type") == "payments"
+            }
+
+            for f in faturalar:
+                attr = f.get("attributes", {})
+                tarih = attr.get("issue_date", "-")
+
+                # Faturayı ekle
+                if not baslangic or tarih >= baslangic:
+                    if not bitis or tarih <= bitis:
+                        try:
+                            tutar = float(attr.get("gross_total") or 0)
+                        except (ValueError, TypeError):
+                            tutar = 0.0
+                        islemler.append({
+                            "id": f.get("id"),
+                            "tarih": tarih,
+                            "tur": "sales_invoice",
+                            "aciklama": attr.get("description") or "Satış Faturası",
+                            "tutar": tutar,
+                            "durum": attr.get("payment_status", "-"),
+                            "kalan": float(attr.get("remaining") or 0),
+                        })
+
+                # Bu faturanın tahsilatlarını ekle
                 payment_ids = [
                     d["id"] for d in
-                    detay.get("data", {}).get("relationships", {})
+                    f.get("relationships", {})
                     .get("payments", {}).get("data", [])
                 ]
-                for item in included:
-                    if item.get("type") != "payments":
+                for pid in payment_ids:
+                    if pid in eklenen_tahsilat_ids:
                         continue
-                    if item.get("id") not in payment_ids:
+                    p = payment_map.get(pid)
+                    if not p:
                         continue
-                    if item.get("id") in eklenen_tahsilat_ids:
+                    eklenen_tahsilat_ids.add(pid)
+                    pattr = p.get("attributes", {})
+                    ptarih = pattr.get("date", "-")
+                    if baslangic and ptarih < baslangic:
                         continue
-                    eklenen_tahsilat_ids.add(item.get("id"))
-                    attr = item.get("attributes", {})
-                    tarih = attr.get("date", "-")
-                    if baslangic and tarih < baslangic:
-                        continue
-                    if bitis and tarih > bitis:
+                    if bitis and ptarih > bitis:
                         continue
                     try:
-                        tutar = float(attr.get("amount") or 0)
+                        ptutar = float(pattr.get("amount") or 0)
                     except (ValueError, TypeError):
-                        tutar = 0.0
+                        ptutar = 0.0
                     islemler.append({
-                        "id": item.get("id"),
-                        "tarih": tarih,
+                        "id": pid,
+                        "tarih": ptarih,
                         "tur": "payment",
-                        "aciklama": attr.get("notes") or attr.get("description") or "Tahsilat",
-                        "tutar": -tutar,
+                        "aciklama": pattr.get("notes") or pattr.get("description") or "Tahsilat",
+                        "tutar": -ptutar,
                         "durum": "paid",
                         "kalan": 0,
                     })
-            except Exception as pe:
-                logger.warning(f"Fatura {fatura_id} tahsilatları çekilemedi: {pe}")
+
+            if len(faturalar) < 25:
+                break
+            page += 1
 
         # Tarihe göre sırala
         islemler.sort(key=lambda x: x.get("tarih", ""), reverse=True)
@@ -776,7 +780,7 @@ def tum_bekleyen_irsaliyeleri_getir() -> dict:
         gruplu = {}
         page = 1
 
-        while True:
+        while page <= 50:  # max 50 sayfa güvenlik limiti
             sonuc = parasut_get(
                 f"/{PARASUT_COMPANY_ID}/shipment_documents",
                 params={
