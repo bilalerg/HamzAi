@@ -597,16 +597,19 @@
   // ── INTENT → FONKSİYON HARİTASI ────────────────────────────────────
   // Haiku'dan gelen intent string'i doğrudan bu map'e bakarak çözülür.
   // Yeni bir intent eklemek istersen buraya 1 satır eklemen yeterli.
+  // INTENT_MAP — intent string'i → frontend fonksiyonu
+  // params: Haiku'nun cümleden çıkardığı müşteri, tarih, tutar gibi değerler
+  // Fonksiyonlar params'ı alır, formu önceden doldurur — kullanıcı tekrar seçmez
   const INTENT_MAP = {
-    'bekleyen_irsaliyeler': () => bekleyenIrsaliyeleriGoster(),
-    'toplu_fatura':         () => topluFaturaGoster(),
-    'fatura_sorgula':       () => faturaListesiGoster(),
-    'tahsilat_ekle':        () => tahsilatFormGoster(),
-    'yeni_cari':            () => cariFormGoster(),
-    'musteri_bakiyeleri':   () => bakiyeleriGoster(),
-    'hesap_ozeti':          () => hesapOzetiGoster(),
-    'gunluk_ozet':          () => gunlukOzetGoster(),
-    'son_fisler':           () => sonFisleriGoster(),
+    'bekleyen_irsaliyeler': (p) => bekleyenIrsaliyeleriGoster(),
+    'toplu_fatura':         (p) => topluFaturaGoster(),
+    'fatura_sorgula':       (p) => faturaListesiGoster(p.musteri),
+    'tahsilat_ekle':        (p) => tahsilatFormGoster(p.musteri, p.tutar),
+    'yeni_cari':            (p) => cariFormGoster(),
+    'musteri_bakiyeleri':   (p) => bakiyeleriGoster(p.musteri),
+    'hesap_ozeti':          (p) => hesapOzetiGoster(),
+    'gunluk_ozet':          (p) => gunlukOzetGoster(),
+    'son_fisler':           (p) => sonFisleriGoster(),
   };
 
   // ── CHAT ─────────────────────────────────────────────────────────
@@ -643,11 +646,12 @@
 
       const intent = data.intent || 'none';
       const mesaj  = data.cevap  || '';
+      const params = data.params || {};
 
       if (intent !== 'none' && INTENT_MAP[intent]) {
         // Haiku bir intent tespit etti → önce mesajı göster, sonra akışı tetikle
         if (mesaj) addMessage(mesaj, 'bot');
-        await INTENT_MAP[intent]();
+        await INTENT_MAP[intent](params);
       } else {
         // intent = "none" → sadece mesajı göster
         addMessage(mesaj, 'bot');
@@ -791,7 +795,7 @@
 
   // ── BAKİYELER ────────────────────────────────────────────────────
 
-  async function bakiyeleriGoster() {
+  async function bakiyeleriGoster(onMusteriFiltreParam) {
     showTyping();
     try {
       const res = await fetch('/api/cariler');
@@ -801,12 +805,21 @@
         addMessage('Kayıtlı cari bulunamadı.', 'bot');
         return;
       }
+      // Params'tan müşteri adı geldiyse otomatik filtrele
+      let cariler = data.cariler;
+      if (onMusteriFiltreParam) {
+        const filtre = onMusteriFiltreParam.toLowerCase();
+        const eslesen = cariler.filter(function(c) { return c.ad.toLowerCase().includes(filtre); });
+        if (eslesen.length > 0) cariler = eslesen;
+      }
       const wrap = document.createElement('div');
       const baslik = document.createElement('div');
       baslik.style.cssText = 'font-size:12px;color:var(--muted);margin-bottom:8px;';
-      baslik.textContent = "Güncel bakiyeler (Parasut):";
+      baslik.textContent = onMusteriFiltreParam
+        ? onMusteriFiltreParam + " bakiyesi (Parasut):"
+        : "Güncel bakiyeler (Parasut):";
       wrap.appendChild(baslik);
-      data.cariler.forEach(function(c) {
+      cariler.forEach(function(c) {
         const row = document.createElement('div');
         row.className = 'cari-row';
         const ad = document.createElement('span');
@@ -867,7 +880,7 @@
 
   // ── TAHSİLAT FORMU ───────────────────────────────────────────────
 
-  async function tahsilatFormGoster() {
+  async function tahsilatFormGoster(onMusteri, onTutar) {
     showTyping();
     let cariler = [];
     try {
@@ -894,15 +907,24 @@
 
     const { wrap: ddWrap } = cariSecimDropdown(siralanmis, function(c) {
       ddWrap.querySelector('input').disabled = true;
-      tahsilatTutarGir(c.ad, wrap);
+      tahsilatTutarGir(c.ad, wrap, onTutar);
     }, 'Cari adı yazın...');
     wrap.appendChild(ddWrap);
 
     addMessage('', 'bot', wrap);
-    setTimeout(function() { ddWrap.querySelector('input').focus(); }, 100);
+
+    // Params'tan müşteri adı geldiyse arama kutusuna yaz — kullanıcı görsün
+    if (onMusteri) {
+      setTimeout(function() {
+        const inp = ddWrap.querySelector('input');
+        if (inp) { inp.value = onMusteri; inp.dispatchEvent(new Event('input')); }
+      }, 150);
+    } else {
+      setTimeout(function() { ddWrap.querySelector('input').focus(); }, 100);
+    }
   }
 
-  function tahsilatTutarGir(cariAdi, wrapParent) {
+  function tahsilatTutarGir(cariAdi, wrapParent, onTutar) {
     const tutarWrap = document.createElement('div');
     tutarWrap.style.cssText = 'margin-top:12px;border-top:1px solid var(--border);padding-top:12px;';
 
@@ -918,6 +940,8 @@
     inp.type = 'text';
     inp.className = 'fiyat-input';
     inp.placeholder = 'Örn: 100000';
+    // Params'tan tutar geldiyse önceden doldur
+    if (onTutar) inp.value = String(onTutar);
 
     const tarihInp = document.createElement('input');
     tarihInp.type = 'date';
@@ -1149,7 +1173,7 @@
 
   // ── FATURA LİSTESİ & DETAY ───────────────────────────────────────
 
-  async function faturaListesiGoster() {
+  async function faturaListesiGoster(onMusteri) {
     showTyping();
     let cariler = [];
     try {
@@ -1158,6 +1182,16 @@
       cariler = data.cariler || [];
     } catch {}
     removeTyping();
+
+    // Params'tan müşteri geldi ve listede tam eşleşme var → direkt faturalarını aç
+    if (onMusteri) {
+      const filtre = onMusteri.toLowerCase();
+      const eslesen = cariler.find(function(c) { return c.ad.toLowerCase().includes(filtre); });
+      if (eslesen) {
+        cariFaturalariniGetir(eslesen.ad, null);
+        return;
+      }
+    }
 
     const wrap = document.createElement('div');
     const baslik = document.createElement('div');
@@ -1182,7 +1216,16 @@
     wrap.appendChild(iptalBtn);
 
     addMessage('', 'bot', wrap);
-    setTimeout(function() { ddWrap.querySelector('input').focus(); }, 100);
+
+    // Params'tan müşteri adı geldiyse arama kutusuna yaz
+    if (onMusteri) {
+      setTimeout(function() {
+        const inp = ddWrap.querySelector('input');
+        if (inp) { inp.value = onMusteri; inp.dispatchEvent(new Event('input')); }
+      }, 150);
+    } else {
+      setTimeout(function() { ddWrap.querySelector('input').focus(); }, 100);
+    }
   }
 
   async function cariFaturalariniGetir(cariAdi, wrapParent) {

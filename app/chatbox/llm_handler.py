@@ -44,7 +44,7 @@ INTENT_ENUM = [k for k in INTENTLER.keys()]
 INTENT_TOOL = [
     {
         "name": "intent_tespit",
-        "description": "Kullanıcının mesajındaki niyeti tespit eder ve uygun intent döndürür.",
+        "description": "Kullanıcının mesajındaki niyeti ve varsa müşteri/tarih gibi parametreleri tespit eder.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -56,6 +56,28 @@ INTENT_TOOL = [
                 "mesaj": {
                     "type": "string",
                     "description": "Kullanıcıya gösterilecek kısa Türkçe mesaj (max 1 cümle)"
+                },
+                "params": {
+                    "type": "object",
+                    "description": "Cümleden çıkarılan parametreler. Sadece cümlede geçenler doldurulur, tahmin yapma.",
+                    "properties": {
+                        "musteri": {
+                            "type": "string",
+                            "description": "Cümlede geçen müşteri/firma adı. Örn: Kroman, UHT, Samsun Makine"
+                        },
+                        "tarih_baslangic": {
+                            "type": "string",
+                            "description": "Tarih aralığı başlangıcı YYYY-MM-DD formatında. 'geçen hafta', 'bu ay' gibi ifadeleri hesapla."
+                        },
+                        "tarih_bitis": {
+                            "type": "string",
+                            "description": "Tarih aralığı bitişi YYYY-MM-DD formatında."
+                        },
+                        "tutar": {
+                            "type": "number",
+                            "description": "Cümlede geçen tutar. Örn: '5000 TL tahsilat' → 5000"
+                        }
+                    }
                 }
             },
             "required": ["intent", "mesaj"]
@@ -128,15 +150,16 @@ def soru_cevapla(mesaj: str, session_id: str = "") -> dict:
         # Tool use ile gelen cevabı parse et
         for block in response.content:
             if block.type == "tool_use" and block.name == "intent_tespit":
-                intent = block.input.get("intent", "none")
+                intent      = block.input.get("intent", "none")
                 mesaj_cevap = block.input.get("mesaj", "Sol menüden işlem seçebilirsiniz.")
+                params      = block.input.get("params", {}) or {}
 
                 # Geçersiz intent kontrolü (şema bunu zaten engelliyor ama ekstra güvenlik)
                 if intent not in INTENTLER:
                     intent = "none"
 
-                logger.info(f"Intent: {intent} | Mesaj: {mesaj_cevap[:60]}")
-                return {"intent": intent, "mesaj": mesaj_cevap}
+                logger.info(f"Intent: {intent} | Params: {params} | Mesaj: {mesaj_cevap[:60]}")
+                return {"intent": intent, "mesaj": mesaj_cevap, "params": params}
 
         # Tool çağrılmadıysa fallback (olmaması lazım ama güvenlik için)
         logger.warning("Tool çağrılmadı, fallback kullanılıyor")

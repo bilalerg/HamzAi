@@ -154,8 +154,9 @@ async def chat_api(request: Request):
         # soru_cevapla artık {"intent": "...", "mesaj": "..."} döndürüyor
         sonuc = soru_cevapla(mesaj, db, session_id)
         return JSONResponse({
-            "cevap": sonuc.get("mesaj", ""),
-            "intent": sonuc.get("intent", "none")
+            "cevap":   sonuc.get("mesaj", ""),
+            "intent":  sonuc.get("intent", "none"),
+            "params":  sonuc.get("params", {})
         })
     except Exception as e:
         logger.error(f"Chat API hatası: {e}")
