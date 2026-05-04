@@ -123,10 +123,6 @@ TOOLS = [
 # ── TOOL ÇALIŞTIR ─────────────────────────────────────────────────────
 
 def _tool_calistir(tool_name: str, tool_input: dict, db=None) -> str:
-    """
-    Tool'u çalıştırır ve sonucu string olarak döndürür.
-    db parametresi tahsilat_ekle'de IslemLog için kullanılır.
-    """
     try:
         from app.parasut.client import (
             cari_listesi_getir, cari_detay_getir, cari_faturalari_getir,
@@ -194,7 +190,6 @@ def _tool_calistir(tool_name: str, tool_input: dict, db=None) -> str:
                 tarih = tarih_parsed
             sonuc = tahsilat_ekle(cari_adi, tutar, aciklama, tarih)
 
-            # FIX: LLM üzerinden yapılan tahsilatları da IslemLog'a yaz
             if sonuc.get("basarili") and db is not None:
                 try:
                     from app.core.database import IslemLog
@@ -284,19 +279,11 @@ def _session_yukle(db, session_id: str):
 def _session_kaydet(db, session_id: str, isim: str, gecmis_saf: list,
                     yeni_mesaj_user: dict = None, yeni_mesaj_asistan: dict = None,
                     tool_log: list = None):
-    """
-    gecmis_saf      : Sadece string content mesajlar — gecmis kolonuna yazılır.
-    yeni_mesaj_user : Kullanıcı mesajı — tam_gecmis'e eklenir.
-    yeni_mesaj_asistan: Claude cevabı — tam_gecmis'e eklenir.
-    tool_log        : Tool çağrıları ve sonuçları — tam_gecmis'e eklenir.
-                      Format: [{"tool": "cari_listesi_getir", "input": {}, "sonuc": "...", "ts": "..."}]
-    """
     from app.core.database import ChatSession
     try:
         session = db.query(ChatSession).filter(ChatSession.session_id == session_id).first()
         gecmis_json = json.dumps(gecmis_saf, ensure_ascii=False)
 
-        # tam_gecmis güncellemesi
         tam_gecmis = []
         if session and session.tam_gecmis:
             try:
@@ -306,20 +293,16 @@ def _session_kaydet(db, session_id: str, isim: str, gecmis_saf: list,
 
         bugun_str = str(date.today())
 
-        # Kullanıcı mesajını ekle
         if yeni_mesaj_user:
             tam_gecmis.append({**yeni_mesaj_user, "ts": bugun_str})
 
-        # Tool çağrılarını ekle (kullanıcı mesajından sonra, cevaptan önce)
         if tool_log:
             for t in tool_log:
                 tam_gecmis.append({**t, "ts": bugun_str})
 
-        # Claude cevabını ekle
         if yeni_mesaj_asistan:
             tam_gecmis.append({**yeni_mesaj_asistan, "ts": bugun_str})
 
-        # Max 200 kayıt tut (tool logları eklenince daha fazla yer gerekiyor)
         if len(tam_gecmis) > 200:
             tam_gecmis = tam_gecmis[-200:]
 
@@ -347,10 +330,6 @@ def _session_kaydet(db, session_id: str, isim: str, gecmis_saf: list,
 # ── MESAJ GEÇMİŞİ SERİALİZASYONU ────────────────────────────────────
 
 def _content_serialize(content) -> list | str:
-    """
-    Claude API'sinden gelen content bloklarını JSON-serileştirilebilir hale getirir.
-    Hem string hem liste (tool_use blokları) desteklenir.
-    """
     if isinstance(content, str):
         return content
     result = []
@@ -369,7 +348,6 @@ def _gecmis_saf_cikart(gecmis: list) -> list:
     """
     Tam geçmişten (tool_use/tool_result içerebilir) sadece
     string content'li user/assistant mesajlarını çıkarır.
-    Bunlar DB'de kısa özet geçmişi olarak tutulur.
     """
     saf = []
     for m in gecmis:
@@ -377,6 +355,37 @@ def _gecmis_saf_cikart(gecmis: list) -> list:
         if isinstance(content, str) and content.strip():
             saf.append({"role": m["role"], "content": content})
     return saf
+
+
+def _gecmis_kirp(gecmis: list, max_adet: int) -> list:
+    """
+    Geçmişi güvenli şekilde kırpar.
+    - tool_use/tool_result çiftlerini asla ortadan kesmez
+    - Her zaman user mesajıyla başlar
+    - max_adet: tutulacak maksimum mesaj sayısı
+    """
+    if len(gecmis) <= max_adet:
+        return gecmis
+
+    kirpilmis = gecmis[-max_adet:]
+
+    # Baştan user olmayan mesajları at (tool_result veya assistant ile başlamamalı)
+    while kirpilmis and kirpilmis[0].get("role") != "user":
+        kirpilmis = kirpilmis[1:]
+
+    # Başta tool_result içeren user mesajı varsa onu da at
+    # (tool_result, önceki tool_use olmadan geçersizdir)
+    while kirpilmis and kirpilmis[0].get("role") == "user":
+        content = kirpilmis[0].get("content", "")
+        if isinstance(content, list) and any(
+            isinstance(c, dict) and c.get("type") == "tool_result" for c in content
+        ):
+            # Bu user mesajı sadece tool_result içeriyor, önceki tool_use yok — at
+            kirpilmis = kirpilmis[1:]
+        else:
+            break
+
+    return kirpilmis
 
 
 # ── ANA FONKSİYON ─────────────────────────────────────────────────────
@@ -388,16 +397,12 @@ def soru_cevapla(mesaj: str, db, gonderen: str = "") -> str:
         _session_kaydet(db, gonderen, isim="Kullanıcı", gecmis_saf=[])
         session = _session_yukle(db, gonderen)
 
-    isim   = (session.isim if session else None) or "Kullanıcı"
+    isim = (session.isim if session else None) or "Kullanıcı"
 
-    # Tam geçmişi yükle (tool_use/tool_result blokları dahil)
-    # gecmis kolonu artık tam geçmişi tutuyor — tool_use bağlamı korunur
     gecmis: list = []
     if session and session.tam_gecmis:
         try:
-            # tam_gecmis'ten yükle — tool_use blokları burada
             raw = json.loads(session.tam_gecmis)
-            # Sadece role/content yapısındakileri al (ts gibi extra alanlar API'ye gitmemeli)
             gecmis = [
                 {"role": m["role"], "content": m["content"]}
                 for m in raw
@@ -406,7 +411,6 @@ def soru_cevapla(mesaj: str, db, gonderen: str = "") -> str:
         except Exception:
             gecmis = []
     elif session and session.gecmis:
-        # Fallback: eski kayıtlar için
         try:
             gecmis = json.loads(session.gecmis)
         except Exception:
@@ -462,35 +466,29 @@ SAYI FORMATI (ÇOK ÖNEMLİ):
     # Yeni kullanıcı mesajını geçmişe ekle
     gecmis.append({"role": "user", "content": mesaj})
 
-    # Geçmişi MAX_GECMIS ile sınırla (çiftler halinde kırp — tek mesaj kalmasın)
-    if len(gecmis) > MAX_GECMIS:
-        gecmis = gecmis[-MAX_GECMIS:]
-        # İlk mesaj assistant ise bir tane daha at — geçmiş user ile başlamalı
-        if gecmis and gecmis[0]["role"] != "user":
-            gecmis = gecmis[1:]
+    # Geçmişi güvenli şekilde kırp (tool çiftlerini koruyarak)
+    gecmis = _gecmis_kirp(gecmis, MAX_GECMIS)
 
     try:
         response = _client.messages.create(
             model=MODEL,
-            max_tokens=2000,  # FIX: 800'den 2000'e yükseltildi
+            max_tokens=2000,
             system=sistem_promptu,
             tools=TOOLS,
             messages=gecmis
         )
 
         # ── TOOL DÖNGÜSÜ ──────────────────────────────────────────────
-        tool_log = []  # Bu konuşmadaki tüm tool çağrılarını biriktir
+        tool_log = []
 
         while response.stop_reason == "tool_use":
             assistant_content = response.content
 
-            # Tool_use bloklarını da içeren tam assistant mesajını geçmişe ekle
             gecmis.append({
                 "role": "assistant",
                 "content": _content_serialize(assistant_content)
             })
 
-            # Tool'ları çalıştır, sonuçları topla ve logla
             tool_results = []
             for block in assistant_content:
                 if block.type == "tool_use":
@@ -501,7 +499,6 @@ SAYI FORMATI (ÇOK ÖNEMLİ):
                         "tool_use_id": block.id,
                         "content": sonuc
                     })
-                    # DB'ye kaydedilecek tool logu
                     tool_log.append({
                         "type": "tool_call",
                         "tool": block.name,
@@ -509,7 +506,6 @@ SAYI FORMATI (ÇOK ÖNEMLİ):
                         "sonuc_ozet": sonuc[:300] if isinstance(sonuc, str) else str(sonuc)[:300]
                     })
 
-            # Tool sonuçlarını geçmişe ekle
             gecmis.append({"role": "user", "content": tool_results})
 
             response = _client.messages.create(
@@ -524,19 +520,13 @@ SAYI FORMATI (ÇOK ÖNEMLİ):
         cevap_blocks = response.content
         cevap = "".join(b.text for b in cevap_blocks if hasattr(b, "text")).strip()
 
-        # Son assistant mesajını da geçmişe ekle
         gecmis.append({"role": "assistant", "content": cevap})
 
-        # FIX: Geçmişi sınırla (MAX_GECMIS içinde tut)
-        if len(gecmis) > MAX_GECMIS:
-            gecmis = gecmis[-MAX_GECMIS:]
-            if gecmis and gecmis[0]["role"] != "user":
-                gecmis = gecmis[1:]
+        # Tool döngüsü bittikten sonra geçmişi kırp (güvenli versiyon)
+        gecmis = _gecmis_kirp(gecmis, MAX_GECMIS)
 
-        # FIX: Saf geçmiş (sadece string content'liler) — DB'de kısa özet
         gecmis_saf = _gecmis_saf_cikart(gecmis)
 
-        # Tek seferde kaydet — user mesajı, tool logları, assistant cevabı
         _session_kaydet(
             db, gonderen, isim=isim,
             gecmis_saf=gecmis_saf,
