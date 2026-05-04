@@ -142,7 +142,7 @@ async def chat_sayfasi():
 
 # ── CHAT (Intent Classifier) ──────────────────────────────────────────
 @app.post("/api/chat")
-async def chat_api(request: Request):
+async def chat_api(request: Request, background_tasks: BackgroundTasks):
     data = await request.json()
     mesaj = data.get("mesaj", "").strip()
     session_id = data.get("session_id", "web_user")
