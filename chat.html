@@ -739,7 +739,7 @@
       wrap.innerHTML =
         `<b>📈 ${d.tarih} Günlük Özet</b><br>` +
         `📋 Yüklenen fiş: <b>${d.fis_sayisi}</b><br>` +
-        `⚖️ Toplam ağırlık: <b>${(d.toplam_kg||0).toLocaleString('tr-TR')} kg (${d.toplam_ton} ton)</b><br>` +
+        `⚖️ Toplam ağırlık: <b>${(d.toplam_kg||0).toLocaleString('tr-TR')} kg</b><br>` +
         `✅ Tamamlanan: <b>${d.tamamlanan}</b><br>` +
         `🕐 Bekleyen: <b>${d.bekleyen}</b><br>` +
         `${durum}`;
@@ -1264,7 +1264,7 @@
         sol.textContent = '🏭 ' + irs.cari_adi;
         const sag2 = document.createElement('span');
         sag2.className = 'kg';
-        sag2.textContent = (irs.toplam_kg / 1000).toFixed(2) + ' ton';
+        sag2.textContent = (irs.toplam_kg||0).toLocaleString('tr-TR') + ' kg';
         const ust = document.createElement('div');
         ust.style.cssText = 'display:flex;justify-content:space-between;width:100%;';
         ust.appendChild(sol);
@@ -1357,19 +1357,144 @@
 
   async function hesapOzetiGoster() {
     showTyping();
+    let cariler = [];
     try {
-      const res = await fetch('/api/hesap-ozeti');
-      const data = await res.json();
-      removeTyping();
-      const metin = '📊 Hesap Özeti\n\n' +
-        '👥 Toplam Cari: ' + data.toplam_cari + '\n' +
-        '🔴 Toplam Alacak: ' + (data.toplam_alacak || 0).toLocaleString('tr-TR', { minimumFractionDigits: 2 }) + ' TL\n' +
-        '🟢 Toplam Borç: ' + (data.toplam_borclu || 0).toLocaleString('tr-TR', { minimumFractionDigits: 2 }) + ' TL';
-      addMessage(metin, 'bot');
-    } catch {
-      removeTyping();
-      addMessage('❌ Hesap özeti yüklenemedi, tekrar deneyin.', 'bot');
-    }
+      const res = await fetch('/api/cariler');
+      const d = await res.json();
+      cariler = d.cariler || [];
+    } catch {}
+    removeTyping();
+
+    const wrap = document.createElement('div');
+
+    // Başlık
+    const baslik = document.createElement('div');
+    baslik.style.cssText = 'font-size:13px;font-weight:500;color:var(--text);margin-bottom:12px;';
+    baslik.textContent = '📊 Hesap Özeti';
+    wrap.appendChild(baslik);
+
+    // Cari seçimi
+    const cariLabel = document.createElement('div');
+    cariLabel.style.cssText = 'font-size:11px;color:var(--muted);margin-bottom:5px;';
+    cariLabel.textContent = 'Firma (boş bırakılırsa tümü):';
+    wrap.appendChild(cariLabel);
+
+    const cariWrap = document.createElement('div');
+    cariWrap.style.cssText = 'position:relative;margin-bottom:10px;';
+    const cariInp = document.createElement('input');
+    cariInp.type = 'text';
+    cariInp.className = 'cari-search-input';
+    cariInp.placeholder = 'Firma adı yazın veya boş bırakın…';
+    cariWrap.appendChild(cariInp);
+    wrap.appendChild(cariWrap);
+
+    // Dropdown
+    let secilenCari = null;
+    const dropdown = document.createElement('div');
+    dropdown.className = 'cari-dropdown';
+    dropdown.style.display = 'none';
+    cariWrap.appendChild(dropdown);
+
+    cariInp.addEventListener('input', function() {
+      const q = cariInp.value.toLowerCase().trim();
+      secilenCari = null;
+      dropdown.innerHTML = '';
+      if (!q) { dropdown.style.display = 'none'; return; }
+      const eslesen = cariler.filter(function(c) { return c.ad.toLowerCase().includes(q); }).slice(0, 8);
+      if (!eslesen.length) { dropdown.style.display = 'none'; return; }
+      eslesen.forEach(function(c) {
+        const item = document.createElement('div');
+        item.className = 'cari-dropdown-item';
+        item.textContent = c.ad;
+        item.onclick = function() {
+          secilenCari = c.ad;
+          cariInp.value = c.ad;
+          dropdown.style.display = 'none';
+        };
+        dropdown.appendChild(item);
+      });
+      dropdown.style.display = 'block';
+    });
+
+    // Tarih aralığı
+    const tarihLabel = document.createElement('div');
+    tarihLabel.style.cssText = 'font-size:11px;color:var(--muted);margin-bottom:5px;';
+    tarihLabel.textContent = 'Tarih aralığı (opsiyonel):';
+    wrap.appendChild(tarihLabel);
+
+    const tarihRow = document.createElement('div');
+    tarihRow.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:12px;';
+
+    const baslangicInp = document.createElement('input');
+    baslangicInp.type = 'date';
+    baslangicInp.className = 'fiyat-input';
+    baslangicInp.style.flex = '1';
+
+    const araLabel = document.createElement('span');
+    araLabel.style.cssText = 'font-size:12px;color:var(--muted);';
+    araLabel.textContent = '—';
+
+    const bitisInp = document.createElement('input');
+    bitisInp.type = 'date';
+    bitisInp.className = 'fiyat-input';
+    bitisInp.style.flex = '1';
+    bitisInp.value = new Date().toISOString().split('T')[0];
+
+    tarihRow.appendChild(baslangicInp);
+    tarihRow.appendChild(araLabel);
+    tarihRow.appendChild(bitisInp);
+    wrap.appendChild(tarihRow);
+
+    // Buton satırı
+    const btnRow = document.createElement('div');
+    btnRow.className = 'btn-row';
+
+    const sorguBtn = document.createElement('button');
+    sorguBtn.className = 'btn-primary';
+    sorguBtn.textContent = '📊 Özeti Getir';
+    sorguBtn.onclick = async function() {
+      sorguBtn.disabled = true;
+      sorguBtn.textContent = 'Yükleniyor…';
+      dropdown.style.display = 'none';
+      try {
+        let url = '/api/hesap-ozeti';
+        const params = [];
+        const cari = secilenCari || cariInp.value.trim();
+        if (cari) params.push('cari=' + encodeURIComponent(cari));
+        if (baslangicInp.value) params.push('baslangic=' + baslangicInp.value);
+        if (bitisInp.value) params.push('bitis=' + bitisInp.value);
+        if (params.length) url += '?' + params.join('&');
+        const res = await fetch(url);
+        const data = await res.json();
+        const satirlar = [];
+        if (cari) satirlar.push('🏭 Firma: ' + cari);
+        if (baslangicInp.value || bitisInp.value) {
+          satirlar.push('📅 Dönem: ' + (baslangicInp.value || '—') + ' / ' + (bitisInp.value || '—'));
+        }
+        satirlar.push('');
+        satirlar.push('👥 Toplam Cari: ' + (data.toplam_cari || 0));
+        satirlar.push('🔴 Toplam Alacak: ' + (data.toplam_alacak || 0).toLocaleString('tr-TR', { minimumFractionDigits: 2 }) + ' TL');
+        satirlar.push('🟢 Toplam Borç: ' + (data.toplam_borclu || 0).toLocaleString('tr-TR', { minimumFractionDigits: 2 }) + ' TL');
+        addMessage(satirlar.join('\n'), 'bot');
+      } catch {
+        addMessage('❌ Hesap özeti yüklenemedi, tekrar deneyin.', 'bot');
+      } finally {
+        sorguBtn.disabled = false;
+        sorguBtn.textContent = '📊 Özeti Getir';
+      }
+    };
+
+    const iptalBtn = document.createElement('button');
+    iptalBtn.className = 'btn-cancel';
+    iptalBtn.textContent = '✕ İptal';
+    iptalBtn.onclick = function() { addMessage('❌ İptal edildi.', 'bot'); };
+
+    btnRow.appendChild(sorguBtn);
+    btnRow.appendChild(iptalBtn);
+    wrap.appendChild(btnRow);
+
+    addMessage('', 'bot', wrap);
+    setTimeout(function() { cariInp.focus(); }, 100);
   }
 
   // ── TAHSİLAT FORMU ───────────────────────────────────────────────
@@ -1937,7 +2062,7 @@
       const info = document.createElement('div');
       info.style.cssText = 'flex:1;font-size:13px;';
       const plakaToplu = plakacikar(irs.aciklama);
-      info.textContent = formatTarih(irs.tarih) + ' · ' + (irs.toplam_kg / 1000).toFixed(2) + ' ton' + (plakaToplu ? ' · 🚗 ' + plakaToplu : '');
+      info.textContent = formatTarih(irs.tarih) + ' · ' + (irs.toplam_kg||0).toLocaleString('tr-TR') + ' kg' + (plakaToplu ? ' · 🚗 ' + plakaToplu : '');
       if (irs.kalemler && irs.kalemler.length > 1) {
         const alt = document.createElement('div');
         alt.style.cssText = 'font-size:11px;color:var(--muted);margin-top:2px;';
@@ -2014,7 +2139,7 @@
       const ilk = kalemler[0];
       topluFiyatSor('🧾 [' + (index+1) + '/' + irsaliyeler.length + '] ' + irs.cari_adi + '\n' + ilk.aciklama + ' fiyatı?\n(' + ilk.miktar_kg.toLocaleString('tr-TR') + ' kg)');
     } else {
-      topluFiyatSor('🧾 [' + (index+1) + '/' + irsaliyeler.length + '] ' + formatTarih(irs.tarih) + ' — ' + (irs.toplam_kg/1000).toFixed(2) + ' ton\nBirim fiyat? (TL/kg)');
+      topluFiyatSor('🧾 [' + (index+1) + '/' + irsaliyeler.length + '] ' + formatTarih(irs.tarih) + ' — ' + (irs.toplam_kg||0).toLocaleString('tr-TR') + ' kg\nBirim fiyat? (TL/kg)');
     }
   }
 
@@ -2206,7 +2331,7 @@
 
   function irsaliyeSecildi(irs, wrap) {
     if (wrap) Array.from(wrap.querySelectorAll('button')).forEach(function(b) { b.disabled = true; });
-    addMessage('✅ Seçildi: ' + irs.cari_adi + ' — ' + (irs.toplam_kg / 1000).toFixed(2) + ' ton', 'user');
+    addMessage('✅ Seçildi: ' + irs.cari_adi + ' — ' + (irs.toplam_kg||0).toLocaleString('tr-TR') + ' kg', 'user');
     const kalemler = irs.kalemler || [];
     if (kalemler.length > 1) {
       faturaAkisi = {
@@ -2223,10 +2348,10 @@
         otomatik_index: 0
       };
       const ilk = kalemler[0];
-      fiyatSor(ilk.aciklama + ' fiyatı nedir?\n(' + ilk.miktar_kg.toLocaleString('tr-TR') + ' kg / ' + (ilk.miktar_kg / 1000).toFixed(2) + ' ton)\nÖrnek: 14.85 veya 14850');
+      fiyatSor(ilk.aciklama + ' fiyatı nedir?\n(' + ilk.miktar_kg.toLocaleString('tr-TR') + ' kg)\nÖrnek: 14.85 veya 14850');
     } else {
       faturaAkisi = { irs: irs, malzeme_listesi: [], malzemeler: {}, toplanan_fiyatlar: {}, index: 0, otomatik_kalan: null, otomatik_index: 0 };
-      fiyatSor('💰 Birim fiyatı nedir? (TL/kg)\n⚖️ ' + (irs.toplam_kg / 1000).toFixed(2) + ' ton\nÖrnek: 14.85 veya 14850');
+      fiyatSor('💰 Birim fiyatı nedir? (TL/kg)\n⚖️ ' + (irs.toplam_kg||0).toLocaleString('tr-TR') + ' kg\nÖrnek: 14.85 veya 14850');
     }
   }
 
@@ -2324,7 +2449,7 @@
         faturaAkisi.index = sonraki;
         const sm = malzeme_listesi[sonraki];
         const sk = malzemeler[sm] || 0;
-        fiyatSor('✅ ' + mevcut + ' (' + mevcut_kg.toLocaleString('tr-TR') + ' kg): ' + fiyatGoster(fiyat) + ' TL/kg kaydedildi.\n\n💰 ' + sm + ' fiyatı nedir?\n(' + sk.toLocaleString('tr-TR') + ' kg / ' + (sk / 1000).toFixed(2) + ' ton)');
+        fiyatSor('✅ ' + mevcut + ' (' + mevcut_kg.toLocaleString('tr-TR') + ' kg): ' + fiyatGoster(fiyat) + ' TL/kg kaydedildi.\n\n💰 ' + sm + ' fiyatı nedir?\n(' + sk.toLocaleString('tr-TR') + ' kg)');
       } else {
         await faturaKesVeDevam(irs, malzemeler, toplanan_fiyatlar, null, otomatik_kalan, otomatik_index);
       }
@@ -2421,7 +2546,7 @@
     }
     const irs = irsaliyeler[index];
     const plakaOto = plakacikar(irs.aciklama);
-    addMessage('⚡ Otomatik: ' + irs.cari_adi + (plakaOto ? ' · 🚗 ' + plakaOto : '') + ' (' + (irs.toplam_kg / 1000).toFixed(2) + ' ton)', 'bot');
+    addMessage('⚡ Otomatik: ' + irs.cari_adi + (plakaOto ? ' · 🚗 ' + plakaOto : '') + ' (' + (irs.toplam_kg||0).toLocaleString('tr-TR') + ' kg)', 'bot');
     const kalemler = irs.kalemler || [];
     if (kalemler.length > 1) {
       faturaAkisi = {
@@ -2438,7 +2563,7 @@
         otomatik_index: index + 1
       };
       const ilk = kalemler[0];
-      fiyatSor(irs.cari_adi + ' — ' + ilk.aciklama + ' fiyatı?\n(' + ilk.miktar_kg.toLocaleString('tr-TR') + ' kg / ' + (ilk.miktar_kg / 1000).toFixed(2) + ' ton)');
+      fiyatSor(irs.cari_adi + ' — ' + ilk.aciklama + ' fiyatı?\n(' + ilk.miktar_kg.toLocaleString('tr-TR') + ' kg)');
     } else {
       faturaAkisi = {
         irs: irs,
@@ -2449,7 +2574,7 @@
         otomatik_kalan: irsaliyeler,
         otomatik_index: index + 1
       };
-      fiyatSor(irs.cari_adi + ' — birim fiyat? (TL/kg)\n⚖️ ' + (irs.toplam_kg / 1000).toFixed(2) + ' ton');
+      fiyatSor(irs.cari_adi + ' — birim fiyat? (TL/kg)\n⚖️ ' + (irs.toplam_kg||0).toLocaleString('tr-TR') + ' kg');
     }
   }
 
