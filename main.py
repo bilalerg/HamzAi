@@ -427,14 +427,50 @@ async def cariler_getir(refresh: bool = False):
 
 # ── HESAP ÖZETİ (Python, Paraşüt'ten direkt) ─────────────────────────
 @app.get("/api/hesap-ozeti")
-async def hesap_ozeti():
-    """Genel hesap özetini Paraşüt'ten döndürür."""
+async def hesap_ozeti(request: Request):
+    """Genel hesap özetini Paraşüt'ten döndürür. cari parametresi varsa o carinin bakiyesini döndürür."""
     try:
-        from app.parasut.client import hesap_ozeti_getir
+        from app.parasut.client import hesap_ozeti_getir, cari_id_bul, cari_detay_getir
+        cari_adi = request.query_params.get("cari")
+        baslangic = request.query_params.get("baslangic")
+        bitis = request.query_params.get("bitis")
+
+        if cari_adi:
+            cari_id = cari_id_bul(cari_adi)
+            if not cari_id:
+                return JSONResponse({"hata": f"Cari bulunamadı: {cari_adi}"})
+            detay = cari_detay_getir(cari_id)
+            return JSONResponse({
+                "toplam_cari": 1,
+                "toplam_alacak": detay.get("bakiye", 0) if detay.get("bakiye", 0) > 0 else 0,
+                "toplam_borclu": abs(detay.get("bakiye", 0)) if detay.get("bakiye", 0) < 0 else 0,
+                "cari_adi": detay.get("ad"),
+                "bakiye": detay.get("bakiye", 0),
+            })
+
         ozet = hesap_ozeti_getir()
         return JSONResponse(ozet)
     except Exception as e:
         logger.error(f"Hesap özeti hatası: {e}")
+        return JSONResponse({"hata": str(e)})
+
+
+@app.get("/api/islem-gecmisi/{cari_adi}")
+async def islem_gecmisi(cari_adi: str, request: Request):
+    """Belirli bir carinin işlem geçmişini döndürür."""
+    try:
+        from app.parasut.client import cari_id_bul, islem_gecmisi_getir
+        from urllib.parse import unquote
+        cari_adi = unquote(cari_adi)
+        baslangic = request.query_params.get("baslangic")
+        bitis = request.query_params.get("bitis")
+        cari_id = cari_id_bul(cari_adi)
+        if not cari_id:
+            return JSONResponse({"hata": f"Cari bulunamadı: {cari_adi}"})
+        sonuc = islem_gecmisi_getir(cari_id, baslangic, bitis)
+        return JSONResponse(sonuc)
+    except Exception as e:
+        logger.error(f"İşlem geçmişi hatası: {e}")
         return JSONResponse({"hata": str(e)})
 
 

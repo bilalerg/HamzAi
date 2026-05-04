@@ -1481,25 +1481,92 @@
       sorguBtn.textContent = 'Yükleniyor…';
       dropdown.style.display = 'none';
       try {
-        let url = '/api/hesap-ozeti';
-        const params = [];
         const cari = secilenCari || cariInp.value.trim();
-        if (cari) params.push('cari=' + encodeURIComponent(cari));
-        if (baslangicInp.value) params.push('baslangic=' + baslangicInp.value);
-        if (bitisInp.value) params.push('bitis=' + bitisInp.value);
-        if (params.length) url += '?' + params.join('&');
-        const res = await fetch(url);
-        const data = await res.json();
-        const satirlar = [];
-        if (cari) satirlar.push('🏭 Firma: ' + cari);
-        if (baslangicInp.value || bitisInp.value) {
-          satirlar.push('📅 Dönem: ' + (baslangicInp.value || '—') + ' / ' + (bitisInp.value || '—'));
+        const baslangic = baslangicInp.value;
+        const bitis = bitisInp.value;
+
+        if (cari) {
+          // Cari seçilmişse: bakiye + işlem geçmişi
+          const params = [];
+          if (baslangic) params.push('baslangic=' + baslangic);
+          if (bitis) params.push('bitis=' + bitis);
+          const queryStr = params.length ? '?' + params.join('&') : '';
+          const res = await fetch('/api/islem-gecmisi/' + encodeURIComponent(cari) + queryStr);
+          const data = await res.json();
+
+          if (data.hata) { addMessage('❌ ' + data.hata, 'bot'); return; }
+
+          // Özet kartı
+          const wrap = document.createElement('div');
+          wrap.style.cssText = 'font-size:13px;';
+
+          const baslikEl = document.createElement('div');
+          baslikEl.style.cssText = 'font-weight:500;margin-bottom:10px;font-size:14px;';
+          baslikEl.textContent = '📊 ' + (data.cari_adi || cari);
+          wrap.appendChild(baslikEl);
+
+          const bakiyeEl = document.createElement('div');
+          bakiyeEl.style.cssText = 'margin-bottom:12px;padding:10px 14px;background:var(--accent-lt);border-radius:10px;border-left:3px solid var(--accent);';
+          const bakiye = data.bakiye || 0;
+          bakiyeEl.innerHTML = '<b>Güncel Bakiye:</b> <span style="color:' + (bakiye > 0 ? 'var(--alacak)' : 'var(--muted)') + ';font-weight:600;">' +
+            bakiye.toLocaleString('tr-TR', {minimumFractionDigits:2}) + ' TL</span>' +
+            (bakiye > 0 ? ' <span style="color:var(--muted);font-size:11px;">(bize borçlu)</span>' : '');
+          if (baslangic || bitis) {
+            bakiyeEl.innerHTML += '<br><span style="color:var(--muted);font-size:11px;">📅 ' + (baslangic || '—') + ' / ' + (bitis || '—') + '</span>';
+          }
+          wrap.appendChild(bakiyeEl);
+
+          const islemler = data.islemler || [];
+          if (islemler.length === 0) {
+            const bos = document.createElement('div');
+            bos.style.cssText = 'color:var(--muted);font-size:12px;';
+            bos.textContent = 'Bu dönemde işlem bulunamadı.';
+            wrap.appendChild(bos);
+          } else {
+            const baslik2 = document.createElement('div');
+            baslik2.style.cssText = 'font-size:11px;color:var(--muted2);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;';
+            baslik2.textContent = 'İşlem Geçmişi (' + islemler.length + ' işlem)';
+            wrap.appendChild(baslik2);
+
+            islemler.forEach(function(i) {
+              const row = document.createElement('div');
+              row.style.cssText = 'padding:8px 12px;background:var(--bg);border-radius:8px;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center;font-size:12px;';
+              const sol = document.createElement('div');
+              const tur = i.tur || '-';
+              const turEmoji = tur.includes('invoice') || tur.includes('fatura') ? '📄' : tur.includes('payment') || tur.includes('tahsilat') ? '💵' : '📋';
+              sol.innerHTML = '<span style="color:var(--muted);margin-right:6px;">' + i.tarih + '</span>' +
+                turEmoji + ' ' + (i.aciklama || tur);
+              const sag = document.createElement('div');
+              sag.style.cssText = 'font-weight:600;white-space:nowrap;margin-left:8px;';
+              const tutar = i.tutar || 0;
+              sag.style.color = tutar >= 0 ? 'var(--alacak)' : '#2a9d5c';
+              sag.textContent = (tutar >= 0 ? '+' : '') + tutar.toLocaleString('tr-TR', {minimumFractionDigits:2}) + ' TL';
+              row.appendChild(sol);
+              row.appendChild(sag);
+              wrap.appendChild(row);
+            });
+          }
+
+          addMessage('', 'bot', wrap);
+        } else {
+          // Cari seçilmemişse: genel özet
+          let url = '/api/hesap-ozeti';
+          const params = [];
+          if (baslangic) params.push('baslangic=' + baslangic);
+          if (bitis) params.push('bitis=' + bitis);
+          if (params.length) url += '?' + params.join('&');
+          const res = await fetch(url);
+          const data = await res.json();
+          const satirlar = [];
+          if (baslangic || bitis) {
+            satirlar.push('📅 Dönem: ' + (baslangic || '—') + ' / ' + (bitis || '—'));
+            satirlar.push('');
+          }
+          satirlar.push('👥 Toplam Cari: ' + (data.toplam_cari || 0));
+          satirlar.push('🔴 Toplam Alacak: ' + (data.toplam_alacak || 0).toLocaleString('tr-TR', { minimumFractionDigits: 2 }) + ' TL');
+          satirlar.push('🟢 Toplam Borç: ' + (data.toplam_borclu || 0).toLocaleString('tr-TR', { minimumFractionDigits: 2 }) + ' TL');
+          addMessage(satirlar.join('\n'), 'bot');
         }
-        satirlar.push('');
-        satirlar.push('👥 Toplam Cari: ' + (data.toplam_cari || 0));
-        satirlar.push('🔴 Toplam Alacak: ' + (data.toplam_alacak || 0).toLocaleString('tr-TR', { minimumFractionDigits: 2 }) + ' TL');
-        satirlar.push('🟢 Toplam Borç: ' + (data.toplam_borclu || 0).toLocaleString('tr-TR', { minimumFractionDigits: 2 }) + ' TL');
-        addMessage(satirlar.join('\n'), 'bot');
       } catch {
         addMessage('❌ Hesap özeti yüklenemedi, tekrar deneyin.', 'bot');
       } finally {

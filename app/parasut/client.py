@@ -489,6 +489,81 @@ def hesap_ozeti_getir() -> dict:
         return {}
 
 
+def islem_gecmisi_getir(cari_id: str, baslangic: str = None, bitis: str = None) -> dict:
+    """
+    Belirli bir carinin tüm işlem geçmişini getirir.
+    GET /transactions?filter[contact_id]=X kullanır.
+    Tarih filtresi Python tarafında yapılır (API native desteklemiyor).
+
+    Returns:
+        {
+            "bakiye": float,
+            "islemler": [{"tarih", "tur", "aciklama", "tutar", "bakiye_sonrasi"}, ...]
+        }
+    """
+    try:
+        # Cari bakiyesi
+        cari = cari_detay_getir(cari_id)
+        bakiye = cari.get("bakiye", 0.0)
+
+        # Tüm işlem geçmişi — transactions endpoint
+        islemler = []
+        page = 1
+        while True:
+            sonuc = parasut_get(
+                f"/{PARASUT_COMPANY_ID}/transactions",
+                params={
+                    "filter[contact_id]": cari_id,
+                    "page[size]": 25,
+                    "page[number]": page,
+                    "sort": "-date"
+                }
+            )
+            data = sonuc.get("data", [])
+            if not data:
+                break
+
+            for item in data:
+                attr = item.get("attributes", {})
+                tarih = attr.get("date", "-")
+
+                # Tarih filtresi — Python tarafında
+                if baslangic and tarih < baslangic:
+                    continue
+                if bitis and tarih > bitis:
+                    continue
+
+                try:
+                    tutar = float(attr.get("amount") or 0)
+                    bakiye_sonrasi = float(attr.get("running_balance") or 0)
+                except (ValueError, TypeError):
+                    tutar = bakiye_sonrasi = 0.0
+
+                islemler.append({
+                    "id": item.get("id"),
+                    "tarih": tarih,
+                    "tur": attr.get("transaction_type", "-"),
+                    "aciklama": attr.get("description") or "-",
+                    "tutar": tutar,
+                    "bakiye_sonrasi": bakiye_sonrasi,
+                })
+
+            if len(data) < 25:
+                break
+            page += 1
+
+        logger.info(f"İşlem geçmişi: cari_id={cari_id} toplam={len(islemler)} işlem")
+        return {
+            "cari_id": cari_id,
+            "cari_adi": cari.get("ad", "-"),
+            "bakiye": bakiye,
+            "islemler": islemler
+        }
+    except Exception as e:
+        logger.error(f"İşlem geçmişi hatası: {e}")
+        return {"bakiye": 0, "islemler": []}
+
+
 def cari_olustur(firma_adi: str, email: str = None, telefon: str = None,
                  vergi_no: str = None, vergi_dairesi: str = None, adres: str = None) -> dict:
     try:
