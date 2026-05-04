@@ -1,15 +1,15 @@
 # llm_handler.py — Profaix Intent Classifier
 #
-# MİMARİ DEĞİŞİKLİK:
-# Eski: Haiku tool çağırarak Paraşüt'ten veri çekiyor, karar alıyordu (güvensiz)
-# Yeni: Haiku SADECE kullanıcının niyetini tespit eder (intent classifier)
-#       Gerçek veri çekme ve aksiyon tamamen frontend + FastAPI endpoint'lerde
+# MİMARİ:
+# Haiku SADECE kullanıcının niyetini tespit eder.
+# Veri çekmez, karar almaz, Paraşüt'e istek atmaz.
+# Gerçek işlemler frontend + FastAPI endpoint'lerde.
 #
-# NEDEN DAHA GÜVENLİ?
-# - Model hiç veri görmüyor → halüsinasyon riski yok
-# - Paraşüt API'ye model üzerinden istek gitmiyor
-# - 1500 cari / binlerce fatura verisi context'e girmiyor
-# - Her yanıt deterministik — aynı input, aynı output
+# İYİLEŞTİRMELER:
+# 1. Tool use ile JSON zorlama — parse hatası sıfır
+# 2. BackgroundTasks uyumlu session kayıt
+# 3. %80 güven eşiği — alakasız sorularda "none" döner
+# 4. İrsaliye/fatura ayrımı prompt'ta netleştirildi
 
 import json
 import anthropic
@@ -21,60 +21,146 @@ MODEL = "claude-haiku-4-5-20251001"
 _client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
 # ── INTENT TANIMI ─────────────────────────────────────────────────────
-# Her intent bir frontend fonksiyonuna karşılık gelir.
-# Frontend bu string'i alır, doğru butonu/akışı tetikler.
-# "none" → Genel soru, yönlendirme yok, Haiku cevap yazar
 INTENTLER = {
     "bekleyen_irsaliyeler":  "Bekleyen (faturalanmamış) irsaliyeleri listeler",
     "toplu_fatura":          "Toplu fatura kesme akışını başlatır",
-    "fatura_sorgula":        "Fatura listesi ve sorgulama ekranını açar",
+    "fatura_sorgula":        "Kesilmiş fatura listesi ve sorgulama ekranını açar",
     "tahsilat_ekle":         "Tahsilat ekleme formunu açar",
     "yeni_cari":             "Yeni cari oluşturma formunu açar",
     "musteri_bakiyeleri":    "Tüm müşteri bakiyelerini listeler",
     "hesap_ozeti":           "Genel hesap özetini gösterir",
     "gunluk_ozet":           "Günlük özeti gösterir",
     "son_fisler":            "Son yüklenen fişleri listeler",
-    "none":                  "Genel soru veya sistem hakkında bilgi — yönlendirme yok"
+    "none":                  "Genel soru veya sistem hakkında bilgi"
 }
+
+INTENT_ENUM = [k for k in INTENTLER.keys()]
+
+# ── İYİLEŞTİRME 1: TOOL USE İLE JSON ZORLAMA ─────────────────────────
+# Model bu tool'u "çağırmak" zorunda — böylece direkt şemayı dolduruyor.
+# json.loads + fence temizleme + fallback döngüsüne gerek kalmıyor.
+# Parse hatası pratikte sıfır.
+
+INTENT_TOOL = [
+    {
+        "name": "intent_tespit",
+        "description": "Kullanıcının mesajındaki niyeti tespit eder ve uygun intent döndürür.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "intent": {
+                    "type": "string",
+                    "enum": INTENT_ENUM,
+                    "description": "Tespit edilen intent"
+                },
+                "mesaj": {
+                    "type": "string",
+                    "description": "Kullanıcıya gösterilecek kısa Türkçe mesaj (max 1 cümle)"
+                }
+            },
+            "required": ["intent", "mesaj"]
+        }
+    }
+]
 
 INTENT_LISTESI = "\n".join([f"- {k}: {v}" for k, v in INTENTLER.items()])
 
-SISTEM_PROMPTU = f"""Sen Profaix muhasebe sisteminin intent classifier'ısın.
+# ── İYİLEŞTİRME 3 + 4: GÜVEN EŞİĞİ + İRSALİYE/FATURA AYRIMI ─────────
+SISTEM_PROMPTU = f"""Sen Profaix'in muhasebe asistanısın — hurda metal sektöründe çalışan, işi bilen, samimi bir yardımcı.
+Kullanıcılar genellikle muhasebeci veya patron. Onlara kısa, sıcak, doğal konuş. Resmi değil ama saçmalama.
 
-GÖREVIN TEK VE NET:
-Kullanıcının mesajını oku, hangi işlemi yapmak istediğini anla, sadece JSON döndür.
+GÖREVIN:
+Kullanıcının mesajını oku, ne yapmak istediğini anla, intent_tespit fonksiyonunu çağır.
 
 MEVCUT İNTENTLER:
 {INTENT_LISTESI}
 
-YANIT FORMATI (SADECE BU JSON, BAŞKA HİÇBİR ŞEY YAZMA):
-{{"intent": "intent_adi", "mesaj": "Kullanıcıya gösterilecek kısa Türkçe mesaj"}}
+SEKTÖRE ÖZEL AYRИМ (ÇOK ÖNEMLİ):
+- Kantar fişi / tartım / irsaliye / bekleyen / faturalanmamış → bekleyen_irsaliyeler
+- Kesilmiş fatura / ödeme durumu / tahsilat geçmişi / fatura sorgula → fatura_sorgula
+Bu ikisi hurda sektöründe çok karışır, dikkatli ayırt et.
 
-KURALLAR:
-- mesaj alanı maksimum 1 cümle, Türkçe, nazik
-- Eğer istek açıkça bir intent'e karşılık geliyorsa o intent'i seç
-- Eğer belirsizse veya genel bir soruysa intent = "none" yaz, mesaj alanında kısa cevap ver
-- ASLA tool çağırma, ASLA veri getirme, ASLA hesaplama yapma
-- Sadece niyeti tespit et
+GÜVENİRLİK KURALI:
+Eğer mesaj listedeki intentlerden hiçbirine %80'den fazla uymuyorsa kesinlikle "none" döndür.
+Spor, haber, genel sohbet gibi tamamen alakasız konular → her zaman "none".
 
-ÖRNEKLER:
-"bekleyen irsaliyeler var mı" → {{"intent": "bekleyen_irsaliyeler", "mesaj": "Bekleyen irsaliyeleriniz getiriliyor..."}}
-"kroman ne kadar borçlu" → {{"intent": "musteri_bakiyeleri", "mesaj": "Müşteri bakiyeleri açılıyor, oradan arayabilirsiniz."}}
-"tahsilat girdim" → {{"intent": "tahsilat_ekle", "mesaj": "Tahsilat ekleme ekranı açılıyor."}}
-"nasıl çalışıyorsun" → {{"intent": "none", "mesaj": "Sol menüden işlem seçebilir veya fiş fotoğrafı yükleyebilirsiniz."}}
-"merhaba" → {{"intent": "none", "mesaj": "Merhaba! Size nasıl yardımcı olabilirim?"}}
+MESAJ YAZARKEN:
+- 1 cümle, doğal konuşma dili
+- Intent varsa aksiyonu hissettir: "Bakıyorum", "Getiriyorum", "Açıyorum"
+- Intent yoksa içten ve kısa cevap ver
+- Bazen emoji kullan, her cümlede değil
+
+ÖRNEKLER (bu tonu yakala):
+"bekleyen irsaliyeler var mı" → intent: bekleyen_irsaliyeler, mesaj: "Hemen bakıyorum 📋"
+"irsaliye" → intent: bekleyen_irsaliyeler, mesaj: "Bekleyenleri getiriyorum."
+"fatura kestik mi" → intent: fatura_sorgula, mesaj: "Fatura ekranını açıyorum."
+"geçen ay ne kestik" → intent: fatura_sorgula, mesaj: "Fatura ekranını açıyorum, tarihe göre bakabilirsiniz."
+"kroman ne kadar borçlu" → intent: musteri_bakiyeleri, mesaj: "Bakiyeleri açıyorum."
+"tahsilat girdim" → intent: tahsilat_ekle, mesaj: "Tahsilat ekranını açıyorum 💵"
+"merhaba" → intent: none, mesaj: "Merhaba! Ne yapıyoruz bugün?"
+"günaydın" → intent: none, mesaj: "Günaydın! Hayırlı işler 👋"
+"teşekkürler" → intent: none, mesaj: "Rica ederim, kolay gelsin!"
+"beşiktaş maçı kaç kaç" → intent: none, mesaj: "Bunu bilemem ama muhasebe konusunda yardımcı olabilirim 😄"
 """
 
 
-# ── SESSION YÖNETİMİ ──────────────────────────────────────────────────
+# ── ANA FONKSİYON ─────────────────────────────────────────────────────
 
-def _session_yukle(db, session_id: str):
-    from app.core.database import ChatSession
-    return db.query(ChatSession).filter(ChatSession.session_id == session_id).first()
+def soru_cevapla(mesaj: str, session_id: str = "") -> dict:
+    """
+    Kullanıcı mesajını alır, intent + mesaj döndürür.
+    DB işlemi yok — session kaydı BackgroundTasks ile ayrıca yapılır.
+
+    Return:
+        {"intent": "bekleyen_irsaliyeler", "mesaj": "Hemen bakıyorum 📋"}
+    """
+    try:
+        response = _client.messages.create(
+            model=MODEL,
+            max_tokens=200,
+            temperature=0.0,  # Intent classification'da tutarlılık şart
+            system=SISTEM_PROMPTU,
+            tools=INTENT_TOOL,
+            tool_choice={"type": "any"},  # Modeli her zaman tool çağırmaya zorla
+            messages=[{"role": "user", "content": mesaj}]
+        )
+
+        # Tool use ile gelen cevabı parse et
+        for block in response.content:
+            if block.type == "tool_use" and block.name == "intent_tespit":
+                intent = block.input.get("intent", "none")
+                mesaj_cevap = block.input.get("mesaj", "Sol menüden işlem seçebilirsiniz.")
+
+                # Geçersiz intent kontrolü (şema bunu zaten engelliyor ama ekstra güvenlik)
+                if intent not in INTENTLER:
+                    intent = "none"
+
+                logger.info(f"Intent: {intent} | Mesaj: {mesaj_cevap[:60]}")
+                return {"intent": intent, "mesaj": mesaj_cevap}
+
+        # Tool çağrılmadıysa fallback (olmaması lazım ama güvenlik için)
+        logger.warning("Tool çağrılmadı, fallback kullanılıyor")
+        return {
+            "intent": "none",
+            "mesaj": "Sol menüden işlem seçebilir veya fiş fotoğrafı yükleyebilirsiniz."
+        }
+
+    except Exception as e:
+        logger.error(f"Intent classifier hatası: {e}")
+        return {
+            "intent": "none",
+            "mesaj": "❌ Şu an cevap veremiyorum, lütfen tekrar deneyin."
+        }
 
 
-def _session_kaydet(db, session_id: str, user_mesaj: str, bot_mesaj: str):
-    from app.core.database import ChatSession
+# ── İYİLEŞTİRME 2: BACKGROUND TASK UYUMLU SESSION KAYIT ──────────────
+# main.py'de background_tasks.add_task(session_kaydet_bg, ...) ile çağrılır.
+# Kullanıcı cevabı anında alır, DB kaydı arka planda tamamlanır.
+
+def session_kaydet_bg(session_id: str, user_mesaj: str, bot_mesaj: str):
+    """BackgroundTask olarak çalışır — kullanıcıyı bekletmez."""
+    from app.core.database import SessionLocal, ChatSession
+    db = SessionLocal()
     try:
         session = db.query(ChatSession).filter(ChatSession.session_id == session_id).first()
         bugun = str(date.today())
@@ -86,8 +172,8 @@ def _session_kaydet(db, session_id: str, user_mesaj: str, bot_mesaj: str):
             except Exception:
                 tam_gecmis = []
 
-        tam_gecmis.append({"role": "user",     "content": user_mesaj, "ts": bugun})
-        tam_gecmis.append({"role": "assistant", "content": bot_mesaj,  "ts": bugun})
+        tam_gecmis.append({"role": "user",      "content": user_mesaj, "ts": bugun})
+        tam_gecmis.append({"role": "assistant",  "content": bot_mesaj,  "ts": bugun})
 
         if len(tam_gecmis) > 100:
             tam_gecmis = tam_gecmis[-100:]
@@ -105,68 +191,9 @@ def _session_kaydet(db, session_id: str, user_mesaj: str, bot_mesaj: str):
             db.add(session)
 
         db.commit()
+        logger.info(f"Session kaydedildi (bg): {session_id}")
     except Exception as e:
-        logger.error(f"Session kaydedilemedi: {e}")
+        logger.error(f"Session kaydedilemedi (bg): {e}")
         db.rollback()
-
-
-# ── ANA FONKSİYON ─────────────────────────────────────────────────────
-
-def soru_cevapla(mesaj: str, db, gonderen: str = "") -> dict:
-    """
-    Kullanıcı mesajını alır, intent + mesaj döndürür.
-
-    Return:
-        {
-            "intent": "bekleyen_irsaliyeler",  # veya "none"
-            "mesaj": "Bekleyen irsaliyeler getiriliyor..."
-        }
-
-    Frontend bu dict'i alır:
-    - intent != "none" → ilgili fonksiyonu çağırır
-    - intent == "none" → sadece mesajı chat baloncuğunda gösterir
-    """
-    try:
-        response = _client.messages.create(
-            model=MODEL,
-            max_tokens=200,
-            system=SISTEM_PROMPTU,
-            messages=[{"role": "user", "content": mesaj}]
-        )
-
-        ham_cevap = response.content[0].text.strip()
-        logger.info(f"Intent ham cevap: {ham_cevap}")
-
-        try:
-            temiz = ham_cevap.strip()
-            if temiz.startswith("```"):
-                temiz = temiz.split("```")[1]
-                if temiz.startswith("json"):
-                    temiz = temiz[4:]
-            sonuc = json.loads(temiz.strip())
-        except Exception:
-            logger.warning(f"Intent JSON parse hatası: {ham_cevap}")
-            sonuc = {
-                "intent": "none",
-                "mesaj": "Sol menüden işlem seçebilir veya fiş fotoğrafı yükleyebilirsiniz."
-            }
-
-        # Geçersiz intent → none'a düşür
-        if sonuc.get("intent") not in INTENTLER:
-            sonuc["intent"] = "none"
-
-        if not sonuc.get("mesaj"):
-            sonuc["mesaj"] = "Sol menüden işlem seçebilirsiniz."
-
-        logger.info(f"Intent: {sonuc['intent']} | Mesaj: {sonuc['mesaj'][:60]}")
-
-        _session_kaydet(db, gonderen, mesaj, sonuc["mesaj"])
-
-        return sonuc
-
-    except Exception as e:
-        logger.error(f"Intent classifier hatası: {e}")
-        return {
-            "intent": "none",
-            "mesaj": "❌ Şu an cevap veremiyorum, lütfen tekrar deneyin."
-        }
+    finally:
+        db.close()

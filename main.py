@@ -5,7 +5,7 @@ import tempfile
 import json as _json
 from pathlib import Path
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, UploadFile, File
+from fastapi import FastAPI, Request, UploadFile, File, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from app.core.config import validate_config, ENV
