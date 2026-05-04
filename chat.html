@@ -1867,10 +1867,6 @@
     inp.addEventListener('keydown', function(e) {
       if (e.key === 'Escape') dropdown.style.display = 'none';
     });
-    document.addEventListener('click', function(e) {
-      if (!wrap.contains(e.target)) dropdown.style.display = 'none';
-    });
-
     wrap.appendChild(inp);
     wrap.appendChild(dropdown);
     return { wrap, inp };
@@ -2692,6 +2688,16 @@
       console.log('✅ Cari cache hazır: ' + (_cariCache ? _cariCache.length : 0) + ' cari');
     } catch {}
   })();
+
+  // ── GLOBAL DROPDOWN KAPAMA — TEK LISTENER (memory leak yok) ──────
+  // Tüm dropdown'lar için tek bir click listener — her dropdown'a ayrı ayrı eklenmez.
+  document.addEventListener('click', function(e) {
+    document.querySelectorAll('.cari-dropdown').forEach(function(dd) {
+      if (dd.parentElement && !dd.parentElement.contains(e.target)) {
+        dd.style.display = 'none';
+      }
+    });
+  });
 
   window.onload = function() { inputEl.focus(); };
 </script>
