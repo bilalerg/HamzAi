@@ -1359,8 +1359,8 @@
         row.appendChild(bak);
         wrap.appendChild(row);
       });
-      const toplamAlacak = data.cariler.reduce(function(s, c) { return s + (c.bakiye > 0 ? c.bakiye : 0); }, 0);
-      const toplamOdeyecek = data.cariler.reduce(function(s, c) { return s + (c.bakiye < 0 ? Math.abs(c.bakiye) : 0); }, 0);
+      const toplamAlacak = carilerData.reduce(function(s, c) { return s + (c.bakiye > 0 ? c.bakiye : 0); }, 0);
+      const toplamOdeyecek = carilerData.reduce(function(s, c) { return s + (c.bakiye < 0 ? Math.abs(c.bakiye) : 0); }, 0);
       if (toplamAlacak > 0 || toplamOdeyecek > 0) {
         const toplamRow = document.createElement('div');
         toplamRow.style.cssText = 'margin-top:8px;padding:8px 14px;background:var(--accent-lt);border-radius:9px;font-size:12px;font-weight:600;color:var(--accent);';
