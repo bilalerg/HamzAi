@@ -179,10 +179,11 @@ class UsageLog(Base):
     Hata mesajları ucretli=0 olarak kaydedilir.
     """
     __tablename__ = "usage_logs"
-    id          = Column(Integer, primary_key=True, autoincrement=True)
-    user_id     = Column(Integer, ForeignKey("users.id"), nullable=True)
-    username    = Column(String(50), nullable=True, index=True)
-    islem_turu  = Column(String(50), nullable=False, index=True)
+    id               = Column(Integer, primary_key=True, autoincrement=True)
+    user_id          = Column(Integer, ForeignKey("users.id"), nullable=True)
+    username         = Column(String(50), nullable=True, index=True)
+    profaix_user_id  = Column(String(100), nullable=True, index=True)  # profaix.com UUID
+    islem_turu       = Column(String(50), nullable=False, index=True)
     # İşlem tipleri:
     # FIS_OCR       — fiş yükleme ve OCR işlemi
     # IRSALIYE      — irsaliye oluşturma

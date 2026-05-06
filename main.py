@@ -14,8 +14,9 @@ from app.core.logger import logger
 from app.core.database import UsageLog
 
 from app.auth import (
-    kullanici_giris, token_uret, mevcut_kullanici,
-    giris_zorunlu, audit_kaydet, ilk_admin_olustur
+    token_uret, mevcut_kullanici,
+    giris_zorunlu, audit_kaydet, ilk_admin_olustur,
+    profaix_kullanici_dogrula
 )
 
 
@@ -119,21 +120,24 @@ def _islem_log(db, islem_tipi: str, cari_adi: str = None, tutar: int = None,
         logger.warning(f"İşlem log yazılamadı: {e}")
 
 
-def _usage_kaydet(user_id: int, username: str, islem_turu: str,
-                  aciklama: str = None, ucretli: int = 1):
+def _usage_kaydet(user_id, username: str, islem_turu: str,
+                  aciklama: str = None, ucretli: int = 1,
+                  profaix_user_id: str = None):
     """
     Kullanım sayacına kayıt atar. Background task olarak çağrılır.
     ucretli=1 faturaya yansır, ucretli=0 hata/iptal sayılmaz.
+    profaix_user_id: profaix.com UUID — yeni kullanıcılar için
     """
     from app.core.database import SessionLocal
     db = SessionLocal()
     try:
         log = UsageLog(
-            user_id    = user_id,
-            username   = username,
-            islem_turu = islem_turu,
-            aciklama   = aciklama,
-            ucretli    = ucretli
+            user_id         = user_id,
+            username        = username,
+            profaix_user_id = profaix_user_id,
+            islem_turu      = islem_turu,
+            aciklama        = aciklama,
+            ucretli         = ucretli
         )
         db.add(log)
         db.commit()
@@ -168,6 +172,27 @@ async def status():
 
 @app.get("/chat", response_class=HTMLResponse)
 async def chat_sayfasi(request: Request):
+    # URL'de user_id varsa → profaix.com'dan otomatik giriş
+    user_id_param = request.query_params.get("user_id")
+    if user_id_param:
+        kullanici = await profaix_kullanici_dogrula(user_id_param)
+        if kullanici:
+            token = token_uret(
+                profaix_user_id=kullanici["id"],
+                full_name=kullanici.get("full_name", ""),
+                email=kullanici.get("email", ""),
+                beni_hatirla=True
+            )
+            response = HTMLResponse(content=_chat_html())
+            response.set_cookie(
+                key="profaix_token", value=token,
+                max_age=60*60*24*7, httponly=True,
+                secure=True, samesite="lax"
+            )
+            logger.info(f"✅ Otomatik giriş: {kullanici.get('full_name')} ({user_id_param})")
+            return response
+
+    # Cookie yoksa login'e yönlendir
     user = mevcut_kullanici(request)
     if not user:
         from fastapi.responses import RedirectResponse
@@ -191,46 +216,107 @@ async def login_sayfasi(request: Request):
 @app.post("/api/login")
 async def login(request: Request):
     """
-    Kullanıcı adı + şifre alır, doğruysa JWT cookie set eder.
-    beni_hatirla: True → 7 gün, False → 8 saat
+    İki mod:
+    1. profaix.com'dan user_id gelirse → doğrula, cookie set et
+    2. Eski username/şifre ile → local admin için hala çalışır
     """
+    from passlib.context import CryptContext
+    from app.core.database import SessionLocal, User
+
     data = await request.json()
+    user_id      = data.get("user_id", "").strip()
     username     = data.get("username", "").strip()
     sifre        = data.get("password", "").strip()
     beni_hatirla = data.get("beni_hatirla", False)
+    max_age      = 60 * 60 * 24 * 7 if beni_hatirla else 60 * 60 * 8
 
+    # ── MOD 1: profaix.com user_id ile giriş ──────────────────────────
+    if user_id:
+        kullanici = await profaix_kullanici_dogrula(user_id)
+        if not kullanici:
+            logger.warning(f"Profaix doğrulama başarısız: {user_id}")
+            return JSONResponse({"basarili": False, "hata": "Kullanıcı doğrulanamadı"})
+
+        token = token_uret(
+            profaix_user_id=kullanici["id"],
+            full_name=kullanici.get("full_name", ""),
+            email=kullanici.get("email", ""),
+            beni_hatirla=beni_hatirla
+        )
+        logger.info(f"✅ Profaix girişi: {kullanici.get('full_name')} ({user_id})")
+        import threading
+        threading.Thread(target=_usage_kaydet, args=(
+            None, kullanici.get("full_name", user_id), "GIRIS",
+            f"profaix_id={user_id}", 0
+        ), daemon=True).start()
+
+        response = JSONResponse({
+            "basarili": True,
+            "username": kullanici.get("full_name", ""),
+            "ad_soyad": kullanici.get("full_name", ""),
+            "rol": "user"
+        })
+        response.set_cookie(
+            key="profaix_token", value=token, max_age=max_age,
+            httponly=True, secure=True, samesite="lax"
+        )
+        return response
+
+    # ── MOD 2: Local admin (eski yöntem) ─────────────────────────────
     if not username or not sifre:
         return JSONResponse({"basarili": False, "hata": "Kullanıcı adı ve şifre gerekli"})
 
-    user = kullanici_giris(username, sifre)
-    if not user:
-        logger.warning(f"Başarısız giriş denemesi: {username}")
-        return JSONResponse({"basarili": False, "hata": "Kullanıcı adı veya şifre hatalı"})
+    db = SessionLocal()
+    try:
+        pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
+        user = db.query(User).filter(
+            User.username == username.strip().lower(),
+            User.aktif == 1
+        ).first()
+        if not user or not pwd.verify(sifre, user.password_hash):
+            logger.warning(f"Başarısız giriş: {username}")
+            return JSONResponse({"basarili": False, "hata": "Kullanıcı adı veya şifre hatalı"})
 
-    token = token_uret(user["id"], user["username"], user["rol"], beni_hatirla)
-    max_age = 60 * 60 * 24 * 7 if beni_hatirla else 60 * 60 * 8
+        user.son_giris = datetime.utcnow()
+        db.commit()
+        user_id_local = user.id
+        user_username = user.username
+        user_ad = user.ad_soyad or user.username
+        user_rol = user.rol
+    finally:
+        db.close()
 
-    logger.info(f"✅ Giriş: {username} (rol={user['rol']}, hatırla={beni_hatirla})")
-    # Usage log — giriş ücretli değil, ama kimin ne zaman girdiği kayıt altında
+    from app.auth import token_uret as _token_uret_local
+    # Local admin için eski token formatı
+    from datetime import datetime
+    from jose import jwt as _jwt
+    import os as _os
+    _secret = _os.getenv("JWT_SECRET_KEY", "profaix-super-secret-key-2026")
+    from datetime import timedelta
+    _expire = datetime.utcnow() + (timedelta(days=7) if beni_hatirla else timedelta(hours=8))
+    _token = _jwt.encode({
+        "sub": str(user_id_local),
+        "username": user_username,
+        "rol": user_rol,
+        "exp": _expire,
+    }, _secret, algorithm="HS256")
+
+    logger.info(f"✅ Local giriş: {user_username}")
     import threading
     threading.Thread(target=_usage_kaydet, args=(
-        user["id"], user["username"], "GIRIS",
+        user_id_local, user_username, "GIRIS",
         f"ip={request.client.host if request.client else '?'}", 0
     ), daemon=True).start()
 
     response = JSONResponse({
         "basarili": True,
-        "username": user["username"],
-        "ad_soyad": user.get("ad_soyad") or user["username"],
-        "rol": user["rol"]
+        "username": user_username,
+        "ad_soyad": user_ad,
+        "rol": user_rol
     })
     response.set_cookie(
-        key="profaix_token",
-        value=token,
-        max_age=max_age,
-        httponly=True,    # JS ile okunamaz — güvenlik
-        secure=True,      # Sadece HTTPS — production için
-        samesite="lax"
+        key="profaix_token", value=_token, max_age=max_age,
+        httponly=True, secure=True, samesite="lax"
     )
     return response
 
