@@ -328,7 +328,7 @@ async def upload_fis(request: Request, file: UploadFile = File(...), session_id:
             import threading
             threading.Thread(target=_usage_kaydet, args=(
                 aktif_user_upload["id"], aktif_user_upload["username"],
-                "FIS_OCR", f"plaka={fis.plaka} | {fis.malzeme or '?'}", 1
+                "FIS_OCR", f"plaka={fis.plaka} | {fis.firma or '?'}", 1
             ), daemon=True).start()
         _islem_log(db, "FIS_YUKLENDI", plaka=fis.plaka,
                    aciklama=f"Fiş No: {fis.fis_no} | {fis.net_agirlik_kg} kg | OCR firma: {fis.firma}",
