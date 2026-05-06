@@ -468,8 +468,15 @@ async def firma_sec(request: Request):
 
 # ── CARİLER + BAKİYELER (Python, Paraşüt'ten direkt) ─────────────────
 @app.get("/api/cariler")
-async def cariler_getir(refresh: bool = False):
+async def cariler_getir(request: Request, refresh: bool = False):
     """Tüm carileri ve güncel bakiyelerini Paraşüt'ten döndürür."""
+    aktif_user_c = mevcut_kullanici(request)
+    if aktif_user_c:
+        import threading
+        threading.Thread(target=_usage_kaydet, args=(
+            aktif_user_c["id"], aktif_user_c["username"],
+            "SORGU", "cari_listesi" + ("_refresh" if refresh else ""), 1
+        ), daemon=True).start()
     try:
         from app.parasut.client import cari_listesi_getir, cari_cache_yenile
         cariler = cari_cache_yenile() if refresh else cari_listesi_getir()
@@ -488,6 +495,14 @@ async def cariler_getir(refresh: bool = False):
 @app.get("/api/hesap-ozeti")
 async def hesap_ozeti(request: Request):
     """Genel hesap özetini Paraşüt'ten döndürür. cari parametresi varsa o carinin bakiyesini döndürür."""
+    aktif_user_ho = mevcut_kullanici(request)
+    if aktif_user_ho:
+        cari_p = request.query_params.get("cari", "genel")
+        import threading
+        threading.Thread(target=_usage_kaydet, args=(
+            aktif_user_ho["id"], aktif_user_ho["username"],
+            "SORGU", f"hesap_ozeti | {cari_p}", 1
+        ), daemon=True).start()
     try:
         from app.parasut.client import hesap_ozeti_getir, cari_id_bul, cari_detay_getir
         cari_adi = request.query_params.get("cari")
@@ -809,8 +824,15 @@ async def bekleyen_irsaliyeler(request: Request):
 
 
 @app.get("/api/gunluk-ozet")
-def gunluk_ozet():
+def gunluk_ozet(request: Request):
     """Bugünün özeti: fiş sayısı, toplam kg, fatura sayısı."""
+    aktif_user_go = mevcut_kullanici(request)
+    if aktif_user_go:
+        import threading
+        threading.Thread(target=_usage_kaydet, args=(
+            aktif_user_go["id"], aktif_user_go["username"],
+            "SORGU", "gunluk_ozet", 1
+        ), daemon=True).start()
     db = SessionLocal()
     try:
         from app.core.database import WeighTicket, Waybill, TicketStatus
@@ -839,8 +861,15 @@ def gunluk_ozet():
 
 
 @app.get("/api/son-fisler")
-def son_fisler():
+def son_fisler(request: Request):
     """Son 10 yüklenen fişi döndürür."""
+    aktif_user_sf = mevcut_kullanici(request)
+    if aktif_user_sf:
+        import threading
+        threading.Thread(target=_usage_kaydet, args=(
+            aktif_user_sf["id"], aktif_user_sf["username"],
+            "SORGU", "son_fisler", 1
+        ), daemon=True).start()
     db = SessionLocal()
     try:
         from app.core.database import WeighTicket
@@ -869,7 +898,14 @@ def son_fisler():
 
 # ── FATURA DETAY ─────────────────────────────────────────────────────
 @app.get("/api/fatura-detay/{fatura_id}")
-async def fatura_detay_endpoint(fatura_id: str):
+async def fatura_detay_endpoint(fatura_id: str, request: Request):
+    aktif_user_fd = mevcut_kullanici(request)
+    if aktif_user_fd:
+        import threading
+        threading.Thread(target=_usage_kaydet, args=(
+            aktif_user_fd["id"], aktif_user_fd["username"],
+            "SORGU", f"fatura_detay | id={fatura_id}", 1
+        ), daemon=True).start()
     try:
         from app.parasut.client import fatura_detay_getir
         detay = fatura_detay_getir(fatura_id)
