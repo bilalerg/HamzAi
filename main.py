@@ -1248,6 +1248,80 @@ async def fatura_kes_endpoint(request: Request):
 
 
 
+# ── KULLANIM ÖZETİ API ────────────────────────────────────────────────
+
+@app.get("/api/kullanim-ozeti/{username}")
+def kullanim_ozeti_endpoint(username: str):
+    """
+    Belirli bir kullanıcının kullanım özetini döndürür.
+    Müşteri paneli entegrasyonu için kullanılır.
+    """
+    from app.core.database import SessionLocal, UsageLog
+    from sqlalchemy import func as sqlfunc, text
+    from datetime import date, timedelta
+
+    db = SessionLocal()
+    try:
+        bugun = date.today()
+        bu_ay_baslangic = bugun.replace(day=1).strftime("%Y-%m-%d")
+        gecen_ay_son = bugun.replace(day=1)
+        gecen_ay_baslangic = (gecen_ay_son - timedelta(days=1)).replace(day=1).strftime("%Y-%m-%d")
+
+        # Toplam ücretli işlem
+        toplam = db.query(UsageLog).filter(
+            UsageLog.username == username,
+            UsageLog.ucretli == 1
+        ).count()
+
+        # İşlem tiplerine göre dağılım
+        dagilim = db.query(
+            UsageLog.islem_turu,
+            sqlfunc.count(UsageLog.id).label("adet")
+        ).filter(
+            UsageLog.username == username,
+            UsageLog.ucretli == 1
+        ).group_by(UsageLog.islem_turu).all()
+
+        # Bu ay
+        bu_ay = db.query(UsageLog).filter(
+            UsageLog.username == username,
+            UsageLog.ucretli == 1,
+            UsageLog.created_at >= bu_ay_baslangic
+        ).count()
+
+        # Geçen ay
+        gecen_ay = db.query(UsageLog).filter(
+            UsageLog.username == username,
+            UsageLog.ucretli == 1,
+            UsageLog.created_at >= gecen_ay_baslangic,
+            UsageLog.created_at < bu_ay_baslangic
+        ).count()
+
+        # Son 30 günlük günlük dağılım
+        gunluk = db.execute(text("""
+            SELECT DATE(created_at) as gun, COUNT(*) as adet
+            FROM usage_logs
+            WHERE username = :username AND ucretli = 1
+              AND created_at >= NOW() - INTERVAL '30 days'
+            GROUP BY DATE(created_at)
+            ORDER BY gun DESC
+        """), {"username": username}).fetchall()
+
+        return JSONResponse({
+            "username": username,
+            "toplam_ucretli": toplam,
+            "bu_ay": bu_ay,
+            "gecen_ay": gecen_ay,
+            "islem_detay": {row.islem_turu: row.adet for row in dagilim},
+            "gunluk_son30": [{"tarih": str(row.gun), "adet": row.adet} for row in gunluk]
+        })
+    except Exception as e:
+        logger.error(f"Kullanım özeti hatası: {e}")
+        return JSONResponse({"hata": str(e)}, status_code=500)
+    finally:
+        db.close()
+
+
 # ── ADMIN TOKEN KONTROLÜ ──────────────────────────────────────────────
 def _admin_kontrol(request: Request) -> bool:
     """Basit admin token kontrolü."""
