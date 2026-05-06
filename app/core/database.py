@@ -203,6 +203,32 @@ class AuditLog(Base):
     def __repr__(self): return f"<AuditLog user={self.username} intent={self.intent}>"
 
 
+class UsageLog(Base):
+    """
+    Kullanım sayacı — faturalama için.
+    Her ücretli işlemde buraya yazılır.
+    Hata mesajları ucretli=0 olarak kaydedilir.
+    """
+    __tablename__ = "usage_logs"
+    id          = Column(Integer, primary_key=True, autoincrement=True)
+    user_id     = Column(Integer, ForeignKey("users.id"), nullable=True)
+    username    = Column(String(50), nullable=True, index=True)
+    islem_turu  = Column(String(50), nullable=False, index=True)
+    # İşlem tipleri:
+    # FIS_OCR       — fiş yükleme ve OCR işlemi
+    # IRSALIYE      — irsaliye oluşturma
+    # FATURA        — tek fatura kesme
+    # TOPLU_FATURA  — toplu fatura kesme
+    # TAHSILAT      — tahsilat ekleme
+    # CARI          — yeni cari oluşturma
+    # CHAT          — her chat mesajı (sohbet dahil)
+    # SORGU         — fatura/bakiye/hesap özeti sorguları
+    aciklama    = Column(Text, nullable=True)      # kısa özet
+    ucretli     = Column(Integer, default=1)       # 1=ücretli, 0=hata/iptal
+    created_at  = Column(DateTime, server_default=func.now(), index=True)
+    def __repr__(self): return f"<UsageLog user={self.username} islem={self.islem_turu} ucretli={self.ucretli}>"
+
+
 def init_db():
     logger.info("Veritabanı tabloları oluşturuluyor...")
     Base.metadata.create_all(bind=engine)

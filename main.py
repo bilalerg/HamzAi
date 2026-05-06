@@ -11,6 +11,8 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from app.core.config import validate_config, ENV
 from app.core.database import init_db, SessionLocal, engine
 from app.core.logger import logger
+from app.core.database import UsageLog
+
 from app.auth import (
     kullanici_giris, token_uret, mevcut_kullanici,
     giris_zorunlu, audit_kaydet, ilk_admin_olustur
@@ -117,6 +119,31 @@ def _islem_log(db, islem_tipi: str, cari_adi: str = None, tutar: int = None,
         logger.warning(f"İşlem log yazılamadı: {e}")
 
 
+def _usage_kaydet(user_id: int, username: str, islem_turu: str,
+                  aciklama: str = None, ucretli: int = 1):
+    """
+    Kullanım sayacına kayıt atar. Background task olarak çağrılır.
+    ucretli=1 faturaya yansır, ucretli=0 hata/iptal sayılmaz.
+    """
+    from app.core.database import SessionLocal
+    db = SessionLocal()
+    try:
+        log = UsageLog(
+            user_id    = user_id,
+            username   = username,
+            islem_turu = islem_turu,
+            aciklama   = aciklama,
+            ucretli    = ucretli
+        )
+        db.add(log)
+        db.commit()
+    except Exception as e:
+        logger.warning(f"Usage log yazılamadı: {e}")
+    finally:
+        db.close()
+
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok", "version": "1.0.0", "env": ENV}
@@ -184,6 +211,12 @@ async def login(request: Request):
     max_age = 60 * 60 * 24 * 7 if beni_hatirla else 60 * 60 * 8
 
     logger.info(f"✅ Giriş: {username} (rol={user['rol']}, hatırla={beni_hatirla})")
+    # Usage log — giriş ücretli değil, ama kimin ne zaman girdiği kayıt altında
+    import threading
+    threading.Thread(target=_usage_kaydet, args=(
+        user["id"], user["username"], "GIRIS",
+        f"ip={request.client.host if request.client else '?'}", 0
+    ), daemon=True).start()
 
     response = JSONResponse({
         "basarili": True,
@@ -242,6 +275,17 @@ async def chat_api(request: Request, background_tasks: BackgroundTasks):
                 sonuc.get("params", {}),
                 request.client.host if request.client else None
             )
+        # Usage log — her chat mesajı ücretli
+        if aktif_user:
+            intent = sonuc.get("intent", "none")
+            background_tasks.add_task(
+                _usage_kaydet,
+                aktif_user["id"],
+                aktif_user["username"],
+                "CHAT",
+                f"intent={intent} | {mesaj[:80]}",
+                1
+            )
         return JSONResponse({
             "cevap":   sonuc.get("mesaj", ""),
             "intent":  sonuc.get("intent", "none"),
@@ -278,6 +322,14 @@ async def upload_fis(file: UploadFile = File(...), session_id: str = "web_user")
             return JSONResponse({"cevap": f"❌ Fiş okunamadı: {fis.hata}\n\nFotoğrafı daha net çekip tekrar deneyin."})
 
         ticket = fis_db_kaydet(fis, tmp_path, db)
+        # Usage log
+        aktif_user_upload = mevcut_kullanici(request)
+        if aktif_user_upload:
+            import threading
+            threading.Thread(target=_usage_kaydet, args=(
+                aktif_user_upload["id"], aktif_user_upload["username"],
+                "FIS_OCR", f"plaka={fis.plaka} | {fis.malzeme or '?'}", 1
+            ), daemon=True).start()
         _islem_log(db, "FIS_YUKLENDI", plaka=fis.plaka,
                    aciklama=f"Fiş No: {fis.fis_no} | {fis.net_agirlik_kg} kg | OCR firma: {fis.firma}",
                    session_id=session_id)
@@ -370,6 +422,13 @@ async def firma_sec(request: Request):
 
         waybill_id = sonuc["waybill_id"]
         parasut_id = sonuc.get("parasut_id", "-")
+        aktif_user_irs = mevcut_kullanici(request)
+        if aktif_user_irs:
+            import threading
+            threading.Thread(target=_usage_kaydet, args=(
+                aktif_user_irs["id"], aktif_user_irs["username"],
+                "IRSALIYE", f"cari={secilen_firma}", 1
+            ), daemon=True).start()
         _islem_log(db, "IRSALIYE_OLUSTURULDU", cari_adi=secilen_firma,
                   irsaliye_id=str(parasut_id), plaka=ticket.plaka,
                   aciklama=f"{ticket.agirlik_kg} kg")
@@ -458,6 +517,13 @@ async def hesap_ozeti(request: Request):
 @app.get("/api/islem-gecmisi/{cari_adi}")
 async def islem_gecmisi(cari_adi: str, request: Request):
     """Belirli bir carinin işlem geçmişini döndürür."""
+    aktif_user_ig = mevcut_kullanici(request)
+    if aktif_user_ig:
+        import threading
+        threading.Thread(target=_usage_kaydet, args=(
+            aktif_user_ig["id"], aktif_user_ig["username"],
+            "SORGU", f"islem_gecmisi | cari={cari_adi}", 1
+        ), daemon=True).start()
     try:
         from app.parasut.client import cari_id_bul, islem_gecmisi_getir
         from urllib.parse import unquote
@@ -551,6 +617,13 @@ async def tahsilat_ekle_endpoint(request: Request):
             logger.info(f"✅ Tahsilat eklendi: {cari_adi} — {tutar:,.0f} TL")
             db = SessionLocal()
             try:
+                aktif_user_tah = mevcut_kullanici(request)
+                if aktif_user_tah:
+                    import threading
+                    threading.Thread(target=_usage_kaydet, args=(
+                        aktif_user_tah["id"], aktif_user_tah["username"],
+                        "TAHSILAT", f"cari={cari_adi} | {tutar} TL", 1
+                    ), daemon=True).start()
                 _islem_log(db, "TAHSILAT_EKLENDI", cari_adi=cari_adi,
                           tutar=int(float(tutar)),
                           aciklama=f"Tarih: {tarih or 'Bugün'} | {aciklama or ''}")
@@ -609,6 +682,13 @@ async def cari_olustur_endpoint(request: Request):
             logger.info(f"✅ Yeni cari oluşturuldu: {firma_adi}")
             db = SessionLocal()
             try:
+                aktif_user_cari = mevcut_kullanici(request)
+                if aktif_user_cari:
+                    import threading
+                    threading.Thread(target=_usage_kaydet, args=(
+                        aktif_user_cari["id"], aktif_user_cari["username"],
+                        "CARI", f"firma={firma_adi}", 1
+                    ), daemon=True).start()
                 _islem_log(db, "CARI_OLUSTURULDU", cari_adi=firma_adi,
                           aciklama=f"Vergi No: {vergi_no or '-'} | Tel: {telefon or '-'}")
             finally:
@@ -637,11 +717,18 @@ async def cari_olustur_endpoint(request: Request):
 
 # ── BEKLEYENİRSALİYELER ──────────────────────────────────────────────
 @app.get("/api/bekleyen-irsaliyeler")
-async def bekleyen_irsaliyeler():
+async def bekleyen_irsaliyeler(request: Request):
     """
     Tüm bekleyen irsaliyeleri TEK API isteğiyle getirir.
     Malzeme bilgisi DB'den okunur.
     """
+    aktif_user_birs = mevcut_kullanici(request)
+    if aktif_user_birs:
+        import threading
+        threading.Thread(target=_usage_kaydet, args=(
+            aktif_user_birs["id"], aktif_user_birs["username"],
+            "SORGU", "bekleyen_irsaliyeler", 1
+        ), daemon=True).start()
     db = SessionLocal()
     try:
         from app.parasut.client import tum_bekleyen_irsaliyeleri_getir, cari_listesi_getir
@@ -792,7 +879,14 @@ async def fatura_detay_endpoint(fatura_id: str):
 
 
 @app.get("/api/cari-faturalar/{cari_adi}")
-async def cari_faturalar_endpoint(cari_adi: str):
+async def cari_faturalar_endpoint(cari_adi: str, request: Request):
+    aktif_user_cf = mevcut_kullanici(request)
+    if aktif_user_cf:
+        import threading
+        threading.Thread(target=_usage_kaydet, args=(
+            aktif_user_cf["id"], aktif_user_cf["username"],
+            "SORGU", f"fatura_listesi | cari={cari_adi}", 1
+        ), daemon=True).start()
     try:
         from app.parasut.client import cari_id_bul, cari_faturalari_getir
         cari_id = cari_id_bul(cari_adi)
@@ -912,6 +1006,13 @@ async def toplu_fatura_kes_endpoint(request: Request):
 
         fatura_id = sonuc["data"]["id"]
         logger.info(f"✅ Toplu fatura kesildi: {fatura_id} ← {len(irsaliye_ids)} irsaliye cari={cari_adi}")
+        aktif_user_toplu = mevcut_kullanici(request)
+        if aktif_user_toplu:
+            import threading
+            threading.Thread(target=_usage_kaydet, args=(
+                aktif_user_toplu["id"], aktif_user_toplu["username"],
+                "TOPLU_FATURA", f"cari={cari_adi} | {int(toplam_tutar)} TL", 1
+            ), daemon=True).start()
         _islem_log(db, "TOPLU_FATURA_KESILDI", cari_adi=cari_adi, tutar=int(toplam_tutar),
                    fatura_id=fatura_id, aciklama=f"{len(irsaliye_ids)} irsaliye birleştirildi")
 
@@ -1044,6 +1145,13 @@ async def fatura_kes_endpoint(request: Request):
 
         fatura_id = sonuc["data"]["id"]
         logger.info(f"✅ Fatura kesildi: {fatura_id} ← irsaliye {parasut_irsaliye_id} cari={cari_adi}")
+        aktif_user_fat = mevcut_kullanici(request)
+        if aktif_user_fat:
+            import threading
+            threading.Thread(target=_usage_kaydet, args=(
+                aktif_user_fat["id"], aktif_user_fat["username"],
+                "FATURA", f"cari={cari_adi} | {int(toplam_tutar)} TL", 1
+            ), daemon=True).start()
         _islem_log(db, "FATURA_KESILDI", cari_adi=cari_adi, tutar=int(toplam_tutar),
                    fatura_id=fatura_id, irsaliye_id=str(parasut_irsaliye_id))
 
