@@ -7,7 +7,7 @@
 
 from datetime import datetime, date
 from enum import Enum
-from app.core.database import Vehicle, WeighTicket, Alert, TicketStatus
+from app.core.database import Vehicle, WeighTicket, TicketStatus
 from app.core.logger import logger
 
 
@@ -18,18 +18,9 @@ class PlakaSonuc(Enum):
     DUPLICATE = "DUPLICATE"
 
 
-def uyari_olustur(tur: str, mesaj: str, ticket_id: int, db) -> Alert:
-    alert = Alert(
-        tur=tur,
-        mesaj=mesaj,
-        ticket_id=ticket_id,
-        gonderildi_mi=0
-    )
-    db.add(alert)
-    db.commit()
-    db.refresh(alert)
+def uyari_olustur(tur: str, mesaj: str, ticket_id: int, db) -> None:
+    """Alert tablosu kaldırıldı, sadece loglama yapılır."""
     logger.info(f"🔔 Uyarı oluşturuldu: tur={tur} ticket_id={ticket_id}")
-    return alert
 
 
 def plaka_kontrol_et(plaka: str, ticket_id: int, db, fis_no: str = None) -> PlakaSonuc:
