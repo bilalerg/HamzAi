@@ -1399,20 +1399,19 @@ def reset_db(request: Request):
         return JSONResponse({"hata": "Yetkisiz erişim"}, status_code=401)
     from sqlalchemy import text
     with engine.connect() as conn:
+        conn.execute(text('DELETE FROM usage_logs'))
+        conn.execute(text('DELETE FROM audit_logs'))
         conn.execute(text('DELETE FROM islem_logs'))
         conn.execute(text('DELETE FROM chat_sessions'))
         conn.execute(text('DELETE FROM invoices'))
         conn.execute(text('DELETE FROM waybills'))
-        conn.execute(text('DELETE FROM alerts'))
         conn.execute(text('DELETE FROM weigh_tickets'))
         conn.execute(text('DELETE FROM vehicles'))
-        conn.execute(text('DELETE FROM system_logs'))
-        conn.execute(text('DELETE FROM processed_mails'))
         conn.commit()
     logger.info("🗑️ DB tamamen temizlendi (admin)")
     return {"status": "temizlendi", "tablolar": [
-        "islem_logs", "chat_sessions", "invoices", "waybills",
-        "alerts", "weigh_tickets", "vehicles", "system_logs", "processed_mails"
+        "usage_logs", "audit_logs", "islem_logs", "chat_sessions",
+        "invoices", "waybills", "weigh_tickets", "vehicles"
     ]}
 
 

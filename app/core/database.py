@@ -107,37 +107,6 @@ class Invoice(Base):
     def __repr__(self): return f"<Invoice fatura_no={self.fatura_no} tutar={self.tutar}>"
 
 
-class Alert(Base):
-    __tablename__ = "alerts"
-    id           = Column(Integer, primary_key=True, autoincrement=True)
-    tur          = Column(String(50), nullable=False)
-    mesaj        = Column(Text, nullable=False)
-    ticket_id    = Column(Integer, ForeignKey("weigh_tickets.id"), nullable=True)
-    gonderildi_mi = Column(Integer, default=0)
-    cevap        = Column(Text, nullable=True)
-    created_at   = Column(DateTime, server_default=func.now())
-    def __repr__(self): return f"<Alert tur={self.tur}>"
-
-
-class SystemLog(Base):
-    __tablename__ = "system_logs"
-    id        = Column(Integer, primary_key=True, autoincrement=True)
-    seviye    = Column(String(10), nullable=False)
-    modul     = Column(String(50), nullable=True)
-    mesaj     = Column(Text, nullable=False)
-    ticket_id = Column(Integer, ForeignKey("weigh_tickets.id"), nullable=True)
-    sure_ms   = Column(Integer, nullable=True)
-    created_at = Column(DateTime, server_default=func.now())
-
-
-class ProcessedMail(Base):
-    __tablename__ = "processed_mails"
-    id         = Column(Integer, primary_key=True, autoincrement=True)
-    mail_id    = Column(String(200), unique=True, nullable=False, index=True)
-    ref_kodu   = Column(String(20), nullable=True)
-    created_at = Column(DateTime, server_default=func.now())
-
-
 class ChatSession(Base):
     __tablename__ = "chat_sessions"
     id         = Column(Integer, primary_key=True, autoincrement=True)
