@@ -298,7 +298,7 @@ async def chat_api(request: Request, background_tasks: BackgroundTasks):
 
 # ── FİŞ YÜKLE ────────────────────────────────────────────────────────
 @app.post("/api/upload")
-async def upload_fis(file: UploadFile = File(...), session_id: str = "web_user"):
+async def upload_fis(request: Request, file: UploadFile = File(...), session_id: str = "web_user"):
     db = SessionLocal()
     try:
         uzanti = os.path.splitext(file.filename)[1] if file.filename else ".jpg"
