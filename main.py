@@ -277,7 +277,8 @@ async def login(request: Request):
             logger.warning(f"Başarısız giriş: {username}")
             return JSONResponse({"basarili": False, "hata": "Kullanıcı adı veya şifre hatalı"})
 
-        user.son_giris = datetime.utcnow()
+        from datetime import datetime as _dt, timedelta as _td
+        user.son_giris = _dt.utcnow()
         db.commit()
         user_id_local = user.id
         user_username = user.username
@@ -286,14 +287,11 @@ async def login(request: Request):
     finally:
         db.close()
 
-    from app.auth import token_uret as _token_uret_local
-    # Local admin için eski token formatı
-    from datetime import datetime
     from jose import jwt as _jwt
     import os as _os
     _secret = _os.getenv("JWT_SECRET_KEY", "profaix-super-secret-key-2026")
-    from datetime import timedelta
-    _expire = datetime.utcnow() + (timedelta(days=7) if beni_hatirla else timedelta(hours=8))
+    from datetime import datetime as _dt, timedelta as _td
+    _expire = _dt.utcnow() + (_td(days=7) if beni_hatirla else _td(hours=8))
     _token = _jwt.encode({
         "sub": str(user_id_local),
         "username": user_username,
