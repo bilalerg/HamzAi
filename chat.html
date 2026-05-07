@@ -689,9 +689,8 @@
     <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
     Panele Dön
   </a>
-  <div id="userPill" style="margin-left:8px;display:flex;align-items:center;gap:8px;">
+  <div id="userPill" style="margin-left:8px;display:flex;align-items:center;">
     <span id="userAdSoyad" style="font-size:12px;font-weight:500;color:var(--text2);"></span>
-    <button id="cikisBtn" onclick="cikisYap()" style="display:none;padding:4px 11px;background:transparent;border:1.5px solid var(--border2);border-radius:100px;font-family:'Inter',sans-serif;font-size:11px;color:var(--muted);cursor:pointer;transition:all 0.15s;">Çıkış</button>
   </div>
 </div>
 
@@ -729,7 +728,7 @@
       if (user.giris_yapildi) {
         const ad = user.ad_soyad || user.username || '';
         document.getElementById('userAdSoyad').textContent = ad;
-        document.getElementById('cikisBtn').style.display = 'block';
+
         const wadEl = document.getElementById('welcomeAd');
         if (wadEl) wadEl.textContent = ad.split(' ')[0] || ad;
       }
