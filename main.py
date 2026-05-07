@@ -247,7 +247,8 @@ async def login(request: Request):
         import threading
         threading.Thread(target=_usage_kaydet, args=(
             None, kullanici.get("full_name", user_id), "GIRIS",
-            f"profaix_id={user_id}", 0
+            f"profaix_id={user_id}", 0,
+            user_id
         ), daemon=True).start()
 
         response = JSONResponse({
@@ -303,7 +304,8 @@ async def login(request: Request):
     import threading
     threading.Thread(target=_usage_kaydet, args=(
         user_id_local, user_username, "GIRIS",
-        f"ip={request.client.host if request.client else '?'}", 0
+        f"ip={request.client.host if request.client else '?'}", 0,
+        None
     ), daemon=True).start()
 
     response = JSONResponse({
@@ -368,7 +370,8 @@ async def chat_api(request: Request, background_tasks: BackgroundTasks):
                 aktif_user["username"],
                 "CHAT",
                 f"intent={intent} | {mesaj[:80]}",
-                1
+                1,
+                aktif_user.get("profaix_user_id")
             )
         return JSONResponse({
             "cevap":   sonuc.get("mesaj", ""),
@@ -412,7 +415,8 @@ async def upload_fis(request: Request, file: UploadFile = File(...), session_id:
             import threading
             threading.Thread(target=_usage_kaydet, args=(
                 aktif_user_upload["id"], aktif_user_upload["username"],
-                "FIS_OCR", f"plaka={fis.plaka} | {fis.firma or '?'}", 1
+                "FIS_OCR", f"plaka={fis.plaka} | {fis.firma or '?'}", 1,
+                aktif_user_upload.get("profaix_user_id")
             ), daemon=True).start()
         _islem_log(db, "FIS_YUKLENDI", plaka=fis.plaka,
                    aciklama=f"Fiş No: {fis.fis_no} | {fis.net_agirlik_kg} kg | OCR firma: {fis.firma}",
@@ -511,7 +515,8 @@ async def firma_sec(request: Request):
             import threading
             threading.Thread(target=_usage_kaydet, args=(
                 aktif_user_irs["id"], aktif_user_irs["username"],
-                "IRSALIYE", f"cari={secilen_firma}", 1
+                "IRSALIYE", f"cari={secilen_firma}", 1,
+                aktif_user_irs.get("profaix_user_id")
             ), daemon=True).start()
         _islem_log(db, "IRSALIYE_OLUSTURULDU", cari_adi=secilen_firma,
                   irsaliye_id=str(parasut_id), plaka=ticket.plaka,
@@ -559,7 +564,8 @@ async def cariler_getir(request: Request, refresh: bool = False):
         import threading
         threading.Thread(target=_usage_kaydet, args=(
             aktif_user_c["id"], aktif_user_c["username"],
-            "SORGU", "cari_listesi" + ("_refresh" if refresh else ""), 1
+            "SORGU", "cari_listesi" + ("_refresh" if refresh else ""), 1,
+            aktif_user_c.get("profaix_user_id")
         ), daemon=True).start()
     try:
         from app.parasut.client import cari_listesi_getir, cari_cache_yenile
@@ -585,7 +591,8 @@ async def hesap_ozeti(request: Request):
         import threading
         threading.Thread(target=_usage_kaydet, args=(
             aktif_user_ho["id"], aktif_user_ho["username"],
-            "SORGU", f"hesap_ozeti | {cari_p}", 1
+            "SORGU", f"hesap_ozeti | {cari_p}", 1,
+            aktif_user_ho.get("profaix_user_id")
         ), daemon=True).start()
     try:
         from app.parasut.client import hesap_ozeti_getir, cari_id_bul, cari_detay_getir
@@ -621,7 +628,8 @@ async def islem_gecmisi(cari_adi: str, request: Request):
         import threading
         threading.Thread(target=_usage_kaydet, args=(
             aktif_user_ig["id"], aktif_user_ig["username"],
-            "SORGU", f"islem_gecmisi | cari={cari_adi}", 1
+            "SORGU", f"islem_gecmisi | cari={cari_adi}", 1,
+            aktif_user_ig.get("profaix_user_id")
         ), daemon=True).start()
     try:
         from app.parasut.client import cari_id_bul, islem_gecmisi_getir
@@ -721,7 +729,8 @@ async def tahsilat_ekle_endpoint(request: Request):
                     import threading
                     threading.Thread(target=_usage_kaydet, args=(
                         aktif_user_tah["id"], aktif_user_tah["username"],
-                        "TAHSILAT", f"cari={cari_adi} | {tutar} TL", 1
+                        "TAHSILAT", f"cari={cari_adi} | {tutar} TL", 1,
+                        aktif_user_tah.get("profaix_user_id")
                     ), daemon=True).start()
                 _islem_log(db, "TAHSILAT_EKLENDI", cari_adi=cari_adi,
                           tutar=int(float(tutar)),
@@ -786,7 +795,8 @@ async def cari_olustur_endpoint(request: Request):
                     import threading
                     threading.Thread(target=_usage_kaydet, args=(
                         aktif_user_cari["id"], aktif_user_cari["username"],
-                        "CARI", f"firma={firma_adi}", 1
+                        "CARI", f"firma={firma_adi}", 1,
+                        aktif_user_cari.get("profaix_user_id")
                     ), daemon=True).start()
                 _islem_log(db, "CARI_OLUSTURULDU", cari_adi=firma_adi,
                           aciklama=f"Vergi No: {vergi_no or '-'} | Tel: {telefon or '-'}")
@@ -826,7 +836,8 @@ async def bekleyen_irsaliyeler(request: Request):
         import threading
         threading.Thread(target=_usage_kaydet, args=(
             aktif_user_birs["id"], aktif_user_birs["username"],
-            "SORGU", "bekleyen_irsaliyeler", 1
+            "SORGU", "bekleyen_irsaliyeler", 1,
+            aktif_user_birs.get("profaix_user_id")
         ), daemon=True).start()
     db = SessionLocal()
     try:
@@ -915,7 +926,8 @@ def gunluk_ozet(request: Request):
         import threading
         threading.Thread(target=_usage_kaydet, args=(
             aktif_user_go["id"], aktif_user_go["username"],
-            "SORGU", "gunluk_ozet", 1
+            "SORGU", "gunluk_ozet", 1,
+            aktif_user_go.get("profaix_user_id")
         ), daemon=True).start()
     db = SessionLocal()
     try:
@@ -952,7 +964,8 @@ def son_fisler(request: Request):
         import threading
         threading.Thread(target=_usage_kaydet, args=(
             aktif_user_sf["id"], aktif_user_sf["username"],
-            "SORGU", "son_fisler", 1
+            "SORGU", "son_fisler", 1,
+            aktif_user_sf.get("profaix_user_id")
         ), daemon=True).start()
     db = SessionLocal()
     try:
@@ -988,7 +1001,8 @@ async def fatura_detay_endpoint(fatura_id: str, request: Request):
         import threading
         threading.Thread(target=_usage_kaydet, args=(
             aktif_user_fd["id"], aktif_user_fd["username"],
-            "SORGU", f"fatura_detay | id={fatura_id}", 1
+            "SORGU", f"fatura_detay | id={fatura_id}", 1,
+            aktif_user_fd.get("profaix_user_id")
         ), daemon=True).start()
     try:
         from app.parasut.client import fatura_detay_getir
@@ -1005,7 +1019,8 @@ async def cari_faturalar_endpoint(cari_adi: str, request: Request):
         import threading
         threading.Thread(target=_usage_kaydet, args=(
             aktif_user_cf["id"], aktif_user_cf["username"],
-            "SORGU", f"fatura_listesi | cari={cari_adi}", 1
+            "SORGU", f"fatura_listesi | cari={cari_adi}", 1,
+            aktif_user_cf.get("profaix_user_id")
         ), daemon=True).start()
     try:
         from app.parasut.client import cari_id_bul, cari_faturalari_getir
@@ -1131,7 +1146,8 @@ async def toplu_fatura_kes_endpoint(request: Request):
             import threading
             threading.Thread(target=_usage_kaydet, args=(
                 aktif_user_toplu["id"], aktif_user_toplu["username"],
-                "TOPLU_FATURA", f"cari={cari_adi} | {int(toplam_tutar)} TL", 1
+                "TOPLU_FATURA", f"cari={cari_adi} | {int(toplam_tutar)} TL", 1,
+                aktif_user_toplu.get("profaix_user_id")
             ), daemon=True).start()
         _islem_log(db, "TOPLU_FATURA_KESILDI", cari_adi=cari_adi, tutar=int(toplam_tutar),
                    fatura_id=fatura_id, aciklama=f"{len(irsaliye_ids)} irsaliye birleştirildi")
@@ -1270,7 +1286,8 @@ async def fatura_kes_endpoint(request: Request):
             import threading
             threading.Thread(target=_usage_kaydet, args=(
                 aktif_user_fat["id"], aktif_user_fat["username"],
-                "FATURA", f"cari={cari_adi} | {int(toplam_tutar)} TL", 1
+                "FATURA", f"cari={cari_adi} | {int(toplam_tutar)} TL", 1,
+                aktif_user_fat.get("profaix_user_id")
             ), daemon=True).start()
         _islem_log(db, "FATURA_KESILDI", cari_adi=cari_adi, tutar=int(toplam_tutar),
                    fatura_id=fatura_id, irsaliye_id=str(parasut_irsaliye_id))
