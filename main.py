@@ -187,7 +187,7 @@ async def chat_sayfasi(request: Request):
             response.set_cookie(
                 key="profaix_token", value=token,
                 max_age=60*60*24*7, httponly=True,
-                secure=True, samesite="lax"
+                secure=True, samesite="none"
             )
             logger.info(f"✅ Otomatik giriş: {kullanici.get('full_name')} ({user_id_param})")
             return response
@@ -259,7 +259,7 @@ async def login(request: Request):
         })
         response.set_cookie(
             key="profaix_token", value=token, max_age=max_age,
-            httponly=True, secure=True, samesite="lax"
+            httponly=True, secure=True, samesite="none"
         )
         return response
 
@@ -316,7 +316,7 @@ async def login(request: Request):
     })
     response.set_cookie(
         key="profaix_token", value=_token, max_age=max_age,
-        httponly=True, secure=True, samesite="lax"
+        httponly=True, secure=True, samesite="none"
     )
     return response
 
