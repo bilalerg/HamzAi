@@ -1351,14 +1351,15 @@ async def fatura_kes_endpoint(request: Request):
 
 # ── KULLANIM ÖZETİ API ────────────────────────────────────────────────
 
-@app.get("/api/kullanim-ozeti/{username}")
-def kullanim_ozeti_endpoint(username: str):
+@app.get("/api/kullanim-ozeti/{user_id}")
+def kullanim_ozeti_endpoint(user_id: str):
     """
     Belirli bir kullanıcının kullanım özetini döndürür.
+    profaix_user_id (UUID) ile sorgulanır.
     Müşteri paneli entegrasyonu için kullanılır.
     """
     from app.core.database import SessionLocal, UsageLog
-    from sqlalchemy import func as sqlfunc, text
+    from sqlalchemy import func as sqlfunc, text, or_
     from datetime import date, timedelta
 
     db = SessionLocal()
@@ -1368,9 +1369,15 @@ def kullanim_ozeti_endpoint(username: str):
         gecen_ay_son = bugun.replace(day=1)
         gecen_ay_baslangic = (gecen_ay_son - timedelta(days=1)).replace(day=1).strftime("%Y-%m-%d")
 
+        # UUID mi yoksa username mi?
+        filtre = or_(
+            UsageLog.profaix_user_id == user_id,
+            UsageLog.username == user_id
+        )
+
         # Toplam ücretli işlem
         toplam = db.query(UsageLog).filter(
-            UsageLog.username == username,
+            filtre,
             UsageLog.ucretli == 1
         ).count()
 
@@ -1379,20 +1386,20 @@ def kullanim_ozeti_endpoint(username: str):
             UsageLog.islem_turu,
             sqlfunc.count(UsageLog.id).label("adet")
         ).filter(
-            UsageLog.username == username,
+            filtre,
             UsageLog.ucretli == 1
         ).group_by(UsageLog.islem_turu).all()
 
         # Bu ay
         bu_ay = db.query(UsageLog).filter(
-            UsageLog.username == username,
+            filtre,
             UsageLog.ucretli == 1,
             UsageLog.created_at >= bu_ay_baslangic
         ).count()
 
         # Geçen ay
         gecen_ay = db.query(UsageLog).filter(
-            UsageLog.username == username,
+            filtre,
             UsageLog.ucretli == 1,
             UsageLog.created_at >= gecen_ay_baslangic,
             UsageLog.created_at < bu_ay_baslangic
@@ -1402,14 +1409,19 @@ def kullanim_ozeti_endpoint(username: str):
         gunluk = db.execute(text("""
             SELECT DATE(created_at) as gun, COUNT(*) as adet
             FROM usage_logs
-            WHERE username = :username AND ucretli = 1
+            WHERE (profaix_user_id = :uid OR username = :uid) AND ucretli = 1
               AND created_at >= NOW() - INTERVAL '30 days'
             GROUP BY DATE(created_at)
             ORDER BY gun DESC
-        """), {"username": username}).fetchall()
+        """), {"uid": user_id}).fetchall()
+
+        # Kullanıcı adını bul
+        ilk_kayit = db.query(UsageLog).filter(filtre).first()
+        gosterilen_isim = ilk_kayit.username if ilk_kayit else user_id
 
         return JSONResponse({
-            "username": username,
+            "user_id": user_id,
+            "username": gosterilen_isim,
             "toplam_ucretli": toplam,
             "bu_ay": bu_ay,
             "gecen_ay": gecen_ay,
