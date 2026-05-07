@@ -196,19 +196,14 @@ async def chat_sayfasi(request: Request):
     user = mevcut_kullanici(request)
     if not user:
         from fastapi.responses import RedirectResponse
-        return RedirectResponse(url="/login")
+        return RedirectResponse(url="https://profaix.com/login")
     return HTMLResponse(content=_chat_html())
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_sayfasi(request: Request):
-    user = mevcut_kullanici(request)
-    if user:
-        from fastapi.responses import RedirectResponse
-        return RedirectResponse(url="/chat")
-    login_html = Path(__file__).parent / "login.html"
-    if login_html.exists():
-        return HTMLResponse(content=login_html.read_text(encoding="utf-8"))
-    return HTMLResponse("<h1>login.html bulunamadi</h1>")
+    # Artık login profaix.com üzerinden yapılıyor
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="https://profaix.com/login")
 
 
 # ── AUTH ──────────────────────────────────────────────────────────────
