@@ -14,8 +14,8 @@ from app.core.logger import logger
 
 _client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
-OCR_MODEL      = "claude-sonnet-4-5"
-OCR_MAX_TOKENS = 800
+OCR_MODEL      = "claude-sonnet-4-20250514"
+OCR_MAX_TOKENS = 1024
 
 
 @dataclass
@@ -38,36 +38,71 @@ OCR_SYSTEM = "Sen sadece JSON üreten bir API'sin. Yanıtın SADECE '{' ile baş
 
 OCR_PROMPT = """Kantar fişi fotoğrafı. Sadece JSON döndür, başka hiçbir şey yazma.
 
-{"plaka":"ana araç plakası","fis_no":"fiş no","net_tartim_kg":SAYI,"fire_kg":SAYI_YA_DA_0,"tarih":"GG.AA.YYYY","firma":"fişin başlığındaki fabrika adı","irsaliye_no":null,"kantar_no":null,"malzemeler":{}}
+{"plaka":"ana araç plakası","fis_no":"fiş no","net_tartim_kg":SAYI,"fire_kg":SAYI_YA_DA_0,"tarih":"GG.AA.YYYY","firma":"fabrika adı","irsaliye_no":null,"kantar_no":null,"malzemeler":{}}
 
-KURALLAR:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ADIM 1 — FİŞ FORMATINI TESPİT ET
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-PLAKA:
-- "Araç - Dorse Plaka", "Plaka-1 / Plaka-2", "Ana Araç / Dorse" gibi alanlarda İLK (soldaki) plakayı al
-- Tire veya bölü ile ayrılmış iki plaka varsa (örn: "37 LK 081 - 34 BSE 559") SADECE EN SOLDAKI ilk plakayı al → 37LK081
-- Dorse plakası her zaman ikinci sıradadır, onu ASLA alma
-- Plaka formatı: 2 rakam + 1-3 harf + 2-4 rakam (örn: 37LK081, 34ABC123)
+Aşağıdaki 4 formattan hangisi olduğunu belirle, sonra o formata göre oku:
 
-FİRMA:
-- Fişin EN ÜSTÜNDEKI başlık satırı — genellikle büyük harfle şirket adı (örn: KAPTAN DEMİR ÇELİK END.A.Ş., SAMSUN MAKİNE, KROMAN ÇELİK)
-- "Firma Adı", "Nakliye Firması", "Ad Soyad" satırlarındaki isimler tedarikçidir — YAZMA
-- Fabrika adı yoksa null döndür
+FORMAT A — TOSCELİK/TOSYALI KANTAR
+Tanıma: Başlıkta "TOSCELIK" veya "TOSYALI KANTAR" yazar.
+- fis_no     → "Yukleme / Bosaltma Fis No" satırındaki sayı
+- plaka      → "Araç Plakası" satırı
+- tarih      → "Giris Tarihi" satırındaki tarih (GG.AA.YYYY)
+- firma      → "Firma Adı" satırı (UHT, Yeşil İzabe gibi tedarikçi firma — doğru bu)
+- net_tartim_kg → "Net Tartım" satırı
+- fire_kg    → "6-) Fire" satırındaki değer (0 ise 0 yaz)
+- malzemeler → "1-) DKP", "2-) Topsis", "3-) Bonus", "4-) 1. Grup", "5-) Karma" satırları
+               SADECE 0'dan büyük olanları al, Fire satırını ASLA ekleme
+               Örnek: {"Karma": 15700, "Fire": 800} → YANLIŞ
+                      {"Karma": 15700} → DOĞRU
 
-NET AĞIRLIK:
-- ÖNCE "NET" veya "NET AĞIRLIK" satırını ara → bu değeri net_tartim_kg yaz
-- "Fire/Tenzil" ayrıca belirtilmişse fire_kg yaz, yoksa 0
-- BRÜT ve DARA değerlerini ASLA yazma
-- Fiş formatı "BRÜT - DARA = NET" ise: NET satırındaki değeri al
-- TAM SAYI: 15150 ✓  15.150 ✗  15,150 ✗
+FORMAT B — KROMAN E-POSTA BİLDİRİMİ
+Tanıma: Gönderen "HURDA@kromancelik.com.tr" veya üstte "Fişno:" başlığı var, tablo formatında.
+- fis_no     → "Fiş No" satırı
+- plaka      → "Plaka No" satırı
+- tarih      → "Tarih" satırı
+- firma      → Her zaman sabit: "KROMAN ÇELİK" yaz (gönderen mail veya Firma Adı değil)
+- net_tartim_kg → "Net Tartım" satırındaki değer (ham, tenzil düşülmemiş)
+- fire_kg    → "Tenzil" satırındaki değer
+- malzemeler → Alt tablodaki "Hurda Tipi | Miktar | Tenz.Miktar" satırları
+               Net miktar = Miktar - Tenz.Miktar
+               Örnek: HURDA YERLİ EXTRA | 4.711 | 84 → {"HURDA YERLİ EXTRA": 4627}
+               Tüm satırları ekle, net > 0 olanları
 
-MALZEMELER:
-- Malzeme tablosu VARSA doldur, YOKSA boş bırak {}
-- FORMAT 1 — Kroman tipi: Hurda Tipi | Miktar | Tenzil sütunları → {malzeme_adi: miktar-tenzil}
-- FORMAT 2 — Liste tipi: "1-) DKP ... 0", "2-) Topsis ... 26.950" → sadece 0'dan büyük olanlar → {"Topsis": 26950}
-- FORMAT 3 — Tek malzeme: "Mal Cinsi: YERLI HURDA" → {"YERLI HURDA": net_tartim_kg}
-- ASLA ekleme: Brüt, Dara, Tartı, Fire, Tenzil satırları
+FORMAT C — KAPTAN DEMİR ÇELİK
+Tanıma: Başlıkta "KAPTAN DEMİR ÇELİK" yazar.
+- fis_no     → "Id:" satırındaki numara
+- plaka      → "Araç - Dorse Plaka" satırında TİRE veya BÖLÜ ile ayrılmış iki plaka var
+               SADECE İLK (soldaki) plakayı al → "59 KB 753 - 59 AFM 863" → "59KB753"
+- tarih      → "Geliş - Gidiş Tarihi" satırındaki ilk tarih
+- firma      → Sabit: "KAPTAN DEMİR ÇELİK" yaz
+- net_tartim_kg → "NET" satırındaki değer
+- fire_kg    → 0 (bu fişte fire gösterilmez)
+- malzemeler → "Mal Cinsi" satırındaki değer, ağırlık = net_tartim_kg
+               Örnek: {"YERLI HURDA": 15200}
 
-TÜM KG TAM SAYI: 15150 ✓  15.150 ✗"""
+FORMAT D — DİĞER/BİLİNMEYEN FORMAT
+Tanıma: Yukarıdakilerden hiçbiri değilse.
+- fis_no     → Fiş/slip/makbuz numarası olarak görünen sayı
+- plaka      → Araç plakası — iki plaka varsa sadece ilki
+- tarih      → Tarihi bul
+- firma      → Fişin EN ÜSTÜNDE büyük harfle yazan şirket/fabrika adı
+               "Firma Adı", "Nakliye Firması", "Ad Soyad" satırlarını ASLA yazma
+- net_tartim_kg → NET veya NET TARTIM satırı
+- fire_kg    → Fire/Tenzil satırı, yoksa 0
+- malzemeler → Malzeme tablosu varsa doldur, yoksa {}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+GENEL KURALLAR (TÜM FORMATLAR)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+PLAKA FORMAT: boşluk ve tire olmadan büyük harf → 06FH8714, 34BEG354, 59KB753
+TÜM KG TAM SAYI: nokta ve virgül OLMADAN → 15150 ✓  15.150 ✗  15,150 ✗
+NET AĞIRLIK KONTROLÜ: net_tartim_kg - fire_kg = gerçek net (negatif olamaz)
+TARİH FORMAT: GG.AA.YYYY → 02.04.2026"""
 
 
 def _fotograf_to_base64(fotograf_yolu: str) -> tuple[str, str]:
