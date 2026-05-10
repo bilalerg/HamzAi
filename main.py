@@ -1196,6 +1196,24 @@ async def toplu_fatura_kes_endpoint(request: Request, background_tasks: Backgrou
         _islem_log(db, "TOPLU_FATURA_KESILDI", cari_adi=cari_adi, tutar=int(toplam_tutar),
                    fatura_id=fatura_id, aciklama=f"{len(irsaliye_ids)} irsaliye birleştirildi")
 
+        # Invoice tablosuna kaydet
+        try:
+            import json as _json
+            from app.core.database import Invoice
+            invoice = Invoice(
+                fatura_no        = str(fatura_id),
+                parasut_id       = str(fatura_id),
+                tutar            = int(toplam_tutar),
+                parasut_response = str(sonuc),
+                status           = TicketStatus.TAMAMLANDI,
+                waybill_id       = None  # Toplu faturada birden fazla waybill var
+            )
+            db.add(invoice)
+            db.commit()
+            logger.info(f"✅ Invoice kaydedildi: {fatura_id}")
+        except Exception as e:
+            logger.error(f"Invoice kayıt hatası: {e}")
+
         # DB güncelle ve irsaliyeleri sil
         for pid in irsaliye_ids:
             try:
@@ -1219,7 +1237,7 @@ async def toplu_fatura_kes_endpoint(request: Request, background_tasks: Backgrou
         except Exception:
             pass
 
-        ozet = f"✅ Toplu fatura kesildi!\n\n🏢 {cari_adi}\n📦 {len(irsaliye_ids)} irsaliye birleştirildi\n💵 Toplam: {int(toplam_tutar):,} TL\n🧾 Fatura No: {fatura_id}"
+        ozet = f"✅ Toplu fatura kesildi!\n\n🏢 {cari_adi}\n📦 {len(irsaliye_ids)} irsaliye birleştirildi\n💵 Toplam: {tr_para(toplam_tutar, 2)} TL\n🧾 Fatura No: {fatura_id}"
         return JSONResponse({"cevap": ozet, "basarili": True, "fatura_no": fatura_id})
 
     except Exception as e:
@@ -1343,6 +1361,12 @@ async def fatura_kes_endpoint(request: Request, background_tasks: BackgroundTask
                 ).first()
                 if ticket:
                     ticket.status = TicketStatus.TAMAMLANDI
+                    # vehicle_id bağlantısını kur
+                    if ticket.plaka and ticket.vehicle_id is None:
+                        from app.core.database import Vehicle
+                        arac = db.query(Vehicle).filter(Vehicle.plaka == ticket.plaka).first()
+                        if arac:
+                            ticket.vehicle_id = arac.id
                 db.commit()
                 logger.info(f"✅ DB güncellendi: waybill={waybill.id} ticket={waybill.ticket_id} → TAMAMLANDI")
             else:
@@ -1364,7 +1388,7 @@ async def fatura_kes_endpoint(request: Request, background_tasks: BackgroundTask
         for malzeme_adi_ozet, fiyat_ozet in toplanan_fiyatlar.items():
             kg_val = malzemeler.get(malzeme_adi_ozet, agirlik_kg) if malzemeler else agirlik_kg
             ozet += f"  • {malzeme_adi_ozet if malzemeler and len(toplanan_fiyatlar) > 1 else 'Hurda'}: {tr_kg(kg_val)} kg × {tr_para(fiyat_ozet, 4)} TL/kg = {tr_para(kg_val * fiyat_ozet, 2)} TL\n"
-        ozet += f"\n💵 Toplam: {int(toplam_tutar):,} TL\n"
+        ozet += f"\n💵 Toplam: {tr_para(toplam_tutar, 2)} TL\n"
         ozet += f"🧾 Fatura No: {fatura_id}"
 
         # Cache'i yenile — bakiye değişti
