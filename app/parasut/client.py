@@ -823,20 +823,40 @@ def tum_bekleyen_irsaliyeleri_getir() -> dict:
                     miktar = float(sm_attr.get("quantity", 0))
                     if miktar > 0:
                         desc = sm_attr.get("description") or ""
-                        detail_no = sm_attr.get("detail_no", len(kalemler) + 1)
-                        malzeme_adi = f"Malzeme {detail_no}"
+                        malzeme_adi = None
+
                         if desc:
                             try:
-                                norm = desc.replace(' - ', '—').replace('–', '—')
+                                # Format: "PLAKA — MALZEME_ADI — X kg"
+                                # tire çeşitlerini normalize et
+                                norm = desc.replace(' - ', '—').replace('–', '—').replace(' — ', '—')
                                 parcalar = [p.strip() for p in norm.split("—")]
-                                if len(parcalar) >= 3 and "kg" in parcalar[-1].lower():
-                                    malzeme_adi = parcalar[1].strip()
-                                elif len(parcalar) == 2 and "kg" not in parcalar[1].lower():
-                                    malzeme_adi = parcalar[1].strip()
+
+                                if len(parcalar) >= 3:
+                                    # "37LK081 — KARMA — 15700 kg" → KARMA
+                                    # Son parça kg içeriyorsa ortadakiler malzeme
+                                    if "kg" in parcalar[-1].lower():
+                                        malzeme_adi = "—".join(parcalar[1:-1]).strip()
+                                    else:
+                                        malzeme_adi = "—".join(parcalar[1:]).strip()
+                                elif len(parcalar) == 2:
+                                    # "PLAKA — MALZEME" ya da "MALZEME — X kg"
+                                    if "kg" in parcalar[1].lower():
+                                        malzeme_adi = parcalar[0].strip()
+                                    else:
+                                        malzeme_adi = parcalar[1].strip()
                                 elif len(parcalar) == 1 and parcalar[0]:
                                     malzeme_adi = parcalar[0].strip()
                             except Exception:
                                 pass
+
+                        # Malzeme adı çıkarılamadıysa desc'i olduğu gibi kullan
+                        # son çare olarak "Kalem X" yaz — asla "Malzeme X" yazma
+                        if not malzeme_adi:
+                            if desc.strip():
+                                malzeme_adi = desc.strip()
+                            else:
+                                malzeme_adi = f"Kalem {len(kalemler) + 1}"
                         kalemler.append({"aciklama": malzeme_adi, "miktar_kg": miktar})
 
                 irs = {
