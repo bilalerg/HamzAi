@@ -1133,7 +1133,7 @@ async def toplu_fatura_kes_endpoint(request: Request, background_tasks: Backgrou
                         continue
                     toplam_tutar += kg * fiyat
                     detaylar.append({
-                        "type": "sales_invoice_details",
+                        "type": "purchase_bill_details",
                         "attributes": {
                             "quantity": kg,
                             "unit_price": f"{float(fiyat):.4f}",
@@ -1149,7 +1149,7 @@ async def toplu_fatura_kes_endpoint(request: Request, background_tasks: Backgrou
                 kg = float(agirlik_kg) if agirlik_kg else 0
                 toplam_tutar += kg * birim_fiyat
                 detaylar.append({
-                    "type": "sales_invoice_details",
+                    "type": "purchase_bill_details",
                     "attributes": {
                         "quantity": kg,
                         "unit_price": f"{float(birim_fiyat):.4f}",
@@ -1164,30 +1164,32 @@ async def toplu_fatura_kes_endpoint(request: Request, background_tasks: Backgrou
         if not detaylar:
             return JSONResponse({"cevap": "❌ Fatura kalemi oluşturulamadı.", "basarili": False})
 
+        # Toplam tutar hesapla (net_total zorunlu)
+        toplam_net = sum(
+            d["attributes"]["quantity"] * float(d["attributes"]["unit_price"])
+            for d in detaylar
+        )
+
         istek = {
             "data": {
-                "type": "sales_invoices",
+                "type": "purchase_bills",
                 "attributes": {
-                    "item_type": "invoice",
+                    "item_type":   "purchase_bill",
                     "description": f"Toplu Hurda Alım — {len(irsaliye_ids)} irsaliye",
-                    "issue_date": bugun,
-                    "due_date": bugun,
-                    "currency": "TRL"
+                    "issue_date":  bugun,
+                    "due_date":    bugun,
+                    "currency":    "TRL",
+                    "net_total":   toplam_net,
+                    "total_vat":   0
                 },
                 "relationships": {
                     "contact": {"data": {"type": "contacts", "id": str(contact_id)}},
-                    "details": {"data": detaylar},
-                    "shipment_documents": {"data": shipment_docs}
+                    "details": {"data": detaylar}
                 }
             }
         }
 
-        try:
-            sonuc = parasut_post(f"/{PARASUT_COMPANY_ID}/sales_invoices", istek)
-        except Exception as e:
-            logger.warning(f"İrsaliye bağlantılı toplu fatura başarısız, bağlantısız deneniyor: {e}")
-            istek["data"]["relationships"].pop("shipment_documents", None)
-            sonuc = parasut_post(f"/{PARASUT_COMPANY_ID}/sales_invoices", istek)
+        sonuc = parasut_post(f"/{PARASUT_COMPANY_ID}/purchase_bills", istek)
 
         fatura_id = sonuc["data"]["id"]
         logger.info(f"✅ Toplu fatura kesildi: {fatura_id} ← {len(irsaliye_ids)} irsaliye cari={cari_adi}")
@@ -1279,6 +1281,17 @@ async def fatura_kes_endpoint(request: Request, background_tasks: BackgroundTask
 
         bugun = datetime.now().strftime("%Y-%m-%d")
 
+        # Waybill'den plaka ve ağırlık bilgisi al
+        waybill_db = db.query(Waybill).filter(
+            Waybill.parasut_irsaliye_id == str(parasut_irsaliye_id)
+        ).first()
+        ticket_db = db.query(WeighTicket).filter(
+            WeighTicket.id == waybill_db.ticket_id
+        ).first() if waybill_db else None
+        plaka_bilgi   = ticket_db.plaka if ticket_db else "-"
+        agirlik_bilgi = ticket_db.agirlik_kg if ticket_db else agirlik_kg
+        fis_tarihi_str = ticket_db.fis_tarihi.strftime("%Y-%m-%d") if (ticket_db and ticket_db.fis_tarihi) else bugun
+
         # Fatura detaylarını oluştur
         if malzemeler and len(toplanan_fiyatlar) > 1:
             detaylar = []
@@ -1289,7 +1302,7 @@ async def fatura_kes_endpoint(request: Request, background_tasks: BackgroundTask
                     continue
                 toplam_tutar += kg * fiyat
                 detaylar.append({
-                    "type": "sales_invoice_details",
+                    "type": "purchase_bill_details",
                     "attributes": {
                         "quantity": kg,
                         "unit_price": f"{float(fiyat):.4f}",
@@ -1305,7 +1318,7 @@ async def fatura_kes_endpoint(request: Request, background_tasks: BackgroundTask
             kg           = float(agirlik_kg) if agirlik_kg else float(sum(malzemeler.values())) if malzemeler else 0
             toplam_tutar = kg * birim_fiyat
             detaylar     = [{
-                "type": "sales_invoice_details",
+                "type": "purchase_bill_details",
                 "attributes": {
                     "quantity": kg,
                     "unit_price": f"{float(birim_fiyat):.4f}",
@@ -1319,28 +1332,24 @@ async def fatura_kes_endpoint(request: Request, background_tasks: BackgroundTask
 
         istek = {
             "data": {
-                "type": "sales_invoices",
+                "type": "purchase_bills",
                 "attributes": {
-                    "item_type": "invoice",
-                    "description": f"Hurda Alım — İrsaliye {parasut_irsaliye_id}",
-                    "issue_date": bugun,
-                    "due_date": bugun,
-                    "currency": "TRL"
+                    "item_type":   "purchase_bill",
+                    "description": f"Hurda Alım — {plaka_bilgi} — {agirlik_bilgi} kg",
+                    "issue_date":  fis_tarihi_str,
+                    "due_date":    bugun,
+                    "currency":    "TRL",
+                    "net_total":   toplam_tutar,
+                    "total_vat":   0
                 },
                 "relationships": {
                     "contact": {"data": {"type": "contacts", "id": str(contact_id)}},
-                    "details": {"data": detaylar},
-                    "shipment_document": {"data": {"type": "shipment_documents", "id": str(parasut_irsaliye_id)}}
+                    "details": {"data": detaylar}
                 }
             }
         }
 
-        try:
-            sonuc = parasut_post(f"/{PARASUT_COMPANY_ID}/sales_invoices", istek)
-        except Exception as e:
-            logger.warning(f"İrsaliye bağlantılı fatura başarısız, bağlantısız deneniyor: {e}")
-            istek["data"]["relationships"].pop("shipment_document", None)
-            sonuc = parasut_post(f"/{PARASUT_COMPANY_ID}/sales_invoices", istek)
+        sonuc = parasut_post(f"/{PARASUT_COMPANY_ID}/purchase_bills", istek)
 
         fatura_id = sonuc["data"]["id"]
         logger.info(f"✅ Fatura kesildi: {fatura_id} ← irsaliye {parasut_irsaliye_id} cari={cari_adi}")
@@ -1548,7 +1557,7 @@ async def payment_debug(request: Request, background_tasks: BackgroundTasks):
 
         # Son faturalardan birini bul
         faturalar = parasut_get(
-            f"/{PARASUT_COMPANY_ID}/sales_invoices",
+            f"/{PARASUT_COMPANY_ID}/purchase_bills",
             params={"page[size]": 1, "sort": "-issue_date"}
         )
         son_fatura = None
