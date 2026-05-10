@@ -171,7 +171,7 @@ async def status():
 
 
 @app.get("/chat", response_class=HTMLResponse)
-async def chat_sayfasi(request: Request):
+async def chat_sayfasi(request: Request, background_tasks: BackgroundTasks, background_tasks: BackgroundTasks):
     # URL'de user_id varsa → profaix.com'dan otomatik giriş
     user_id_param = request.query_params.get("user_id")
     if user_id_param:
@@ -200,7 +200,7 @@ async def chat_sayfasi(request: Request):
     return HTMLResponse(content=_chat_html())
 
 @app.get("/login", response_class=HTMLResponse)
-async def login_sayfasi(request: Request):
+async def login_sayfasi(request: Request, background_tasks: BackgroundTasks, background_tasks: BackgroundTasks):
     # Artık login profaix.com üzerinden yapılıyor
     from fastapi.responses import RedirectResponse
     return RedirectResponse(url="https://profaix.com/login")
@@ -209,7 +209,7 @@ async def login_sayfasi(request: Request):
 # ── AUTH ──────────────────────────────────────────────────────────────
 
 @app.post("/api/login")
-async def login(request: Request):
+async def login(request: Request, background_tasks: BackgroundTasks, background_tasks: BackgroundTasks):
     """
     İki mod:
     1. profaix.com'dan user_id gelirse → doğrula, cookie set et
@@ -239,12 +239,7 @@ async def login(request: Request):
             beni_hatirla=beni_hatirla
         )
         logger.info(f"✅ Profaix girişi: {kullanici.get('full_name')} ({user_id})")
-        import threading
-        threading.Thread(target=_usage_kaydet, args=(
-            None, kullanici.get("full_name", user_id), "GIRIS",
-            f"profaix_id={user_id}", 0,
-            user_id
-        ), daemon=True).start()
+        background_tasks.add_task(_usage_kaydet, None, kullanici.get("full_name", user_id), "GIRIS", f"profaix_id={user_id}", 0, user_id)
 
         response = JSONResponse({
             "basarili": True,
@@ -296,12 +291,9 @@ async def login(request: Request):
     }, _secret, algorithm="HS256")
 
     logger.info(f"✅ Local giriş: {user_username}")
-    import threading
-    threading.Thread(target=_usage_kaydet, args=(
-        user_id_local, user_username, "GIRIS",
+        background_tasks.add_task(_usage_kaydet, user_id_local, user_username, "GIRIS",
         f"ip={request.client.host if request.client else '?'}", 0,
-        None
-    ), daemon=True).start()
+        None)
 
     response = JSONResponse({
         "basarili": True,
@@ -325,7 +317,7 @@ async def logout():
 
 
 @app.get("/api/me")
-async def me(request: Request):
+async def me(request: Request, background_tasks: BackgroundTasks, background_tasks: BackgroundTasks):
     """Giriş yapmış kullanıcının bilgilerini döndürür."""
     user = mevcut_kullanici(request)
     if not user:
@@ -407,12 +399,7 @@ async def upload_fis(request: Request, file: UploadFile = File(...), session_id:
         # Usage log
         aktif_user_upload = mevcut_kullanici(request)
         if aktif_user_upload:
-            import threading
-            threading.Thread(target=_usage_kaydet, args=(
-                aktif_user_upload["id"], aktif_user_upload["username"],
-                "FIS_OCR", f"plaka={fis.plaka} | {fis.firma or '?'}", 1,
-                aktif_user_upload.get("profaix_user_id")
-            ), daemon=True).start()
+        background_tasks.add_task(_usage_kaydet, aktif_user_upload["id"], aktif_user_upload["username"], "FIS_OCR", f"plaka={fis.plaka} | {fis.firma or '?'}", 1, aktif_user_upload.get("profaix_user_id"))
         _islem_log(db, "FIS_YUKLENDI", plaka=fis.plaka,
                    aciklama=f"Fiş No: {fis.fis_no} | {fis.net_agirlik_kg} kg | OCR firma: {fis.firma}",
                    session_id=session_id)
@@ -479,7 +466,7 @@ async def upload_fis(request: Request, file: UploadFile = File(...), session_id:
 
 # ── FİRMA SEÇ → İRSALİYE OLUŞTUR ────────────────────────────────────
 @app.post("/api/firma-sec")
-async def firma_sec(request: Request):
+async def firma_sec(request: Request, background_tasks: BackgroundTasks, background_tasks: BackgroundTasks):
     data = await request.json()
     ticket_id    = data.get("ticket_id")
     secilen_firma = data.get("firma")
@@ -507,12 +494,7 @@ async def firma_sec(request: Request):
         parasut_id = sonuc.get("parasut_id", "-")
         aktif_user_irs = mevcut_kullanici(request)
         if aktif_user_irs:
-            import threading
-            threading.Thread(target=_usage_kaydet, args=(
-                aktif_user_irs["id"], aktif_user_irs["username"],
-                "IRSALIYE", f"cari={secilen_firma}", 1,
-                aktif_user_irs.get("profaix_user_id")
-            ), daemon=True).start()
+        background_tasks.add_task(_usage_kaydet, aktif_user_irs["id"], aktif_user_irs["username"], "IRSALIYE", f"cari={secilen_firma}", 1, aktif_user_irs.get("profaix_user_id"))
         _islem_log(db, "IRSALIYE_OLUSTURULDU", cari_adi=secilen_firma,
                   irsaliye_id=str(parasut_id), plaka=ticket.plaka,
                   aciklama=f"{ticket.agirlik_kg} kg")
@@ -552,16 +534,11 @@ async def firma_sec(request: Request):
 
 # ── CARİLER + BAKİYELER (Python, Paraşüt'ten direkt) ─────────────────
 @app.get("/api/cariler")
-async def cariler_getir(request: Request, refresh: bool = False):
+async def cariler_getir(request: Request, background_tasks: BackgroundTasks, refresh: bool = False):
     """Tüm carileri ve güncel bakiyelerini Paraşüt'ten döndürür."""
     aktif_user_c = mevcut_kullanici(request)
     if aktif_user_c:
-        import threading
-        threading.Thread(target=_usage_kaydet, args=(
-            aktif_user_c["id"], aktif_user_c["username"],
-            "SORGU", "cari_listesi" + ("_refresh" if refresh else ""), 1,
-            aktif_user_c.get("profaix_user_id")
-        ), daemon=True).start()
+        background_tasks.add_task(_usage_kaydet, aktif_user_c["id"], aktif_user_c["username"], "SORGU", "cari_listesi" + ("_refresh" if refresh else ""), 1, aktif_user_c.get("profaix_user_id"))
     try:
         from app.parasut.client import cari_listesi_getir, cari_cache_yenile
         cariler = cari_cache_yenile() if refresh else cari_listesi_getir()
@@ -578,17 +555,12 @@ async def cariler_getir(request: Request, refresh: bool = False):
 
 # ── HESAP ÖZETİ (Python, Paraşüt'ten direkt) ─────────────────────────
 @app.get("/api/hesap-ozeti")
-async def hesap_ozeti(request: Request):
+async def hesap_ozeti(request: Request, background_tasks: BackgroundTasks, background_tasks: BackgroundTasks):
     """Genel hesap özetini Paraşüt'ten döndürür. cari parametresi varsa o carinin bakiyesini döndürür."""
     aktif_user_ho = mevcut_kullanici(request)
     if aktif_user_ho:
         cari_p = request.query_params.get("cari", "genel")
-        import threading
-        threading.Thread(target=_usage_kaydet, args=(
-            aktif_user_ho["id"], aktif_user_ho["username"],
-            "SORGU", f"hesap_ozeti | {cari_p}", 1,
-            aktif_user_ho.get("profaix_user_id")
-        ), daemon=True).start()
+        background_tasks.add_task(_usage_kaydet, aktif_user_ho["id"], aktif_user_ho["username"], "SORGU", f"hesap_ozeti | {cari_p}", 1, aktif_user_ho.get("profaix_user_id"))
     try:
         from app.parasut.client import hesap_ozeti_getir, cari_id_bul, cari_detay_getir
         cari_adi = request.query_params.get("cari")
@@ -620,12 +592,7 @@ async def islem_gecmisi(cari_adi: str, request: Request):
     """Belirli bir carinin işlem geçmişini döndürür."""
     aktif_user_ig = mevcut_kullanici(request)
     if aktif_user_ig:
-        import threading
-        threading.Thread(target=_usage_kaydet, args=(
-            aktif_user_ig["id"], aktif_user_ig["username"],
-            "SORGU", f"islem_gecmisi | cari={cari_adi}", 1,
-            aktif_user_ig.get("profaix_user_id")
-        ), daemon=True).start()
+        background_tasks.add_task(_usage_kaydet, aktif_user_ig["id"], aktif_user_ig["username"], "SORGU", f"islem_gecmisi | cari={cari_adi}", 1, aktif_user_ig.get("profaix_user_id"))
     try:
         from app.parasut.client import cari_id_bul, islem_gecmisi_getir
         from urllib.parse import unquote
@@ -644,7 +611,7 @@ async def islem_gecmisi(cari_adi: str, request: Request):
 
 # ── TAHSİLAT (Python, Claude yok) ────────────────────────────────────
 @app.post("/api/tahsilat")
-async def tahsilat_ekle_endpoint(request: Request):
+async def tahsilat_ekle_endpoint(request: Request, background_tasks: BackgroundTasks, background_tasks: BackgroundTasks):
     """
     Belirli bir cariye tahsilat kaydı ekler.
     Parasut'teki acik faturaya odeme baglar.
@@ -721,12 +688,7 @@ async def tahsilat_ekle_endpoint(request: Request):
             try:
                 aktif_user_tah = mevcut_kullanici(request)
                 if aktif_user_tah:
-                    import threading
-                    threading.Thread(target=_usage_kaydet, args=(
-                        aktif_user_tah["id"], aktif_user_tah["username"],
-                        "TAHSILAT", f"cari={cari_adi} | {tutar} TL", 1,
-                        aktif_user_tah.get("profaix_user_id")
-                    ), daemon=True).start()
+        background_tasks.add_task(_usage_kaydet, aktif_user_tah["id"], aktif_user_tah["username"], "TAHSILAT", f"cari={cari_adi} | {tutar} TL", 1, aktif_user_tah.get("profaix_user_id"))
                 _islem_log(db, "TAHSILAT_EKLENDI", cari_adi=cari_adi,
                           tutar=int(float(tutar)),
                           aciklama=f"Tarih: {tarih or 'Bugün'} | {aciklama or ''}")
@@ -761,7 +723,7 @@ async def tahsilat_ekle_endpoint(request: Request):
 
 # ── YENİ CARİ OLUŞTUR (Python, Claude yok) ───────────────────────────
 @app.post("/api/cari-olustur")
-async def cari_olustur_endpoint(request: Request):
+async def cari_olustur_endpoint(request: Request, background_tasks: BackgroundTasks, background_tasks: BackgroundTasks):
     """
     Paraşüt'te yeni cari oluşturur.
     Claude devreye girmez.
@@ -787,12 +749,7 @@ async def cari_olustur_endpoint(request: Request):
             try:
                 aktif_user_cari = mevcut_kullanici(request)
                 if aktif_user_cari:
-                    import threading
-                    threading.Thread(target=_usage_kaydet, args=(
-                        aktif_user_cari["id"], aktif_user_cari["username"],
-                        "CARI", f"firma={firma_adi}", 1,
-                        aktif_user_cari.get("profaix_user_id")
-                    ), daemon=True).start()
+        background_tasks.add_task(_usage_kaydet, aktif_user_cari["id"], aktif_user_cari["username"], "CARI", f"firma={firma_adi}", 1, aktif_user_cari.get("profaix_user_id"))
                 _islem_log(db, "CARI_OLUSTURULDU", cari_adi=firma_adi,
                           aciklama=f"Vergi No: {vergi_no or '-'} | Tel: {telefon or '-'}")
             finally:
@@ -821,19 +778,14 @@ async def cari_olustur_endpoint(request: Request):
 
 # ── BEKLEYENİRSALİYELER ──────────────────────────────────────────────
 @app.get("/api/bekleyen-irsaliyeler")
-async def bekleyen_irsaliyeler(request: Request):
+async def bekleyen_irsaliyeler(request: Request, background_tasks: BackgroundTasks, background_tasks: BackgroundTasks):
     """
     Tüm bekleyen irsaliyeleri TEK API isteğiyle getirir.
     Malzeme bilgisi DB'den okunur.
     """
     aktif_user_birs = mevcut_kullanici(request)
     if aktif_user_birs:
-        import threading
-        threading.Thread(target=_usage_kaydet, args=(
-            aktif_user_birs["id"], aktif_user_birs["username"],
-            "SORGU", "bekleyen_irsaliyeler", 1,
-            aktif_user_birs.get("profaix_user_id")
-        ), daemon=True).start()
+        background_tasks.add_task(_usage_kaydet, aktif_user_birs["id"], aktif_user_birs["username"], "SORGU", "bekleyen_irsaliyeler", 1, aktif_user_birs.get("profaix_user_id"))
     db = SessionLocal()
     try:
         from app.parasut.client import tum_bekleyen_irsaliyeleri_getir, cari_listesi_getir
@@ -914,16 +866,11 @@ async def bekleyen_irsaliyeler(request: Request):
 
 
 @app.get("/api/gunluk-ozet")
-def gunluk_ozet(request: Request):
+async def gunluk_ozet(request: Request, background_tasks: BackgroundTasks, background_tasks: BackgroundTasks):
     """Bugünün özeti: fiş sayısı, toplam kg, fatura sayısı."""
     aktif_user_go = mevcut_kullanici(request)
     if aktif_user_go:
-        import threading
-        threading.Thread(target=_usage_kaydet, args=(
-            aktif_user_go["id"], aktif_user_go["username"],
-            "SORGU", "gunluk_ozet", 1,
-            aktif_user_go.get("profaix_user_id")
-        ), daemon=True).start()
+        background_tasks.add_task(_usage_kaydet, aktif_user_go["id"], aktif_user_go["username"], "SORGU", "gunluk_ozet", 1, aktif_user_go.get("profaix_user_id"))
     db = SessionLocal()
     try:
         from app.core.database import WeighTicket, Waybill, TicketStatus
@@ -952,16 +899,11 @@ def gunluk_ozet(request: Request):
 
 
 @app.get("/api/son-fisler")
-def son_fisler(request: Request):
+async def son_fisler(request: Request, background_tasks: BackgroundTasks, background_tasks: BackgroundTasks):
     """Son 10 yüklenen fişi döndürür."""
     aktif_user_sf = mevcut_kullanici(request)
     if aktif_user_sf:
-        import threading
-        threading.Thread(target=_usage_kaydet, args=(
-            aktif_user_sf["id"], aktif_user_sf["username"],
-            "SORGU", "son_fisler", 1,
-            aktif_user_sf.get("profaix_user_id")
-        ), daemon=True).start()
+        background_tasks.add_task(_usage_kaydet, aktif_user_sf["id"], aktif_user_sf["username"], "SORGU", "son_fisler", 1, aktif_user_sf.get("profaix_user_id"))
     db = SessionLocal()
     try:
         from app.core.database import WeighTicket
@@ -993,12 +935,7 @@ def son_fisler(request: Request):
 async def fatura_detay_endpoint(fatura_id: str, request: Request):
     aktif_user_fd = mevcut_kullanici(request)
     if aktif_user_fd:
-        import threading
-        threading.Thread(target=_usage_kaydet, args=(
-            aktif_user_fd["id"], aktif_user_fd["username"],
-            "SORGU", f"fatura_detay | id={fatura_id}", 1,
-            aktif_user_fd.get("profaix_user_id")
-        ), daemon=True).start()
+        background_tasks.add_task(_usage_kaydet, aktif_user_fd["id"], aktif_user_fd["username"], "SORGU", f"fatura_detay | id={fatura_id}", 1, aktif_user_fd.get("profaix_user_id"))
     try:
         from app.parasut.client import fatura_detay_getir
         detay = fatura_detay_getir(fatura_id)
@@ -1011,12 +948,7 @@ async def fatura_detay_endpoint(fatura_id: str, request: Request):
 async def cari_faturalar_endpoint(cari_adi: str, request: Request):
     aktif_user_cf = mevcut_kullanici(request)
     if aktif_user_cf:
-        import threading
-        threading.Thread(target=_usage_kaydet, args=(
-            aktif_user_cf["id"], aktif_user_cf["username"],
-            "SORGU", f"fatura_listesi | cari={cari_adi}", 1,
-            aktif_user_cf.get("profaix_user_id")
-        ), daemon=True).start()
+        background_tasks.add_task(_usage_kaydet, aktif_user_cf["id"], aktif_user_cf["username"], "SORGU", f"fatura_listesi | cari={cari_adi}", 1, aktif_user_cf.get("profaix_user_id"))
     try:
         from app.parasut.client import cari_id_bul, cari_faturalari_getir
         cari_id = cari_id_bul(cari_adi)
@@ -1030,7 +962,7 @@ async def cari_faturalar_endpoint(cari_adi: str, request: Request):
 
 # ── TOPLU FATURA KES ─────────────────────────────────────────────────
 @app.post("/api/toplu-fatura-kes")
-async def toplu_fatura_kes_endpoint(request: Request):
+async def toplu_fatura_kes_endpoint(request: Request, background_tasks: BackgroundTasks, background_tasks: BackgroundTasks):
     """
     Seçilen birden fazla irsaliyeyi tek faturada birleştirir.
     Her irsaliye için ayrı malzeme+fiyat bilgisi alınır.
@@ -1138,12 +1070,7 @@ async def toplu_fatura_kes_endpoint(request: Request):
         logger.info(f"✅ Toplu fatura kesildi: {fatura_id} ← {len(irsaliye_ids)} irsaliye cari={cari_adi}")
         aktif_user_toplu = mevcut_kullanici(request)
         if aktif_user_toplu:
-            import threading
-            threading.Thread(target=_usage_kaydet, args=(
-                aktif_user_toplu["id"], aktif_user_toplu["username"],
-                "TOPLU_FATURA", f"cari={cari_adi} | {int(toplam_tutar)} TL", 1,
-                aktif_user_toplu.get("profaix_user_id")
-            ), daemon=True).start()
+        background_tasks.add_task(_usage_kaydet, aktif_user_toplu["id"], aktif_user_toplu["username"], "TOPLU_FATURA", f"cari={cari_adi} | {int(toplam_tutar)} TL", 1, aktif_user_toplu.get("profaix_user_id"))
         _islem_log(db, "TOPLU_FATURA_KESILDI", cari_adi=cari_adi, tutar=int(toplam_tutar),
                    fatura_id=fatura_id, aciklama=f"{len(irsaliye_ids)} irsaliye birleştirildi")
 
@@ -1182,7 +1109,7 @@ async def toplu_fatura_kes_endpoint(request: Request):
 
 # ── FATURA KES (Python, Claude yok) ──────────────────────────────────
 @app.post("/api/fatura-kes")
-async def fatura_kes_endpoint(request: Request):
+async def fatura_kes_endpoint(request: Request, background_tasks: BackgroundTasks, background_tasks: BackgroundTasks):
     """
     Paraşüt irsaliye ID'si ve fiyat bilgisiyle direkt fatura keser.
     Başarılı olunca DB'deki ilgili waybill ve ticket'ı TAMAMLANDI yapar.
@@ -1278,12 +1205,7 @@ async def fatura_kes_endpoint(request: Request):
         logger.info(f"✅ Fatura kesildi: {fatura_id} ← irsaliye {parasut_irsaliye_id} cari={cari_adi}")
         aktif_user_fat = mevcut_kullanici(request)
         if aktif_user_fat:
-            import threading
-            threading.Thread(target=_usage_kaydet, args=(
-                aktif_user_fat["id"], aktif_user_fat["username"],
-                "FATURA", f"cari={cari_adi} | {int(toplam_tutar)} TL", 1,
-                aktif_user_fat.get("profaix_user_id")
-            ), daemon=True).start()
+        background_tasks.add_task(_usage_kaydet, aktif_user_fat["id"], aktif_user_fat["username"], "FATURA", f"cari={cari_adi} | {int(toplam_tutar)} TL", 1, aktif_user_fat.get("profaix_user_id"))
         _islem_log(db, "FATURA_KESILDI", cari_adi=cari_adi, tutar=int(toplam_tutar),
                    fatura_id=fatura_id, irsaliye_id=str(parasut_irsaliye_id))
 
@@ -1455,7 +1377,7 @@ def irsaliye_debug(irsaliye_id: str, request: Request):
 
 
 @app.get("/admin/payment-debug")
-async def payment_debug(request: Request):
+async def payment_debug(request: Request, background_tasks: BackgroundTasks, background_tasks: BackgroundTasks):
     if not _admin_kontrol(request):
         return JSONResponse({"hata": "Yetkisiz erişim"}, status_code=401)
     """Parasut'te odeme yapisini test eder."""
@@ -1496,7 +1418,7 @@ async def payment_debug(request: Request):
 
 
 @app.get("/admin/islem-loglari")
-def islem_loglari(request: Request, limit: int = 50, islem_tipi: str = None):
+async def islem_loglari(request: Request, background_tasks: BackgroundTasks, limit: int = 50, islem_tipi: str = None):
     if not _admin_kontrol(request):
         return JSONResponse({"hata": "Yetkisiz erişim"}, status_code=401)
     db = SessionLocal()
@@ -1528,7 +1450,7 @@ def islem_loglari(request: Request, limit: int = 50, islem_tipi: str = None):
 
 
 @app.get("/admin/konusmalar")
-def konusmalar(request: Request, limit: int = 20):
+async def konusmalar(request: Request, background_tasks: BackgroundTasks, limit: int = 20):
     if not _admin_kontrol(request):
         return JSONResponse({"hata": "Yetkisiz erişim"}, status_code=401)
     db = SessionLocal()
@@ -1553,7 +1475,7 @@ def konusmalar(request: Request, limit: int = 20):
 
 
 @app.get("/admin/accounts-debug")
-async def accounts_debug(request: Request):
+async def accounts_debug(request: Request, background_tasks: BackgroundTasks, background_tasks: BackgroundTasks):
     if not _admin_kontrol(request):
         return JSONResponse({"hata": "Yetkisiz erişim"}, status_code=401)
     try:
@@ -1576,7 +1498,7 @@ async def accounts_debug(request: Request):
 
 
 @app.get("/admin/reset-db")
-def reset_db(request: Request):
+async def reset_db(request: Request, background_tasks: BackgroundTasks, background_tasks: BackgroundTasks):
     if not _admin_kontrol(request):
         return JSONResponse({"hata": "Yetkisiz erişim"}, status_code=401)
     from sqlalchemy import text
