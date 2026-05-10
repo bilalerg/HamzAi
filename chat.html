@@ -1535,12 +1535,14 @@
         const bak = document.createElement('span');
         const bakiye = c.bakiye || 0;
         if (bakiye > 0) {
+          // Pozitif = onlar bize borçlu = BİZİM ALACAĞIMIZ (iyi)
           bak.className = 'cari-bakiye alacak';
-          bak.textContent = bakiye.toLocaleString('tr-TR', { minimumFractionDigits: 2 }) + ' TL ⚠️';
+          bak.textContent = bakiye.toLocaleString('tr-TR', { minimumFractionDigits: 2 }) + ' TL 🔵';
         } else if (bakiye < 0) {
           bak.className = 'cari-bakiye';
           bak.style.color = '#2563eb';
-          bak.textContent = Math.abs(bakiye).toLocaleString('tr-TR', { minimumFractionDigits: 2 }) + ' TL 🔵';
+          // Negatif = biz onlara borçluyuz = BİZİM BORCUMUZ (uyarı)
+          bak.textContent = Math.abs(bakiye).toLocaleString('tr-TR', { minimumFractionDigits: 2 }) + ' TL ⚠️';
         } else {
           bak.className = 'cari-bakiye sifir';
           bak.textContent = '0 TL ✅';
@@ -1549,7 +1551,8 @@
         row.appendChild(bak);
         wrap.appendChild(row);
       });
-      const toplamAlacak = carilerData.reduce(function(s, c) { return s + (c.bakiye > 0 ? c.bakiye : 0); }, 0);
+      // Paraşüt: pozitif bakiye = bizim alacağımız, negatif = bizim borcumuz
+      const toplamAlacak = carilerData.reduce(function(s, c) { return s + (c.bakiye < 0 ? Math.abs(c.bakiye) : 0); }, 0); // negatif = alacak
       const toplamOdeyecek = carilerData.reduce(function(s, c) { return s + (c.bakiye < 0 ? Math.abs(c.bakiye) : 0); }, 0);
       if (toplamAlacak > 0 || toplamOdeyecek > 0) {
         const toplamRow = document.createElement('div');
@@ -2032,8 +2035,10 @@
             bak.className = 'dd-bakiye';
             bak.style.cssText = 'flex-shrink:0;margin-left:8px;white-space:nowrap;';
             if (bakiye > 0) {
+              // Pozitif = bizim borcumuz
               bak.textContent = bakiye.toLocaleString('tr-TR', {minimumFractionDigits:0}) + ' TL ⚠️';
             } else {
+              // Negatif = bizim alacağımız
               bak.style.color = '#2563eb';
               bak.textContent = Math.abs(bakiye).toLocaleString('tr-TR', {minimumFractionDigits:0}) + ' TL 🔵';
             }
