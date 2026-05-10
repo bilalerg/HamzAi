@@ -1552,14 +1552,16 @@
         wrap.appendChild(row);
       });
       // Paraşüt: pozitif bakiye = bizim alacağımız, negatif = bizim borcumuz
-      const toplamAlacak = carilerData.reduce(function(s, c) { return s + (c.bakiye < 0 ? Math.abs(c.bakiye) : 0); }, 0); // negatif = alacak
-      const toplamOdeyecek = carilerData.reduce(function(s, c) { return s + (c.bakiye < 0 ? Math.abs(c.bakiye) : 0); }, 0);
+      // Pozitif bakiye = Ödenecek = bizim borcumuz
+      // Negatif bakiye = Tahsil Edilecek = bizim alacağımız
+      const toplamOdeyecek = carilerData.reduce(function(s, c) { return s + (c.bakiye > 0 ? c.bakiye : 0); }, 0);
+      const toplamAlacak   = carilerData.reduce(function(s, c) { return s + (c.bakiye < 0 ? Math.abs(c.bakiye) : 0); }, 0);
       if (toplamAlacak > 0 || toplamOdeyecek > 0) {
         const toplamRow = document.createElement('div');
         toplamRow.style.cssText = 'margin-top:8px;padding:8px 14px;background:var(--accent-lt);border-radius:9px;font-size:12px;font-weight:600;color:var(--accent);';
         toplamRow.innerHTML =
-          '<div style="display:flex;justify-content:space-between;margin-bottom:3px;"><span>Toplam Alacak (⚠️)</span><span>' + toplamAlacak.toLocaleString('tr-TR', {minimumFractionDigits:2}) + ' TL</span></div>' +
-          (toplamOdeyecek > 0 ? '<div style="display:flex;justify-content:space-between;color:#2563eb;"><span>Toplam Ödenecek (🔵)</span><span>' + toplamOdeyecek.toLocaleString('tr-TR', {minimumFractionDigits:2}) + ' TL</span></div>' : '');
+          '<div style="display:flex;justify-content:space-between;color:#2563eb;margin-bottom:3px;"><span>Toplam Alacak (🔵)</span><span>' + toplamAlacak.toLocaleString('tr-TR', {minimumFractionDigits:2}) + ' TL</span></div>' +
+          (toplamOdeyecek > 0 ? '<div style="display:flex;justify-content:space-between;color:#d97706;"><span>Toplam Ödenecek (⚠️)</span><span>' + toplamOdeyecek.toLocaleString('tr-TR', {minimumFractionDigits:2}) + ' TL</span></div>' : '');
         wrap.appendChild(toplamRow);
       }
       addMessage('💰 Müşteri Bakiyeleri:', 'bot', wrap);
