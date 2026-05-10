@@ -588,7 +588,7 @@ async def hesap_ozeti(request: Request, background_tasks: BackgroundTasks):
 
 
 @app.get("/api/islem-gecmisi/{cari_adi}")
-async def islem_gecmisi(cari_adi: str, request: Request):
+async def islem_gecmisi(cari_adi: str, request: Request, background_tasks: BackgroundTasks):
     """Belirli bir carinin işlem geçmişini döndürür."""
     aktif_user_ig = mevcut_kullanici(request)
     if aktif_user_ig:
@@ -932,7 +932,7 @@ async def son_fisler(request: Request, background_tasks: BackgroundTasks):
 
 # ── FATURA DETAY ─────────────────────────────────────────────────────
 @app.get("/api/fatura-detay/{fatura_id}")
-async def fatura_detay_endpoint(fatura_id: str, request: Request):
+async def fatura_detay_endpoint(fatura_id: str, request: Request, background_tasks: BackgroundTasks):
     aktif_user_fd = mevcut_kullanici(request)
     if aktif_user_fd:
         background_tasks.add_task(_usage_kaydet, aktif_user_fd["id"], aktif_user_fd["username"], "SORGU", f"fatura_detay | id={fatura_id}", 1, aktif_user_fd.get("profaix_user_id"))
@@ -945,7 +945,7 @@ async def fatura_detay_endpoint(fatura_id: str, request: Request):
 
 
 @app.get("/api/cari-faturalar/{cari_adi}")
-async def cari_faturalar_endpoint(cari_adi: str, request: Request):
+async def cari_faturalar_endpoint(cari_adi: str, request: Request, background_tasks: BackgroundTasks):
     aktif_user_cf = mevcut_kullanici(request)
     if aktif_user_cf:
         background_tasks.add_task(_usage_kaydet, aktif_user_cf["id"], aktif_user_cf["username"], "SORGU", f"fatura_listesi | cari={cari_adi}", 1, aktif_user_cf.get("profaix_user_id"))
