@@ -1232,26 +1232,35 @@
       removeTyping();
       if (data.bekliyor === 'firma_sec') {
         const wrap = document.createElement('div');
-        (data.firma_listesi || []).forEach(function(firma) {
-          const btn = document.createElement('button');
-          btn.className = 'firma-btn';
-          btn.textContent = '🏭 ' + firma;
-          btn.onclick = function() { firmaSecildi(data.ticket_id, firma, data.malzemeler, wrap); };
-          wrap.appendChild(btn);
+        wrap.style.cssText = 'display:flex;flex-direction:column;gap:10px;min-width:280px;max-width:420px;';
+
+        // Firma listesini cari formatına çevir
+        const firmaCariler = (data.firma_listesi || []).map(function(f) {
+          return { ad: f, bakiye: 0 };
         });
+
+        const baslik = document.createElement('div');
+        baslik.style.cssText = 'font-size:13px;color:var(--muted);margin-bottom:2px;';
+        baslik.textContent = '🏭 Hangi firmaya ait?';
+        wrap.appendChild(baslik);
+
+        const { wrap: ddWrap, inp: ddInp } = cariSecimDropdown(firmaCariler, function(c) {
+          firmaSecildi(data.ticket_id, c.ad, data.malzemeler, wrap);
+        }, 'Firma adı yazın...');
+        wrap.appendChild(ddWrap);
+
         // İptal butonu
-        const iptalWrap = document.createElement('div');
-        iptalWrap.style.marginTop = '8px';
         const iptalBtn = document.createElement('button');
         iptalBtn.className = 'btn-cancel';
+        iptalBtn.style.marginTop = '4px';
         iptalBtn.textContent = '✕ İptal';
         iptalBtn.onclick = function() {
-          Array.from(wrap.querySelectorAll('button')).forEach(function(b) { b.disabled = true; });
           addMessage('❌ Fiş işlemi iptal edildi.', 'bot');
         };
-        iptalWrap.appendChild(iptalBtn);
-        wrap.appendChild(iptalWrap);
+        wrap.appendChild(iptalBtn);
+
         addMessage(data.cevap, 'bot', wrap);
+        setTimeout(function() { ddInp.focus(); }, 100);
       } else {
         addMessage(data.cevap, 'bot');
       }
