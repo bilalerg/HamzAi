@@ -783,17 +783,17 @@ def odeme_ekle(cari_adi: str, tutar: float, aciklama: str = None, tarih: str = N
         return {"basarili": False, "hata": str(e)}
 
 
-def tum_bekleyen_irsaliyeleri_getir() -> dict:
+def tum_bekleyen_irsaliyeleri_getir(sayfa_no: int = 1) -> dict:
     """
-    Tüm irsaliyeleri sayfalayarak çeker (25 limit aşılır).
+    Belirtilen sayfayı çeker (25 irsaliye/sayfa).
     contact ID'ye göre gruplar.
-    Returns: {contact_id: [irsaliye, ...]}
+    Returns: {contact_id: [irsaliye, ...], "_meta": {...}}
     """
     try:
         gruplu = {}
-        page = 1
+        page = sayfa_no
 
-        while page <= 50:  # max 50 sayfa güvenlik limiti
+        while page <= sayfa_no:  # Sadece istenen sayfayı çek
             sonuc = parasut_get(
                 f"/{PARASUT_COMPANY_ID}/shipment_documents",
                 params={
@@ -870,8 +870,19 @@ def tum_bekleyen_irsaliyeleri_getir() -> dict:
                 break  # Son sayfa
             page += 1
 
-        toplam = sum(len(v) for v in gruplu.values())
-        logger.info(f"Bekleyen irsaliyeler: {toplam} toplam, {len(gruplu)} cari ({page} sayfa tarandı)")
+        # Toplam kayıt sayısını meta'dan al
+        meta_data = sonuc.get("meta", {}) if 'sonuc' in dir() else {}
+        toplam_kayit = meta_data.get("total_count", 0)
+        toplam_sayfa = max(1, (toplam_kayit + 24) // 25) if toplam_kayit else 1
+
+        toplam = sum(len(v) for k, v in gruplu.items() if k != "_meta")
+        gruplu["_meta"] = {
+            "toplam_sayfa": toplam_sayfa,
+            "mevcut_sayfa": sayfa_no,
+            "toplam_kayit": toplam_kayit,
+            "bu_sayfada": toplam
+        }
+        logger.info(f"Bekleyen irsaliyeler: {toplam} bu sayfada, sayfa={sayfa_no}/{toplam_sayfa}")
         return gruplu
 
     except Exception as e:
