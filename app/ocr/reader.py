@@ -32,6 +32,7 @@ class FisVerisi:
     malzemeler:       Optional[Dict[str,int]] = None
     claude_ham_cikti: Optional[str]           = None
     hata:             Optional[str]           = None
+    plaka_uyari:      Optional[str]           = None  # Plaka format sorunu varsa uyarı mesajı
 
 
 OCR_SYSTEM = "Sen sadece JSON üreten bir API'sin. Yanıtın SADECE '{' ile başlamalı ve '}' ile bitmelidir. Hiçbir açıklama, başlık veya markdown ekleme."
@@ -210,7 +211,21 @@ def claude_fis_oku(fotograf_yolu: str) -> FisVerisi:
         ham_plaka = veri.get("plaka")
         temiz_plaka = re.sub(r'[\s\-]', '', ham_plaka).upper() if ham_plaka else None
 
-        logger.info(f"OCR sonuç — plaka={temiz_plaka} tartım={net_tartim}kg fire={fire}kg net={net_agirlik}kg firma={veri.get('firma')}")
+        # Türk plaka format kontrolü
+        # Geçerli format: 2 rakam + 1-3 harf + 2-4 rakam (örn: 27Z3024, 06FH8714)
+        plaka_gecerli = bool(re.match(r'^\d{2}[A-Z]{1,3}\d{2,4}$', temiz_plaka)) if temiz_plaka else False
+        if temiz_plaka and not plaka_gecerli:
+            logger.warning(
+                f"⚠️ GEÇERSİZ PLAKA FORMATI: '{temiz_plaka}' — "
+                f"Beklenen format: 27Z3024, 06FH8714. "
+                f"Fotoğraf kalitesi düşük olabilir, manuel kontrol gerekebilir."
+            )
+
+        logger.info(f"OCR sonuç — plaka={temiz_plaka} (geçerli={plaka_gecerli}) tartım={net_tartim}kg fire={fire}kg net={net_agirlik}kg firma={veri.get('firma')}")
+
+        plaka_uyari = None
+        if temiz_plaka and not plaka_gecerli:
+            plaka_uyari = f"⚠️ Plaka '{temiz_plaka}' geçersiz format — lütfen kontrol edin."
 
         return FisVerisi(
             plaka            = temiz_plaka,
@@ -223,7 +238,8 @@ def claude_fis_oku(fotograf_yolu: str) -> FisVerisi:
             irsaliye_no      = veri.get("irsaliye_no"),
             kantar_no        = veri.get("kantar_no"),
             malzemeler       = malzemeler or None,
-            claude_ham_cikti = claude_cevap
+            claude_ham_cikti = claude_cevap,
+            plaka_uyari      = plaka_uyari
         )
 
     except Exception as e:

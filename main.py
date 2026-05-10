@@ -463,6 +463,7 @@ async def upload_fis(request: Request, background_tasks: BackgroundTasks, file: 
             })
 
         yeni_plaka_uyari = "\n🆕 Bu plaka sisteme ilk kez eklendi." if plaka_sonuc == PlakaSonuc.YENI else ""
+        plaka_format_uyari = f"\n{fis.plaka_uyari}" if fis.plaka_uyari else ""
 
         malzemeler = fis.malzemeler or {}
         malzeme_ozet = ""
@@ -473,7 +474,7 @@ async def upload_fis(request: Request, background_tasks: BackgroundTasks, file: 
 
         cevap = (
             f"✅ Fiş okundu!\n\n"
-            f"🚗 Plaka: {fis.plaka}\n"
+            f"🚗 Plaka: {fis.plaka}{plaka_format_uyari}\n"
             f"📋 Fiş No: {fis.fis_no or '-'}\n"
             f"⚖️ Net Ağırlık: {fis.net_agirlik_kg:,} kg ({fis.net_agirlik_kg/1000:.2f} ton)\n"
             f"🔥 Fire: {fis.fire_kg or 0:,} kg\n"
@@ -494,6 +495,8 @@ async def upload_fis(request: Request, background_tasks: BackgroundTasks, file: 
             "ticket_id": ticket.id,
             "malzemeler": malzemeler,
             "firma_listesi": firma_listesi,
+            "plaka_uyari": fis.plaka_uyari,
+            "plaka": fis.plaka,
         })
 
     except Exception as e:

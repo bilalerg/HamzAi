@@ -1234,6 +1234,77 @@
         const wrap = document.createElement('div');
         wrap.style.cssText = 'display:flex;flex-direction:column;gap:10px;min-width:280px;max-width:420px;';
 
+        // ── PLAKA UYARISI — geçersiz format varsa düzeltme kutusu çıkar ──
+        if (data.plaka_uyari) {
+          const uyariWrap = document.createElement('div');
+          uyariWrap.style.cssText = 'background:rgba(234,179,8,0.12);border:1px solid rgba(234,179,8,0.4);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;';
+
+          const uyariBaslik = document.createElement('div');
+          uyariBaslik.style.cssText = 'font-size:12px;font-weight:600;color:#d97706;';
+          uyariBaslik.textContent = '⚠️ Plaka okunamadı — lütfen düzeltin';
+          uyariWrap.appendChild(uyariBaslik);
+
+          const plakaRow = document.createElement('div');
+          plakaRow.style.cssText = 'display:flex;gap:8px;align-items:center;';
+
+          const plakaInp = document.createElement('input');
+          plakaInp.type = 'text';
+          plakaInp.value = data.plaka || '';
+          plakaInp.placeholder = 'Örn: 27Z3024';
+          plakaInp.style.cssText = 'flex:1;padding:8px 12px;border:1.5px solid rgba(234,179,8,0.5);border-radius:8px;background:var(--surface2);color:var(--text);font-size:13px;font-family:monospace;text-transform:uppercase;outline:none;';
+          plakaInp.oninput = function() { plakaInp.value = plakaInp.value.toUpperCase().replace(/[^A-Z0-9]/g, ''); };
+
+          const duzelBtn = document.createElement('button');
+          duzelBtn.className = 'btn-primary';
+          duzelBtn.style.cssText = 'padding:8px 14px;font-size:12px;white-space:nowrap;';
+          duzelBtn.textContent = '✓ Onayla';
+
+          const plakaHata = document.createElement('div');
+          plakaHata.style.cssText = 'font-size:11px;color:#ef4444;display:none;';
+
+          duzelBtn.onclick = async function() {
+            const yeniPlaka = plakaInp.value.trim();
+            if (!yeniPlaka) { plakaHata.textContent = 'Plaka boş olamaz'; plakaHata.style.display = 'block'; return; }
+            duzelBtn.disabled = true;
+            duzelBtn.textContent = '…';
+            try {
+              const res = await fetch('/api/plaka-duzenle', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ticket_id: data.ticket_id, plaka: yeniPlaka })
+              });
+              const result = await res.json();
+              if (result.basarili) {
+                uyariWrap.style.background = 'rgba(34,197,94,0.1)';
+                uyariWrap.style.borderColor = 'rgba(34,197,94,0.4)';
+                uyariBaslik.style.color = '#16a34a';
+                uyariBaslik.textContent = '✅ Plaka düzeltildi: ' + result.plaka;
+                plakaRow.style.display = 'none';
+                plakaHata.style.display = 'none';
+                // Firma seçimine geç — kısa gecikmeyle
+                setTimeout(function() { ddInp.focus(); }, 300);
+              } else {
+                plakaHata.textContent = result.hata || 'Hata oluştu';
+                plakaHata.style.display = 'block';
+                duzelBtn.disabled = false;
+                duzelBtn.textContent = '✓ Onayla';
+              }
+            } catch {
+              plakaHata.textContent = 'Bağlantı hatası';
+              plakaHata.style.display = 'block';
+              duzelBtn.disabled = false;
+              duzelBtn.textContent = '✓ Onayla';
+            }
+          };
+          plakaInp.onkeydown = function(e) { if (e.key === 'Enter') duzelBtn.click(); };
+
+          plakaRow.appendChild(plakaInp);
+          plakaRow.appendChild(duzelBtn);
+          uyariWrap.appendChild(plakaRow);
+          uyariWrap.appendChild(plakaHata);
+          wrap.appendChild(uyariWrap);
+        }
+
         // Firma listesini cari formatına çevir
         const firmaCariler = (data.firma_listesi || []).map(function(f) {
           return { ad: f, bakiye: 0 };
@@ -1260,7 +1331,15 @@
         wrap.appendChild(iptalBtn);
 
         addMessage(data.cevap, 'bot', wrap);
-        setTimeout(function() { ddInp.focus(); }, 100);
+        // Plaka uyarısı varsa önce plakaya odaklan, yoksa firmaya
+        setTimeout(function() {
+          if (data.plaka_uyari) {
+            const plakaInpEl = wrap.querySelector('input[placeholder="Örn: 27Z3024"]');
+            if (plakaInpEl) plakaInpEl.focus();
+          } else {
+            ddInp.focus();
+          }
+        }, 100);
       } else {
         addMessage(data.cevap, 'bot');
       }
