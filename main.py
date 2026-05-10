@@ -196,6 +196,14 @@ async def chat_sayfasi(request: Request, background_tasks: BackgroundTasks):
     user_id_param = request.query_params.get("user_id")
     if user_id_param:
         kullanici = await profaix_kullanici_dogrula(user_id_param)
+        if not kullanici:
+            giris_kaydet(
+                kullanici_adi = user_id_param,
+                basarili      = False,
+                giris_tipi    = "profaix",
+                ip            = request.client.host if request.client else None,
+                hata_sebebi   = "profaix.com doğrulaması başarısız"
+            )
         if kullanici:
             token = token_uret(
                 profaix_user_id=kullanici["id"],
@@ -210,6 +218,12 @@ async def chat_sayfasi(request: Request, background_tasks: BackgroundTasks):
                 secure=True, samesite="none"
             )
             logger.info(f"✅ Otomatik giriş: {kullanici.get('full_name')} ({user_id_param})")
+            giris_kaydet(
+                kullanici_adi = kullanici.get("full_name", user_id_param),
+                basarili      = True,
+                giris_tipi    = "profaix",
+                ip            = request.client.host if request.client else None
+            )
             return response
 
     # Cookie yoksa login'e yönlendir
