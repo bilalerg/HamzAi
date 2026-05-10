@@ -784,7 +784,9 @@ async def tahsilat_ekle_endpoint(request: Request, background_tasks: BackgroundT
                 logger.warning(f"Geçersiz tarih formatı: {tarih} — bugün kullanılıyor")
                 # Geçersiz tarih gelirse bugünü kullan, hata döndürme
 
-        sonuc = tahsilat_ekle(cari_adi, float(tutar), aciklama or f"{cari_adi} tahsilat", tarih_str)
+        # Tahsilat = müşteriden para alma (sales_invoices üzerine)
+        from app.parasut.client import satis_tahsilat_ekle
+        sonuc = satis_tahsilat_ekle(cari_adi, float(tutar), aciklama or f"{cari_adi} tahsilat", tarih_str)
 
         if sonuc.get("basarili"):
             logger.info(f"✅ Tahsilat eklendi: {cari_adi} — {tutar:,.0f} TL")
@@ -802,9 +804,9 @@ async def tahsilat_ekle_endpoint(request: Request, background_tasks: BackgroundT
                 "basarili": True,
                 "cevap": (
                     f"✅ Tahsilat kaydedildi!\n\n"
-                    f"🏢 Cari: {cari_adi}\n"
+                    f"🏢 Müşteri: {cari_adi}\n"
                     f"💰 Tutar: {tr_para(float(tutar),2)} TL\n"
-                    f"📅 Tarih: {datetime.strptime(tarih_str, "%Y-%m-%d").strftime("%d.%m.%Y") if tarih_str else 'Bugün'}\n"
+                    f"📅 Tarih: {datetime.strptime(tarih_str, '%Y-%m-%d').strftime('%d.%m.%Y') if tarih_str else 'Bugün'}\n"
                     f"Paraşüt'e kaydedildi."
                 )
             })
@@ -823,6 +825,168 @@ async def tahsilat_ekle_endpoint(request: Request, background_tasks: BackgroundT
     except Exception as e:
         logger.error(f"Tahsilat endpoint hatası: {e}")
         _hata_kaydet("/api/tahsilat", e, request, mevcut_kullanici(request))
+        return JSONResponse({"basarili": False, "cevap": f"❌ Hata: {str(e)}"})
+
+
+
+@app.post("/api/odeme")
+async def odeme_ekle_endpoint(request: Request, background_tasks: BackgroundTasks):
+    """
+    Tedarikçiye ödeme kaydı ekler (purchase_bills üzerine).
+    Ödeme = kasadan para çıkışı, tedarikçiye borç azalır.
+    """
+    data      = await request.json()
+    cari_adi  = data.get("cari_adi", "").strip()
+    tutar     = data.get("tutar", 0)
+    aciklama  = data.get("aciklama", "")
+    tarih     = data.get("tarih", "")
+
+    if not cari_adi or not tutar:
+        return JSONResponse({"basarili": False, "cevap": "Cari adı ve tutar gerekli."})
+
+    try:
+        from app.parasut.client import odeme_ekle
+        from datetime import datetime
+
+        tarih_str = None
+        if tarih and tarih.strip():
+            for fmt in ["%Y-%m-%d", "%d.%m.%Y", "%d-%m-%Y", "%d/%m/%Y"]:
+                try:
+                    tarih_str = datetime.strptime(tarih.strip(), fmt).strftime("%Y-%m-%d")
+                    break
+                except Exception:
+                    continue
+
+        sonuc = odeme_ekle(cari_adi, float(tutar), aciklama or f"{cari_adi} ödeme", tarih_str)
+
+        if sonuc.get("basarili"):
+            logger.info(f"✅ Ödeme eklendi: {cari_adi} — {tutar:,.0f} TL")
+            db = SessionLocal()
+            try:
+                aktif = mevcut_kullanici(request)
+                if aktif:
+                    background_tasks.add_task(_usage_kaydet, aktif["id"], aktif["username"],
+                        "ODEME", f"cari={cari_adi} | {tutar} TL", 1, aktif.get("profaix_user_id"))
+                _islem_log(db, "ODEME_EKLENDI", cari_adi=cari_adi, tutar=int(float(tutar)),
+                          aciklama=f"Tarih: {tarih or 'Bugün'} | {aciklama or ''}")
+            finally:
+                db.close()
+            return JSONResponse({
+                "basarili": True,
+                "cevap": (
+                    f"✅ Ödeme kaydedildi!\n\n"
+                    f"🏢 Tedarikçi: {cari_adi}\n"
+                    f"💰 Tutar: {tr_para(float(tutar),2)} TL\n"
+                    f"📅 Tarih: {datetime.strptime(tarih_str, '%Y-%m-%d').strftime('%d.%m.%Y') if tarih_str else 'Bugün'}\n"
+                    f"Paraşüt'e kaydedildi."
+                )
+            })
+        else:
+            return JSONResponse({"basarili": False,
+                "cevap": f"❌ Ödeme eklenemedi: {sonuc.get('hata', 'Bilinmeyen hata')}"})
+    except Exception as e:
+        logger.error(f"Ödeme endpoint hatası: {e}")
+        _hata_kaydet("/api/odeme", e, request, mevcut_kullanici(request))
+        return JSONResponse({"basarili": False, "cevap": f"❌ Hata: {str(e)}"})
+
+
+
+@app.post("/api/satis-fatura-kes")
+async def satis_fatura_kes_endpoint(request: Request, background_tasks: BackgroundTasks):
+    """
+    Müşteriye (UHT, Kroman, İçdaş vs.) satış faturası keser (sales_invoices).
+    Manuel — kantar fişi yok, sadece cari + malzeme + fiyat.
+    """
+    data             = await request.json()
+    cari_adi         = data.get("cari_adi", "").strip()
+    malzeme_adi      = data.get("malzeme_adi", "Hurda").strip()
+    miktar_kg        = float(data.get("miktar_kg", 0))
+    birim_fiyat      = float(data.get("birim_fiyat", 0))
+    aciklama         = data.get("aciklama", "")
+    tarih            = data.get("tarih", "")
+
+    if not cari_adi or not miktar_kg or not birim_fiyat:
+        return JSONResponse({"basarili": False, "cevap": "Cari adı, miktar ve fiyat gerekli."})
+
+    try:
+        from app.parasut.client import parasut_post, cari_id_bul
+        from app.core.config import PARASUT_COMPANY_ID, PARASUT_HURDA_PRODUCT_ID
+        from datetime import datetime
+
+        tarih_str = None
+        if tarih and tarih.strip():
+            for fmt in ["%Y-%m-%d", "%d.%m.%Y"]:
+                try:
+                    tarih_str = datetime.strptime(tarih.strip(), fmt).strftime("%Y-%m-%d")
+                    break
+                except Exception:
+                    continue
+        bugun     = datetime.now().strftime("%Y-%m-%d")
+        tarih_str = tarih_str or bugun
+        toplam    = miktar_kg * birim_fiyat
+
+        contact_id = cari_id_bul(cari_adi)
+        if not contact_id:
+            return JSONResponse({"basarili": False, "cevap": f"❌ '{cari_adi}' carisi bulunamadı."})
+
+        istek = {
+            "data": {
+                "type": "sales_invoices",
+                "attributes": {
+                    "item_type":   "invoice",
+                    "description": aciklama or f"Hurda Satış — {malzeme_adi} — {tr_kg(miktar_kg)} kg",
+                    "issue_date":  tarih_str,
+                    "due_date":    bugun,
+                    "currency":    "TRL"
+                },
+                "relationships": {
+                    "contact": {"data": {"type": "contacts", "id": str(contact_id)}},
+                    "details": {"data": [{
+                        "type": "sales_invoice_details",
+                        "attributes": {
+                            "quantity":    miktar_kg,
+                            "unit_price":  str(birim_fiyat),
+                            "vat_rate":    0,
+                            "description": f"{malzeme_adi} — {tr_kg(miktar_kg)} kg — {tr_para(birim_fiyat, 4)} TL/kg"
+                        },
+                        "relationships": {
+                            "product": {"data": {"type": "products", "id": str(PARASUT_HURDA_PRODUCT_ID)}}
+                        }
+                    }]}
+                }
+            }
+        }
+
+        sonuc      = parasut_post(f"/{PARASUT_COMPANY_ID}/sales_invoices", istek)
+        fatura_id  = sonuc["data"]["id"]
+
+        logger.info(f"✅ Satış faturası kesildi: {fatura_id} — {cari_adi} — {toplam:,.0f} TL")
+
+        db = SessionLocal()
+        try:
+            aktif = mevcut_kullanici(request)
+            if aktif:
+                background_tasks.add_task(_usage_kaydet, aktif["id"], aktif["username"],
+                    "SATIS_FATURA", f"cari={cari_adi} | {int(toplam)} TL", 1, aktif.get("profaix_user_id"))
+            _islem_log(db, "SATIS_FATURA_KESILDI", cari_adi=cari_adi, tutar=int(toplam),
+                      fatura_id=fatura_id, aciklama=f"{malzeme_adi} | {tr_kg(miktar_kg)} kg | {tr_para(birim_fiyat,4)} TL/kg")
+        finally:
+            db.close()
+
+        return JSONResponse({
+            "basarili":  True,
+            "fatura_no": str(fatura_id),
+            "cevap": (
+                f"✅ Satış faturası kesildi!\n\n"
+                f"🏢 Müşteri: {cari_adi}\n"
+                f"📦 {malzeme_adi}: {tr_kg(miktar_kg)} kg × {tr_para(birim_fiyat, 4)} TL/kg\n"
+                f"💵 Toplam: {tr_para(toplam, 2)} TL\n"
+                f"🧾 Fatura No: {fatura_id}"
+            )
+        })
+    except Exception as e:
+        logger.error(f"Satış faturası hatası: {e}")
+        _hata_kaydet("/api/satis-fatura-kes", e, request, mevcut_kullanici(request))
         return JSONResponse({"basarili": False, "cevap": f"❌ Hata: {str(e)}"})
 
 

@@ -980,6 +980,88 @@ def irsaliye_detay_getir(irsaliye_id: str) -> dict:
         return {}
 
 
+def satis_tahsilat_ekle(cari_adi: str, tutar: float, aciklama: str = None, tarih: str = None) -> dict:
+    """Müşteriden tahsilat ekler — sales_invoices üzerine payment.
+
+    Tahsilat = müşteri bize para ödedi, kasaya para girdi.
+    Müşteriler: UHT, Kroman, İçdaş gibi hurda alanlar.
+    """
+    try:
+        cari_id = cari_id_bul(cari_adi)
+        if not cari_id:
+            return {"basarili": False, "hata": f"'{cari_adi}' adlı cari bulunamadı."}
+
+        # Müşterinin açık satış faturalarını getir
+        sonuc = parasut_get(
+            f"/{PARASUT_COMPANY_ID}/sales_invoices",
+            params={
+                "filter[contact_id]": cari_id,
+                "filter[payment_status]": "overdue,not_paid",
+                "page[size]": 25,
+                "sort": "issue_date"
+            }
+        )
+
+        faturalar = []
+        for f in sonuc.get("data", []):
+            attr = f.get("attributes", {})
+            kalan = float(attr.get("remaining") or attr.get("gross_total") or 0)
+            if kalan > 0:
+                faturalar.append({"id": f["id"], "kalan": kalan})
+
+        if not faturalar:
+            return {"basarili": False, "hata": f"{cari_adi} için açık satış faturası bulunamadı."}
+
+        kalan_tutar = float(tutar)
+        toplam_odenen = 0.0
+
+        for fatura in faturalar:
+            if kalan_tutar <= 0:
+                break
+            odeme_miktari = min(kalan_tutar, fatura["kalan"])
+            if odeme_miktari <= 0:
+                continue
+
+            hesap_id = _kasa_hesabi_bul()
+            if not hesap_id:
+                return {"basarili": False, "hata": "Kasa/banka hesabı bulunamadı."}
+
+            from datetime import datetime
+            bugun = tarih or datetime.now().strftime("%Y-%m-%d")
+            istek = {
+                "data": {
+                    "type": "payments",
+                    "attributes": {
+                        "description": aciklama or f"{cari_adi} tahsilat",
+                        "date": bugun,
+                        "amount": odeme_miktari,
+                        "account_id": int(hesap_id),
+                    }
+                }
+            }
+
+            try:
+                sonuc2 = parasut_post(f"/{PARASUT_COMPANY_ID}/sales_invoices/{fatura['id']}/payments", istek)
+                toplam_odenen += odeme_miktari
+                kalan_tutar -= odeme_miktari
+                logger.info(f"✅ Tahsilat: {cari_adi} — {odeme_miktari:,.0f} TL → fatura {fatura['id']}")
+            except Exception as e:
+                logger.warning(f"Fatura {fatura['id']} tahsilat başarısız: {e}")
+
+        if toplam_odenen > 0:
+            try:
+                cari_cache_yenile()
+            except Exception:
+                pass
+            return {"basarili": True, "cari": cari_adi, "tutar": toplam_odenen}
+        else:
+            return {"basarili": False, "hata": "Hiçbir faturaya tahsilat eklenemedi."}
+
+    except Exception as e:
+        logger.error(f"Satış tahsilat hatası: {e}")
+        return {"basarili": False, "hata": str(e)}
+
+
 def tahsilat_ekle(cari_adi: str, tutar: float, aciklama: str = None, tarih: str = None) -> dict:
     """Geriye dönük uyumluluk — odeme_ekle'yi çağırır."""
     return odeme_ekle(cari_adi, tutar, aciklama, tarih)

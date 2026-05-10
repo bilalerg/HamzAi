@@ -667,6 +667,8 @@
     <button class="panel-btn" onclick="panelKapat();topluFaturaGoster()"><span class="btn-icon">🧾</span> Toplu fatura</button>
     <button class="panel-btn" onclick="panelKapat();faturaListesiGoster()"><span class="btn-icon">🔍</span> Fatura sorgula</button>
     <button class="panel-btn" onclick="panelKapat();tahsilatFormGoster()"><span class="btn-icon">💵</span> Tahsilat ekle</button>
+    <button class="panel-btn" onclick="panelKapat();odemeFormGoster()"><span class="btn-icon">💸</span> Ödeme ekle</button>
+    <button class="panel-btn" onclick="panelKapat();satisFaturaFormGoster()"><span class="btn-icon">🧾</span> Satış faturası kes</button>
     <button class="panel-btn" onclick="panelKapat();cariFormGoster()"><span class="btn-icon">➕</span> Yeni cari</button>
     <div class="panel-section-label">Raporlar</div>
     <button class="panel-btn" onclick="panelKapat();bakiyeleriGoster()"><span class="btn-icon">💰</span> Müşteri bakiyeleri</button>
@@ -1093,7 +1095,11 @@
       fn: () => tahsilatFormGoster(),
       kelimeler: [
         ['tahsilat ekle'], ['ödeme aldım'], ['odeme aldim'], ['para aldım'], ['para aldim'],
-        ['ödeme ekle'], ['odeme ekle'], ['ödeme geldi'], ['odeme geldi'],
+        ['tahsilat'],
+        fn: () => tahsilatFormGoster()
+      },
+      {
+        keywords: [['ödeme ekle'], ['odeme ekle'], ['tedarikçiye ödeme'], ['tedarikciye odeme'], ['para çıktı'], ['para cikti']],
         ['para geldi'], ['tahsilat yap'], ['tahsil ettim'],
         ['para çek'], ['para cek'], ['yeni tahsilat'], ['ödeme al'],
         ['odeme al'], ['para tahsil'], ['tahsilat girişi'], ['tahsilat girisi'],
@@ -1147,6 +1153,8 @@
     'toplu_fatura':         (p) => topluFaturaGoster(),
     'fatura_sorgula':       (p) => faturaListesiGoster(p.musteri),
     'tahsilat_ekle':        (p) => tahsilatFormGoster(p.musteri, p.tutar),
+    'odeme_ekle':           (p) => odemeFormGoster(p.musteri, p.tutar),
+    'satis_faturasi_kes':   (p) => satisFaturaFormGoster(p.musteri),
     'yeni_cari':            (p) => cariFormGoster(),
     'cari_detay':           (p) => cariDetayIntentGoster(p.musteri),
     'musteri_bakiyeleri':   (p) => bakiyeleriGoster(p.musteri),
@@ -1499,6 +1507,228 @@
     } catch {
       if (btn) { btn.disabled = false; btn.textContent = '⬇ Tekrar dene'; }
     }
+  }
+
+
+  // ── ÖDEME EKLE (Tedarikçiye ödeme — purchase_bills) ─────────────────
+  async function odemeFormGoster(onMusteri, onTutar) {
+    showTyping();
+    let cariler = [];
+    try { cariler = await carileriGetir(false); } catch {}
+    removeTyping();
+
+    // Tedarikçileri (borçlu olduklarımız = pozitif bakiye) önce göster
+    const borclu    = cariler.filter(function(c) { return c.bakiye > 0; });
+    const digerler  = cariler.filter(function(c) { return c.bakiye <= 0; });
+    const siralanmis = borclu.concat(digerler);
+
+    const wrap = document.createElement('div');
+    const baslik = document.createElement('div');
+    baslik.style.cssText = 'font-size:13px;font-weight:500;color:var(--text);margin-bottom:10px;';
+    baslik.textContent = '💸 Ödeme Ekle';
+    wrap.appendChild(baslik);
+
+    const info = document.createElement('div');
+    info.style.cssText = 'font-size:12px;color:var(--muted);margin-bottom:10px;padding:8px 12px;background:var(--accent-lt);border-radius:8px;border-left:3px solid var(--accent);';
+    info.textContent = 'Ödeme yapacağınız tedarikçiyi seçin. (Hurda getiren firmalar)';
+    wrap.appendChild(info);
+
+    const { wrap: ddWrap } = cariSecimDropdown(siralanmis, function(c) {
+      ddWrap.querySelector('input').disabled = true;
+      odemeTutarGir(c.ad, wrap, onTutar);
+    }, 'Tedarikçi adı yazın...');
+    wrap.appendChild(ddWrap);
+    addMessage('', 'bot', wrap);
+
+    if (onMusteri) {
+      setTimeout(function() {
+        const inp = ddWrap.querySelector('input');
+        if (inp) { inp.value = onMusteri; inp.dispatchEvent(new Event('input')); }
+      }, 150);
+    } else {
+      setTimeout(function() { ddWrap.querySelector('input').focus(); }, 100);
+    }
+  }
+
+  function odemeTutarGir(cariAdi, wrapParent, onTutar) {
+    const tutarWrap = document.createElement('div');
+    tutarWrap.style.cssText = 'margin-top:12px;border-top:1px solid var(--border);padding-top:12px;';
+
+    const label = document.createElement('div');
+    label.style.cssText = 'font-size:12px;color:var(--muted);margin-bottom:8px;';
+    label.textContent = cariAdi + ' — Ödeme tutarı:';
+    tutarWrap.appendChild(label);
+
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;align-items:center;';
+
+    const inp = document.createElement('input');
+    inp.type = 'text';
+    inp.className = 'fiyat-input';
+    inp.placeholder = 'Örn: 100000';
+    if (onTutar) inp.value = String(onTutar);
+
+    const tarihInp = document.createElement('input');
+    tarihInp.type = 'date';
+    tarihInp.className = 'fiyat-input';
+    tarihInp.style.maxWidth = '150px';
+    tarihInp.value = new Date().toISOString().split('T')[0];
+
+    const btn = document.createElement('button');
+    btn.className = 'btn-primary';
+    btn.textContent = 'Kaydet';
+
+    const iptalBtn = document.createElement('button');
+    iptalBtn.className = 'btn-cancel';
+    iptalBtn.textContent = '✕ İptal';
+    iptalBtn.onclick = function() { addMessage('❌ Ödeme iptal edildi.', 'bot'); };
+
+    btn.onclick = async function() {
+      const tutar = parseFiyat(inp.value);
+      if (!tutar || tutar <= 0) { inp.style.borderColor = '#e53e3e'; return; }
+      inp.style.borderColor = '';
+      btn.disabled = true; iptalBtn.disabled = true;
+      btn.textContent = 'Kaydediliyor…';
+      try {
+        const res = await fetch('/api/odeme', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cari_adi: cariAdi, tutar, tarih: tarihInp.value || '' })
+        });
+        const data = await res.json();
+        addMessage(cariAdi + ' — ' + tutar.toLocaleString('tr-TR') + ' TL ödeme', 'user');
+        addMessage(data.cevap, 'bot');
+      } catch {
+        btn.disabled = false; iptalBtn.disabled = false;
+        btn.textContent = 'Kaydet';
+        addMessage('❌ Ödeme eklenemedi, tekrar deneyin.', 'bot');
+      }
+    };
+    inp.onkeydown = function(e) { if (e.key === 'Enter') btn.click(); };
+
+    row.appendChild(inp); row.appendChild(tarihInp); row.appendChild(btn); row.appendChild(iptalBtn);
+    tutarWrap.appendChild(row);
+    wrapParent.appendChild(tutarWrap);
+    setTimeout(function() { inp.focus(); }, 100);
+  }
+
+  // ── SATIŞ FATURASI KES (Müşteriye — sales_invoices) ─────────────────
+  async function satisFaturaFormGoster(onMusteri) {
+    showTyping();
+    let cariler = [];
+    try { cariler = await carileriGetir(false); } catch {}
+    removeTyping();
+
+    // Müşterileri (alacaklı olduklarımız = negatif bakiye) önce göster
+    const alacakli  = cariler.filter(function(c) { return c.bakiye < 0; });
+    const digerler  = cariler.filter(function(c) { return c.bakiye >= 0; });
+    const siralanmis = alacakli.concat(digerler);
+
+    const wrap = document.createElement('div');
+    const baslik = document.createElement('div');
+    baslik.style.cssText = 'font-size:13px;font-weight:500;color:var(--text);margin-bottom:10px;';
+    baslik.textContent = '🧾 Satış Faturası Kes';
+    wrap.appendChild(baslik);
+
+    const info = document.createElement('div');
+    info.style.cssText = 'font-size:12px;color:var(--muted);margin-bottom:10px;padding:8px 12px;background:var(--accent-lt);border-radius:8px;border-left:3px solid var(--accent);';
+    info.textContent = 'Fatura keseceğiniz müşteriyi seçin. (UHT, Kroman, İçdaş gibi hurda alanlar)';
+    wrap.appendChild(info);
+
+    const { wrap: ddWrap } = cariSecimDropdown(siralanmis, function(c) {
+      ddWrap.querySelector('input').disabled = true;
+      satisFaturaDetayGir(c.ad, wrap);
+    }, 'Müşteri adı yazın...');
+    wrap.appendChild(ddWrap);
+    addMessage('', 'bot', wrap);
+
+    if (onMusteri) {
+      setTimeout(function() {
+        const inp = ddWrap.querySelector('input');
+        if (inp) { inp.value = onMusteri; inp.dispatchEvent(new Event('input')); }
+      }, 150);
+    } else {
+      setTimeout(function() { ddWrap.querySelector('input').focus(); }, 100);
+    }
+  }
+
+  function satisFaturaDetayGir(cariAdi, wrapParent) {
+    const detayWrap = document.createElement('div');
+    detayWrap.style.cssText = 'margin-top:12px;border-top:1px solid var(--border);padding-top:12px;display:flex;flex-direction:column;gap:8px;';
+
+    const alanlar = [
+      { key: 'malzeme', label: 'Malzeme adı', placeholder: 'Örn: Karma Hurda', type: 'text' },
+      { key: 'miktar',  label: 'Miktar (kg)',  placeholder: 'Örn: 25000',       type: 'text' },
+      { key: 'fiyat',   label: 'Birim fiyat (TL/kg)', placeholder: 'Örn: 18,50', type: 'text' },
+      { key: 'tarih',   label: 'Tarih',        placeholder: '',                  type: 'date'  },
+    ];
+
+    const inputs = {};
+    alanlar.forEach(function(alan) {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;flex-direction:column;gap:4px;';
+      const lbl = document.createElement('label');
+      lbl.style.cssText = 'font-size:11px;color:var(--muted);';
+      lbl.textContent = alan.label;
+      const inp = document.createElement('input');
+      inp.type = alan.type;
+      inp.className = 'fiyat-input';
+      inp.placeholder = alan.placeholder;
+      if (alan.type === 'date') inp.value = new Date().toISOString().split('T')[0];
+      inputs[alan.key] = inp;
+      row.appendChild(lbl); row.appendChild(inp);
+      detayWrap.appendChild(row);
+    });
+
+    const btnRow = document.createElement('div');
+    btnRow.style.cssText = 'display:flex;gap:8px;margin-top:4px;';
+
+    const btn = document.createElement('button');
+    btn.className = 'btn-primary';
+    btn.textContent = 'Fatura Kes';
+
+    const iptalBtn = document.createElement('button');
+    iptalBtn.className = 'btn-cancel';
+    iptalBtn.textContent = '✕ İptal';
+    iptalBtn.onclick = function() { addMessage('❌ Satış faturası iptal edildi.', 'bot'); };
+
+    btn.onclick = async function() {
+      const malzeme = inputs.malzeme.value.trim() || 'Hurda';
+      const miktar  = parseFiyat(inputs.miktar.value);
+      const fiyat   = parseFiyat(inputs.fiyat.value);
+      if (!miktar || !fiyat) {
+        inputs.miktar.style.borderColor = miktar ? '' : '#e53e3e';
+        inputs.fiyat.style.borderColor  = fiyat  ? '' : '#e53e3e';
+        return;
+      }
+      btn.disabled = true; iptalBtn.disabled = true;
+      btn.textContent = 'Kesiliyor…';
+      try {
+        const res = await fetch('/api/satis-fatura-kes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            cari_adi:    cariAdi,
+            malzeme_adi: malzeme,
+            miktar_kg:   miktar,
+            birim_fiyat: fiyat,
+            tarih:       inputs.tarih.value || ''
+          })
+        });
+        const data = await res.json();
+        addMessage(cariAdi + ' — satış faturası', 'user');
+        addMessage(data.cevap, 'bot');
+      } catch {
+        btn.disabled = false; iptalBtn.disabled = false;
+        btn.textContent = 'Fatura Kes';
+        addMessage('❌ Fatura kesilemedi, tekrar deneyin.', 'bot');
+      }
+    };
+
+    btnRow.appendChild(btn); btnRow.appendChild(iptalBtn);
+    detayWrap.appendChild(btnRow);
+    wrapParent.appendChild(detayWrap);
+    setTimeout(function() { inputs.malzeme.focus(); }, 100);
   }
 
   // ── BAKİYELER ────────────────────────────────────────────────────
