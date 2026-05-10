@@ -1148,6 +1148,7 @@
     'fatura_sorgula':       (p) => faturaListesiGoster(p.musteri),
     'tahsilat_ekle':        (p) => tahsilatFormGoster(p.musteri, p.tutar),
     'yeni_cari':            (p) => cariFormGoster(),
+    'cari_detay':           (p) => cariDetayIntentGoster(p.musteri),
     'musteri_bakiyeleri':   (p) => bakiyeleriGoster(p.musteri),
     'hesap_ozeti':          (p) => hesapOzetiGoster(),
     'gunluk_ozet':          (p) => gunlukOzetGoster(),
@@ -1982,6 +1983,83 @@
     wrap.appendChild(inp);
     wrap.appendChild(dropdown);
     return { wrap, inp };
+  }
+
+
+  // ── CARİ DETAY KARTI ────────────────────────────────────────────
+  function cariDetayKartGoster(d) {
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'display:flex;flex-direction:column;gap:6px;min-width:280px;max-width:420px;';
+    const baslik = document.createElement('div');
+    baslik.style.cssText = 'font-size:14px;font-weight:600;color:var(--text);margin-bottom:4px;';
+    baslik.textContent = '🏢 ' + (d.ad || '-');
+    wrap.appendChild(baslik);
+    const satirlar = [
+      ['📧 E-posta',       d.email],
+      ['📞 Telefon',       d.telefon],
+      ['📍 Adres',         d.adres],
+      ['🏛️ Vergi Dairesi', d.vergi_dairesi],
+      ['🔢 Vergi No',      d.vergi_no],
+    ];
+    satirlar.forEach(function([etiket, deger]) {
+      if (!deger || deger === '-') return;
+      const satir = document.createElement('div');
+      satir.style.cssText = 'display:flex;gap:8px;font-size:13px;line-height:1.5;';
+      const et = document.createElement('span');
+      et.style.cssText = 'color:var(--muted);min-width:110px;flex-shrink:0;';
+      et.textContent = etiket;
+      const val = document.createElement('span');
+      val.style.cssText = 'color:var(--text);word-break:break-all;';
+      val.textContent = deger;
+      satir.appendChild(et);
+      satir.appendChild(val);
+      wrap.appendChild(satir);
+    });
+    addMessage('', 'bot', wrap);
+  }
+
+  async function cariDetayIntentGoster(onMusteri) {
+    showTyping();
+    let cariler = [];
+    try { cariler = await carileriGetir(false); } catch {}
+    removeTyping();
+
+    if (onMusteri) {
+      const filtre = onMusteri.toLowerCase();
+      const eslesen = cariler.find(function(c) { return c.ad.toLowerCase().includes(filtre); });
+      if (eslesen) {
+        showTyping();
+        try {
+          const res = await fetch('/api/cari-detay/' + encodeURIComponent(eslesen.ad));
+          const d = await res.json();
+          removeTyping();
+          if (d.hata) { addMessage('❌ ' + d.hata, 'bot'); return; }
+          cariDetayKartGoster(d);
+        } catch { removeTyping(); addMessage('❌ Hata oluştu.', 'bot'); }
+        return;
+      }
+    }
+
+    // Müşteri bulunamadıysa seçim ekranı göster
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'display:flex;flex-direction:column;gap:10px;min-width:280px;max-width:420px;';
+    const baslik = document.createElement('div');
+    baslik.style.cssText = 'font-size:13px;color:var(--muted);margin-bottom:2px;';
+    baslik.textContent = '🏢 Hangi carinin bilgilerini göstereyim?';
+    wrap.appendChild(baslik);
+    const { wrap: ddWrap, inp: ddInp } = cariSecimDropdown(cariler, async function(c) {
+      showTyping();
+      try {
+        const res = await fetch('/api/cari-detay/' + encodeURIComponent(c.ad));
+        const d = await res.json();
+        removeTyping();
+        if (d.hata) { addMessage('❌ ' + d.hata, 'bot'); return; }
+        cariDetayKartGoster(d);
+      } catch { removeTyping(); addMessage('❌ Hata oluştu.', 'bot'); }
+    }, 'Cari adı yazın...');
+    wrap.appendChild(ddWrap);
+    addMessage('Cari bilgilerini getiriyorum, hangisi?', 'bot', wrap);
+    setTimeout(function() { ddInp.focus(); }, 100);
   }
 
   // ── FATURA LİSTESİ & DETAY ───────────────────────────────────────

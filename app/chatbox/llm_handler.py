@@ -31,6 +31,7 @@ INTENTLER = {
     "hesap_ozeti":           "Genel hesap özetini gösterir",
     "gunluk_ozet":           "Günlük özeti gösterir",
     "son_fisler":            "Son yüklenen fişleri listeler",
+    "cari_detay":            "Belirli bir carinin iletişim, adres ve vergi bilgilerini gösterir",
     "none":                  "Genel soru veya sistem hakkında bilgi"
 }
 
@@ -124,6 +125,8 @@ Soldaki menüden de erişilebileceğini hatırlat.
 "irsaliye" = intent: bekleyen_irsaliyeler, mesaj: "Bekleyenleri getiriyorum."
 "fatura kestik mi" = intent: fatura_sorgula, mesaj: "Fatura ekranini aciyorum."
 "kroman ne kadar borclu" = intent: musteri_bakiyeleri, mesaj: "Bakiyeleri aciyorum."
+"kroman iletişim bilgileri" = intent: cari_detay, mesaj: "Kroman'ın bilgilerini getiriyorum."
+"samsun makinenin adresi" = intent: cari_detay, mesaj: "Cari bilgilerini açıyorum."
 "tahsilat girdim" = intent: tahsilat_ekle, mesaj: "Tahsilat ekranini aciyorum"
 "merhaba" = intent: none, mesaj: "Merhaba! Ne yapiyoruz bugun?"
 "neler yapabilirsin" = intent: none, mesaj: "Bekleyen irsaliyeleri goruyorum, fatura kesiyorum, bakiyelere bakiyorum, tahsilat giriyorum, hesap ozeti cikartiyorum. Kisacasi muhasebe islerinin cogunu hallederim. Ne yapalim?"

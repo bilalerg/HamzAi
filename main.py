@@ -1035,6 +1035,23 @@ async def fatura_detay_endpoint(fatura_id: str, request: Request, background_tas
         return JSONResponse({"hata": str(e)})
 
 
+
+@app.get("/api/cari-detay/{cari_adi}")
+async def cari_detay_endpoint(cari_adi: str, request: Request, background_tasks: BackgroundTasks):
+    aktif = mevcut_kullanici(request)
+    if aktif:
+        background_tasks.add_task(_usage_kaydet, aktif["id"], aktif["username"], "SORGU",
+            f"cari_detay | {cari_adi}", 1, aktif.get("profaix_user_id"))
+    try:
+        from app.parasut.client import cari_id_bul, cari_detay_getir
+        cid = cari_id_bul(cari_adi)
+        if not cid:
+            return JSONResponse({"hata": f"'{cari_adi}' bulunamadı"})
+        detay = cari_detay_getir(str(cid))
+        return JSONResponse(detay)
+    except Exception as e:
+        return JSONResponse({"hata": str(e)})
+
 @app.get("/api/cari-faturalar/{cari_adi}")
 async def cari_faturalar_endpoint(cari_adi: str, request: Request, background_tasks: BackgroundTasks):
     aktif_user_cf = mevcut_kullanici(request)
