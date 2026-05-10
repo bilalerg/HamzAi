@@ -1095,15 +1095,15 @@
       fn: () => tahsilatFormGoster(),
       kelimeler: [
         ['tahsilat ekle'], ['ödeme aldım'], ['odeme aldim'], ['para aldım'], ['para aldim'],
-        ['tahsilat'],
-        fn: () => tahsilatFormGoster()
-      },
-      {
-        keywords: [['ödeme ekle'], ['odeme ekle'], ['tedarikçiye ödeme'], ['tedarikciye odeme'], ['para çıktı'], ['para cikti']],
-        ['para geldi'], ['tahsilat yap'], ['tahsil ettim'],
+        ['tahsilat'], ['para geldi'], ['tahsilat yap'], ['tahsil ettim'],
         ['para çek'], ['para cek'], ['yeni tahsilat'], ['ödeme al'],
-        ['odeme al'], ['para tahsil'], ['tahsilat girişi'], ['tahsilat girisi'],
-        ['tahsilat ekle']
+        ['odeme al'], ['para tahsil'], ['tahsilat girişi'], ['tahsilat girisi']
+      ]
+    },
+    {
+      fn: () => odemeFormGoster(), // Ödeme ekle fonksiyonunu buraya bağlamalısın
+      kelimeler: [
+        ['ödeme ekle'], ['odeme ekle'], ['tedarikçiye ödeme'], ['tedarikciye odeme'], ['para çıktı'], ['para cikti']
       ]
     },
     {
@@ -3206,4 +3206,4 @@
   window.onload = function() { inputEl.focus(); };
 </script>
 </body>
-</html>
+</html>  nerde hata
