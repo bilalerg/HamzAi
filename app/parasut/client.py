@@ -625,6 +625,7 @@ def cari_olustur(firma_adi: str, email: str = None, telefon: str = None,
 # ── KASA HESABI ───────────────────────────────────────────────────────
 _kasa_hesabi_id = None
 
+
 def _kasa_hesabi_bul() -> str | None:
     global _kasa_hesabi_id
     if _kasa_hesabi_id:
@@ -770,30 +771,37 @@ def tahsilat_ekle(cari_adi: str, tutar: float, aciklama: str = None, tarih: str 
         return {"basarili": False, "hata": str(e)}
 
 
-def tum_bekleyen_irsaliyeleri_getir() -> dict:
+def tum_bekleyen_irsaliyeleri_getir(sayfa_no: int = 1) -> dict:
     """
-    Tüm irsaliyeleri sayfalayarak çeker (25 limit aşılır).
+    Belirtilen sayfayı çeker (25 irsaliye/sayfa).
     contact ID'ye göre gruplar.
-    Returns: {contact_id: [irsaliye, ...]}
+    Returns: {contact_id: [irsaliye, ...], "_meta": {"toplam_sayfa": N, "mevcut_sayfa": N}}
     """
     try:
         gruplu = {}
-        page = 1
+        sayfa_basi = 25
 
-        while page <= 50:  # max 50 sayfa güvenlik limiti
-            sonuc = parasut_get(
-                f"/{PARASUT_COMPANY_ID}/shipment_documents",
-                params={
-                    "page[size]": 25,
-                    "page[number]": page,
-                    "sort": "-issue_date",
-                    "include": "stock_movements,contact"
-                }
-            )
+        sonuc = parasut_get(
+            f"/{PARASUT_COMPANY_ID}/shipment_documents",
+            params={
+                "page[size]": sayfa_basi,
+                "page[number]": sayfa_no,
+                "sort": "-issue_date",
+                "include": "stock_movements,contact"
+            }
+        )
 
-            data = sonuc.get("data", [])
-            if not data:
-                break
+        # Toplam kayıt sayısını Paraşüt meta'sından al
+        meta = sonuc.get("meta", {})
+        toplam_kayit = meta.get("total_count", 0)
+        toplam_sayfa = max(1, (toplam_kayit + sayfa_basi - 1) // sayfa_basi) if toplam_kayit else 1
+
+        data = sonuc.get("data", [])
+        if not data:
+            gruplu["_meta"] = {"toplam_sayfa": 0, "mevcut_sayfa": sayfa_no, "toplam_kayit": 0}
+            return gruplu
+
+        if True:  # tek sayfa döngüsü (eski while ile uyumluluk)
 
             included = sonuc.get("included", [])
             sm_map = {
@@ -823,40 +831,20 @@ def tum_bekleyen_irsaliyeleri_getir() -> dict:
                     miktar = float(sm_attr.get("quantity", 0))
                     if miktar > 0:
                         desc = sm_attr.get("description") or ""
-                        malzeme_adi = None
-
+                        detail_no = sm_attr.get("detail_no", len(kalemler) + 1)
+                        malzeme_adi = f"Malzeme {detail_no}"
                         if desc:
                             try:
-                                # Format: "PLAKA — MALZEME_ADI — X kg"
-                                # tire çeşitlerini normalize et
-                                norm = desc.replace(' - ', '—').replace('–', '—').replace(' — ', '—')
+                                norm = desc.replace(' - ', '—').replace('–', '—')
                                 parcalar = [p.strip() for p in norm.split("—")]
-
-                                if len(parcalar) >= 3:
-                                    # "37LK081 — KARMA — 15700 kg" → KARMA
-                                    # Son parça kg içeriyorsa ortadakiler malzeme
-                                    if "kg" in parcalar[-1].lower():
-                                        malzeme_adi = "—".join(parcalar[1:-1]).strip()
-                                    else:
-                                        malzeme_adi = "—".join(parcalar[1:]).strip()
-                                elif len(parcalar) == 2:
-                                    # "PLAKA — MALZEME" ya da "MALZEME — X kg"
-                                    if "kg" in parcalar[1].lower():
-                                        malzeme_adi = parcalar[0].strip()
-                                    else:
-                                        malzeme_adi = parcalar[1].strip()
+                                if len(parcalar) >= 3 and "kg" in parcalar[-1].lower():
+                                    malzeme_adi = parcalar[1].strip()
+                                elif len(parcalar) == 2 and "kg" not in parcalar[1].lower():
+                                    malzeme_adi = parcalar[1].strip()
                                 elif len(parcalar) == 1 and parcalar[0]:
                                     malzeme_adi = parcalar[0].strip()
                             except Exception:
                                 pass
-
-                        # Malzeme adı çıkarılamadıysa desc'i olduğu gibi kullan
-                        # son çare olarak "Kalem X" yaz — asla "Malzeme X" yazma
-                        if not malzeme_adi:
-                            if desc.strip():
-                                malzeme_adi = desc.strip()
-                            else:
-                                malzeme_adi = f"Kalem {len(kalemler) + 1}"
                         kalemler.append({"aciklama": malzeme_adi, "miktar_kg": miktar})
 
                 irs = {
@@ -873,12 +861,15 @@ def tum_bekleyen_irsaliyeleri_getir() -> dict:
                     gruplu[contact_id] = []
                 gruplu[contact_id].append(irs)
 
-            if len(data) < 25:
-                break  # Son sayfa
-            page += 1
-
-        toplam = sum(len(v) for v in gruplu.values())
-        logger.info(f"Bekleyen irsaliyeler: {toplam} toplam, {len(gruplu)} cari ({page} sayfa tarandı)")
+        toplam_irsaliye = sum(len(v) for k, v in gruplu.items() if k != "_meta")
+        gruplu["_meta"] = {
+            "toplam_sayfa": toplam_sayfa,
+            "mevcut_sayfa": sayfa_no,
+            "toplam_kayit": toplam_kayit,
+            "bu_sayfada": toplam_irsaliye
+        }
+        logger.info(
+            f"Bekleyen irsaliyeler: {toplam_irsaliye} bu sayfada, sayfa={sayfa_no}/{toplam_sayfa} toplam={toplam_kayit}")
         return gruplu
 
     except Exception as e:

@@ -692,7 +692,7 @@ async def hesap_ozeti(request: Request, background_tasks: BackgroundTasks):
 
 
 @app.get("/api/islem-gecmisi/{cari_adi}")
-async def islem_gecmisi(cari_adi: str, request: Request, background_tasks: BackgroundTasks):
+async def islem_gecmisi(cari_adi: str, request: Request, background_tasks: BackgroundTasks, limit: int = 50):
     """Belirli bir carinin işlem geçmişini döndürür."""
     aktif_user_ig = mevcut_kullanici(request)
     if aktif_user_ig:
@@ -883,7 +883,7 @@ async def cari_olustur_endpoint(request: Request, background_tasks: BackgroundTa
 
 # ── BEKLEYENİRSALİYELER ──────────────────────────────────────────────
 @app.get("/api/bekleyen-irsaliyeler")
-async def bekleyen_irsaliyeler(request: Request, background_tasks: BackgroundTasks):
+async def bekleyen_irsaliyeler(request: Request, background_tasks: BackgroundTasks, sayfa: int = 1):
     """
     Tüm bekleyen irsaliyeleri TEK API isteğiyle getirir.
     Malzeme bilgisi DB'den okunur.
@@ -912,7 +912,7 @@ async def bekleyen_irsaliyeler(request: Request, background_tasks: BackgroundTas
         cari_id_to_ad = {c["id"]: c["ad"] for c in cariler}
 
         # Tek API isteğiyle tüm irsaliyeler
-        gruplu = tum_bekleyen_irsaliyeleri_getir()
+        gruplu = tum_bekleyen_irsaliyeleri_getir(sayfa_no=sayfa)
 
         sonuc = []
         for contact_id, irsaliyeler in gruplu.items():
@@ -1004,7 +1004,7 @@ async def gunluk_ozet(request: Request, background_tasks: BackgroundTasks):
 
 
 @app.get("/api/son-fisler")
-async def son_fisler(request: Request, background_tasks: BackgroundTasks):
+async def son_fisler(request: Request, background_tasks: BackgroundTasks, limit: int = 20, offset: int = 0):
     """Son 10 yüklenen fişi döndürür."""
     aktif_user_sf = mevcut_kullanici(request)
     if aktif_user_sf:
@@ -1012,9 +1012,10 @@ async def son_fisler(request: Request, background_tasks: BackgroundTasks):
     db = SessionLocal()
     try:
         from app.core.database import WeighTicket
+        toplam = db.query(WeighTicket).count()
         fisler = db.query(WeighTicket).order_by(
             WeighTicket.created_at.desc()
-        ).limit(10).all()
+        ).offset(offset).limit(limit).all()
         return JSONResponse({
             "fisler": [
                 {

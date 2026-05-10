@@ -1378,49 +1378,126 @@
 
   // ── BEKLEYENİRSALİYELER ──────────────────────────────────────────
 
-  async function bekleyenIrsaliyeleriGoster() {
+  // İrsaliye listesi state'i — sayfalama için
+  let irsaliyeListState = { wrap: null, irsaliyeler: [], mevcutSayfa: 1, toplamSayfa: 1, toplamKayit: 0 };
+
+  function irsaliyeBtn(irs, wrap) {
+    const btn = document.createElement('button');
+    btn.className = 'irsaliye-btn';
+    const sol = document.createElement('span');
+    sol.style.fontWeight = '500';
+    sol.textContent = '🏭 ' + irs.cari_adi;
+    const sag = document.createElement('span');
+    sag.className = 'kg';
+    sag.textContent = (irs.toplam_kg||0).toLocaleString('tr-TR') + ' kg';
+    const ust = document.createElement('div');
+    ust.style.cssText = 'display:flex;justify-content:space-between;width:100%;';
+    ust.appendChild(sol);
+    ust.appendChild(sag);
+    btn.appendChild(ust);
+    const alt = document.createElement('div');
+    alt.style.cssText = 'font-size:11px;color:var(--muted);';
+    const plaka = plakacikar(irs.aciklama);
+    alt.textContent = formatTarih(irs.tarih) + (plaka ? '  ·  🚗 ' + plaka : '');
+    btn.appendChild(alt);
+    btn.onclick = function() { irsaliyeSecildi(irs, wrap); };
+    return btn;
+  }
+
+  async function bekleyenIrsaliyeleriGoster(sayfa) {
+    sayfa = sayfa || 1;
     showTyping();
     try {
-      const res = await fetch('/api/bekleyen-irsaliyeler');
+      const res = await fetch('/api/bekleyen-irsaliyeler?sayfa=' + sayfa);
       const data = await res.json();
       removeTyping();
+
       if (!data.irsaliyeler || data.irsaliyeler.length === 0) {
-        addMessage('📋 Sistemde bekleyen irsaliye yok.', 'bot');
+        if (sayfa === 1) addMessage('📋 Sistemde bekleyen irsaliye yok.', 'bot');
+        else addMessage('📋 Başka irsaliye yok.', 'bot');
         return;
       }
-      const wrap = document.createElement('div');
-      const baslik = document.createElement('div');
-      baslik.style.cssText = 'font-size:12px;color:var(--muted);margin-bottom:8px;';
-      baslik.textContent = data.irsaliyeler.length + ' bekleyen irsaliye — fatura kesmek için seçin:';
-      wrap.appendChild(baslik);
-      data.irsaliyeler.forEach(function(irs) {
-        const btn = document.createElement('button');
-        btn.className = 'irsaliye-btn';
-        const sol = document.createElement('span');
-        sol.style.fontWeight = '500';
-        sol.textContent = '🏭 ' + irs.cari_adi;
-        const sag2 = document.createElement('span');
-        sag2.className = 'kg';
-        sag2.textContent = (irs.toplam_kg||0).toLocaleString('tr-TR') + ' kg';
-        const ust = document.createElement('div');
-        ust.style.cssText = 'display:flex;justify-content:space-between;width:100%;';
-        ust.appendChild(sol);
-        ust.appendChild(sag2);
-        btn.appendChild(ust);
-        const alt = document.createElement('div');
-        alt.style.cssText = 'font-size:11px;color:var(--muted);';
-        const plaka = plakacikar(irs.aciklama);
-        alt.textContent = formatTarih(irs.tarih) + (plaka ? '  ·  🚗 ' + plaka : '');
-        btn.appendChild(alt);
-        const _dummy = document.createElement('span'); // placeholder replaced below
-        // sag moved to ust row above
-        btn.onclick = function() { irsaliyeSecildi(irs, wrap); };
-        wrap.appendChild(btn);
-      });
-      addMessage('📋 Bekleyen irsaliyeler:', 'bot', wrap);
+
+      const toplamKayit = data.toplam_kayit || data.irsaliyeler.length;
+      const toplamSayfa = data.toplam_sayfa || 1;
+
+      if (sayfa === 1) {
+        // İlk yükleme — yeni liste oluştur
+        const wrap = document.createElement('div');
+        irsaliyeListState = { wrap, irsaliyeler: [], mevcutSayfa: 1, toplamSayfa, toplamKayit };
+
+        const baslik = document.createElement('div');
+        baslik.style.cssText = 'font-size:12px;color:var(--muted);margin-bottom:8px;';
+        baslik.textContent = toplamKayit + ' bekleyen irsaliye — fatura kesmek için seçin:';
+        wrap.appendChild(baslik);
+
+        data.irsaliyeler.forEach(function(irs) {
+          irsaliyeListState.irsaliyeler.push(irs);
+          wrap.appendChild(irsaliyeBtn(irs, wrap));
+        });
+
+        // Daha fazla butonu
+        if (toplamSayfa > 1) {
+          const dahaFazlaBtn = document.createElement('button');
+          dahaFazlaBtn.id = 'daha-fazla-btn';
+          dahaFazlaBtn.className = 'btn-primary';
+          dahaFazlaBtn.style.cssText = 'width:100%;margin-top:8px;font-size:12px;';
+          dahaFazlaBtn.textContent = '⬇ Daha fazla yükle (' + (toplamKayit - data.irsaliyeler.length) + ' irsaliye daha)';
+          dahaFazlaBtn.onclick = function() { bekleyenIrsaliyeDahaFazla(); };
+          wrap.appendChild(dahaFazlaBtn);
+          irsaliyeListState.dahaFazlaBtn = dahaFazlaBtn;
+        }
+
+        addMessage('📋 Bekleyen irsaliyeler:', 'bot', wrap);
+        irsaliyeListState.wrap = wrap;
+      }
     } catch {
       removeTyping();
       addMessage('❌ İrsaliyeler yüklenemedi, tekrar deneyin.', 'bot');
+    }
+  }
+
+  async function bekleyenIrsaliyeDahaFazla() {
+    const state = irsaliyeListState;
+    if (!state.wrap) return;
+    const sonrakiSayfa = state.mevcutSayfa + 1;
+    if (sonrakiSayfa > state.toplamSayfa) return;
+
+    const btn = state.dahaFazlaBtn;
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Yükleniyor…'; }
+
+    try {
+      const res = await fetch('/api/bekleyen-irsaliyeler?sayfa=' + sonrakiSayfa);
+      const data = await res.json();
+
+      if (!data.irsaliyeler || data.irsaliyeler.length === 0) {
+        if (btn) btn.remove();
+        return;
+      }
+
+      // Butonu kaldır, yeni irsaliyeleri ekle, sonra butonu geri koy
+      if (btn) btn.remove();
+
+      data.irsaliyeler.forEach(function(irs) {
+        state.irsaliyeler.push(irs);
+        state.wrap.appendChild(irsaliyeBtn(irs, state.wrap));
+      });
+
+      state.mevcutSayfa = sonrakiSayfa;
+      const yuklenen = state.irsaliyeler.length;
+      const kalan = state.toplamKayit - yuklenen;
+
+      if (kalan > 0 && sonrakiSayfa < state.toplamSayfa) {
+        const yeniBtn = document.createElement('button');
+        yeniBtn.className = 'btn-primary';
+        yeniBtn.style.cssText = 'width:100%;margin-top:8px;font-size:12px;';
+        yeniBtn.textContent = '⬇ Daha fazla yükle (' + kalan + ' irsaliye daha)';
+        yeniBtn.onclick = function() { bekleyenIrsaliyeDahaFazla(); };
+        state.wrap.appendChild(yeniBtn);
+        state.dahaFazlaBtn = yeniBtn;
+      }
+    } catch {
+      if (btn) { btn.disabled = false; btn.textContent = '⬇ Tekrar dene'; }
     }
   }
 
