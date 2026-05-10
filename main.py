@@ -513,6 +513,47 @@ async def upload_fis(request: Request, background_tasks: BackgroundTasks, file: 
             pass
 
 
+@app.post("/api/plaka-duzenle")
+async def plaka_duzenle(request: Request):
+    """Kullanıcı geçersiz plakayı elle düzeltince DB'yi günceller."""
+    import re as _re
+    data = await request.json()
+    ticket_id  = data.get("ticket_id")
+    yeni_plaka = data.get("plaka", "").strip().upper()
+    yeni_plaka = _re.sub(r'[\s\-]', '', yeni_plaka)
+
+    if not ticket_id or not yeni_plaka:
+        return JSONResponse({"basarili": False, "hata": "ticket_id ve plaka gerekli"})
+
+    if not _re.match(r'^\d{2}[A-Z]{1,3}\d{2,4}$', yeni_plaka):
+        return JSONResponse({"basarili": False, "hata": f"'{yeni_plaka}' hâlâ geçersiz format. Örnek: 27Z3024"})
+
+    db = SessionLocal()
+    try:
+        from app.core.database import WeighTicket, Vehicle
+        ticket = db.query(WeighTicket).filter(WeighTicket.id == ticket_id).first()
+        if not ticket:
+            return JSONResponse({"basarili": False, "hata": "Fiş bulunamadı"})
+
+        eski_plaka = ticket.plaka
+        ticket.plaka = yeni_plaka
+        db.commit()
+
+        eski_arac = db.query(Vehicle).filter(Vehicle.plaka == eski_plaka).first()
+        if eski_arac:
+            eski_arac.plaka = yeni_plaka
+            db.commit()
+
+        logger.info(f"✅ Plaka düzeltildi: {eski_plaka} → {yeni_plaka} (ticket_id={ticket_id})")
+        return JSONResponse({"basarili": True, "plaka": yeni_plaka})
+    except Exception as e:
+        logger.error(f"Plaka düzeltme hatası: {e}")
+        return JSONResponse({"basarili": False, "hata": str(e)})
+    finally:
+        db.close()
+
+
+
 # ── FİRMA SEÇ → İRSALİYE OLUŞTUR ────────────────────────────────────
 @app.post("/api/firma-sec")
 async def firma_sec(request: Request, background_tasks: BackgroundTasks):
