@@ -143,6 +143,29 @@ def giris_zorunlu(request: Request) -> dict:
     return user
 
 
+
+
+# ── GİRİŞ LOGU ───────────────────────────────────────────────────────
+def giris_kaydet(kullanici_adi: str, basarili: bool, giris_tipi: str,
+                 ip: str = None, hata_sebebi: str = None):
+    """Başarılı ve başarısız tüm giriş denemelerini kaydeder."""
+    from app.core.database import SessionLocal, GirisLog
+    db = SessionLocal()
+    try:
+        log = GirisLog(
+            kullanici_adi = kullanici_adi,
+            basarili      = 1 if basarili else 0,
+            giris_tipi    = giris_tipi,
+            hata_sebebi   = hata_sebebi,
+            ip_adresi     = ip,
+        )
+        db.add(log)
+        db.commit()
+    except Exception as e:
+        logger.error(f"Giriş log hatası: {e}")
+    finally:
+        db.close()
+
 # ── AUDİT LOG ────────────────────────────────────────────────────────
 def audit_kaydet(user_id: int, username: str, intent: str,
                  params: dict = None, ip: str = None):

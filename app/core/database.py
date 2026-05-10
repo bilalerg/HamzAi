@@ -199,6 +199,77 @@ class UsageLog(Base):
     def __repr__(self): return f"<UsageLog user={self.username} islem={self.islem_turu} ucretli={self.ucretli}>"
 
 
+class HataLog(Base):
+    """
+    Sistem hata kaydı.
+    Render logları 7 günde siliniyor — kritik hatalar burada kalıcı.
+    Hangi endpoint, hangi hata, kim tetikledi.
+    """
+    __tablename__ = "hata_logs"
+    id           = Column(Integer, primary_key=True, autoincrement=True)
+    endpoint     = Column(String(100), nullable=True, index=True)   # /api/upload, /api/fatura-kes
+    hata_tipi    = Column(String(100), nullable=True)               # Exception sınıfı adı
+    hata_mesaji  = Column(Text, nullable=True)                      # str(e)
+    kullanici    = Column(String(100), nullable=True)               # kim tetikledi
+    ip_adresi    = Column(String(50), nullable=True)
+    created_at   = Column(DateTime, server_default=func.now(), index=True)
+    def __repr__(self): return f"<HataLog endpoint={self.endpoint} hata={self.hata_tipi}>"
+
+
+class TahsilatLog(Base):
+    """
+    Tahsilat geçmişi — Paraşüt'ten bağımsız yerel kayıt.
+    Paraşüt'te veri değişse veya silinse bile burada kalır.
+    """
+    __tablename__ = "tahsilat_logs"
+    id               = Column(Integer, primary_key=True, autoincrement=True)
+    cari_adi         = Column(String(200), nullable=False, index=True)
+    cari_id          = Column(String(100), nullable=True)            # Paraşüt contact ID
+    tutar            = Column(BigInteger, nullable=False)
+    tarih            = Column(String(20), nullable=True)             # YYYY-MM-DD
+    aciklama         = Column(Text, nullable=True)
+    parasut_odeme_id = Column(String(100), nullable=True)           # Paraşüt payment ID
+    kullanici        = Column(String(100), nullable=True)
+    profaix_user_id  = Column(String(100), nullable=True)
+    created_at       = Column(DateTime, server_default=func.now(), index=True)
+    def __repr__(self): return f"<TahsilatLog cari={self.cari_adi} tutar={self.tutar}>"
+
+
+class OcrHataLog(Base):
+    """
+    OCR başarısızlık kaydı.
+    Hangi fotoğraf yüklendi, kim yükledi, ne hatası aldı.
+    Fotoğraf binary kaydedilmiyor — sadece metadata.
+    """
+    __tablename__ = "ocr_hata_logs"
+    id              = Column(Integer, primary_key=True, autoincrement=True)
+    foto_boyut_kb   = Column(Integer, nullable=True)                 # KB cinsinden
+    hata_mesaji     = Column(Text, nullable=True)
+    claude_ham_cikti = Column(Text, nullable=True)                  # Claude'un ham yanıtı
+    kullanici       = Column(String(100), nullable=True)
+    profaix_user_id = Column(String(100), nullable=True)
+    ip_adresi       = Column(String(50), nullable=True)
+    created_at      = Column(DateTime, server_default=func.now(), index=True)
+    def __repr__(self): return f"<OcrHataLog kullanici={self.kullanici} hata={self.hata_mesaji[:40] if self.hata_mesaji else '-'}>"
+
+
+class GirisLog(Base):
+    """
+    Giriş denemeleri — başarılı ve başarısız.
+    Birisi kaba kuvvetle şifre deniyorsa burada görürsün.
+    basarili=0 + ayni IP'den çok sayıda kayıt = şüpheli.
+    """
+    __tablename__ = "giris_logs"
+    id              = Column(Integer, primary_key=True, autoincrement=True)
+    kullanici_adi   = Column(String(100), nullable=True, index=True)  # girilen username/user_id
+    basarili        = Column(Integer, default=0)                      # 1=başarılı, 0=başarısız
+    giris_tipi      = Column(String(20), nullable=True)               # "profaix" veya "local"
+    hata_sebebi     = Column(String(200), nullable=True)              # neden başarısız
+    ip_adresi       = Column(String(50), nullable=True, index=True)
+    created_at      = Column(DateTime, server_default=func.now(), index=True)
+    def __repr__(self): return f"<GirisLog kullanici={self.kullanici_adi} basarili={self.basarili}>"
+
+
 def init_db():
     logger.info("Veritabanı tabloları oluşturuluyor...")
     Base.metadata.create_all(bind=engine)

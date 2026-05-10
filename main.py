@@ -16,7 +16,7 @@ from app.core.database import UsageLog
 from app.auth import (
     token_uret, mevcut_kullanici,
     giris_zorunlu, audit_kaydet, ilk_admin_olustur,
-    profaix_kullanici_dogrula
+    profaix_kullanici_dogrula, giris_kaydet
 )
 
 
@@ -97,6 +97,26 @@ app = FastAPI(title="Profaix", description="Muhasebe Otomasyon Ajanı", version=
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
+
+
+def _hata_kaydet(endpoint: str, hata: Exception, request: Request = None, kullanici: dict = None):
+    """Kritik hataları DB'ye yazar. Render logları 7 günde siliniyor, bu kalıcı."""
+    from app.core.database import HataLog
+    db = SessionLocal()
+    try:
+        log = HataLog(
+            endpoint    = endpoint,
+            hata_tipi   = type(hata).__name__,
+            hata_mesaji = str(hata),
+            kullanici   = kullanici["username"] if kullanici else None,
+            ip_adresi   = request.client.host if request and request.client else None,
+        )
+        db.add(log)
+        db.commit()
+    except Exception:
+        pass
+    finally:
+        db.close()
 
 def _islem_log(db, islem_tipi: str, cari_adi: str = None, tutar: int = None,
                fatura_id: str = None, irsaliye_id: str = None, plaka: str = None,
@@ -230,6 +250,9 @@ async def login(request: Request, background_tasks: BackgroundTasks):
         kullanici = await profaix_kullanici_dogrula(user_id)
         if not kullanici:
             logger.warning(f"Profaix doğrulama başarısız: {user_id}")
+            giris_kaydet(user_id, False, "profaix",
+                ip=request.client.host if request.client else None,
+                hata_sebebi="Kullanıcı doğrulanamadı")
             return JSONResponse({"basarili": False, "hata": "Kullanıcı doğrulanamadı"})
 
         token = token_uret(
@@ -239,6 +262,8 @@ async def login(request: Request, background_tasks: BackgroundTasks):
             beni_hatirla=beni_hatirla
         )
         logger.info(f"✅ Profaix girişi: {kullanici.get('full_name')} ({user_id})")
+        giris_kaydet(kullanici.get("full_name", user_id), True, "profaix",
+            ip=request.client.host if request.client else None)
         background_tasks.add_task(_usage_kaydet, None, kullanici.get("full_name", user_id), "GIRIS", f"profaix_id={user_id}", 0, user_id)
 
         response = JSONResponse({
@@ -266,6 +291,9 @@ async def login(request: Request, background_tasks: BackgroundTasks):
         ).first()
         if not user or not pwd.verify(sifre, user.password_hash):
             logger.warning(f"Başarısız giriş: {username}")
+            giris_kaydet(username, False, "local",
+                ip=request.client.host if request.client else None,
+                hata_sebebi="Yanlış şifre veya kullanıcı yok")
             return JSONResponse({"basarili": False, "hata": "Kullanıcı adı veya şifre hatalı"})
 
         from datetime import datetime as _dt, timedelta as _td
@@ -291,6 +319,8 @@ async def login(request: Request, background_tasks: BackgroundTasks):
     }, _secret, algorithm="HS256")
 
     logger.info(f"✅ Local giriş: {user_username}")
+    giris_kaydet(user_username, True, "local",
+        ip=request.client.host if request.client else None)
     background_tasks.add_task(_usage_kaydet, user_id_local, user_username, "GIRIS",
         f"ip={request.client.host if request.client else '?'}", 0,
         None)
@@ -393,6 +423,21 @@ async def upload_fis(request: Request, background_tasks: BackgroundTasks, file: 
 
         if fis.hata:
             _islem_log(db, "OCR_HATA", plaka=None, aciklama=fis.hata, session_id=session_id)
+            # OCR hata logu
+            try:
+                from app.core.database import OcrHataLog
+                ocr_log = OcrHataLog(
+                    foto_boyut_kb   = len(icerik) // 1024,
+                    hata_mesaji     = fis.hata,
+                    claude_ham_cikti = fis.claude_ham_cikti,
+                    kullanici       = aktif_user_upload["username"] if aktif_user_upload else None,
+                    profaix_user_id = aktif_user_upload.get("profaix_user_id") if aktif_user_upload else None,
+                    ip_adresi       = request.client.host if request.client else None,
+                )
+                db.add(ocr_log)
+                db.commit()
+            except Exception:
+                pass
             return JSONResponse({"cevap": f"❌ Fiş okunamadı: {fis.hata}\n\nFotoğrafı daha net çekip tekrar deneyin."})
 
         ticket = fis_db_kaydet(fis, tmp_path, db)
@@ -453,6 +498,7 @@ async def upload_fis(request: Request, background_tasks: BackgroundTasks, file: 
 
     except Exception as e:
         logger.error(f"Upload hatası: {e}")
+        _hata_kaydet("/api/upload", e, request, mevcut_kullanici(request))
         return JSONResponse({"cevap": f"❌ Hata oluştu: {str(e)}"})
     finally:
         db.close()
@@ -718,6 +764,7 @@ async def tahsilat_ekle_endpoint(request: Request, background_tasks: BackgroundT
             })
     except Exception as e:
         logger.error(f"Tahsilat endpoint hatası: {e}")
+        _hata_kaydet("/api/tahsilat", e, request, mevcut_kullanici(request))
         return JSONResponse({"basarili": False, "cevap": f"❌ Hata: {str(e)}"})
 
 
@@ -1257,6 +1304,7 @@ async def fatura_kes_endpoint(request: Request, background_tasks: BackgroundTask
 
     except Exception as e:
         logger.error(f"Fatura kes hatası: {e}")
+        _hata_kaydet("/api/fatura-kes", e, request, mevcut_kullanici(request))
         _islem_log(db, "FATURA_HATA", cari_adi=cari_adi, irsaliye_id=str(parasut_irsaliye_id), aciklama=str(e))
         return JSONResponse({"cevap": f"❌ Fatura kesilemedi: {str(e)}", "basarili": False})
     finally:
@@ -1538,6 +1586,41 @@ async def startup_recovery():
                 logger.info("✅ Migration: tam_gecmis kolonu hazır")
             except Exception as e:
                 logger.warning(f"Migration tam_gecmis atlandı: {e}")
+
+            # Yeni tablolar — migration
+            for tablo_sql in [
+                """CREATE TABLE IF NOT EXISTS hata_logs (
+                    id SERIAL PRIMARY KEY, endpoint VARCHAR(100),
+                    hata_tipi VARCHAR(100), hata_mesaji TEXT,
+                    kullanici VARCHAR(100), ip_adresi VARCHAR(50),
+                    created_at TIMESTAMP DEFAULT NOW()
+                )""",
+                """CREATE TABLE IF NOT EXISTS tahsilat_logs (
+                    id SERIAL PRIMARY KEY, cari_adi VARCHAR(200) NOT NULL,
+                    cari_id VARCHAR(100), tutar BIGINT NOT NULL,
+                    tarih VARCHAR(20), aciklama TEXT,
+                    parasut_odeme_id VARCHAR(100), kullanici VARCHAR(100),
+                    profaix_user_id VARCHAR(100),
+                    created_at TIMESTAMP DEFAULT NOW()
+                )""",
+                """CREATE TABLE IF NOT EXISTS ocr_hata_logs (
+                    id SERIAL PRIMARY KEY, foto_boyut_kb INTEGER,
+                    hata_mesaji TEXT, claude_ham_cikti TEXT,
+                    kullanici VARCHAR(100), profaix_user_id VARCHAR(100),
+                    ip_adresi VARCHAR(50), created_at TIMESTAMP DEFAULT NOW()
+                )""",
+                """CREATE TABLE IF NOT EXISTS giris_logs (
+                    id SERIAL PRIMARY KEY, kullanici_adi VARCHAR(100),
+                    basarili INTEGER DEFAULT 0, giris_tipi VARCHAR(20),
+                    hata_sebebi VARCHAR(200), ip_adresi VARCHAR(50),
+                    created_at TIMESTAMP DEFAULT NOW()
+                )"""
+            ]:
+                try:
+                    conn.execute(text(tablo_sql))
+                    conn.commit()
+                except Exception as e:
+                    logger.warning(f"Migration atlandı: {e}")
 
             try:
                 conn.execute(text("""
