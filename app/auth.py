@@ -1,10 +1,4 @@
 # auth.py — Profaix.com Entegrasyonlu Auth Sistemi
-#
-# AKIŞ:
-# 1. Kullanıcı profaix.com'dan gelir → URL'de user_id var
-# 2. profaix.com/api/users endpoint'inden doğrularız
-# 3. Doğrulanırsa JWT cookie set ederiz
-# 4. Sonraki isteklerde cookie'den okuruz
 
 from datetime import datetime, timedelta
 from typing import Optional
@@ -14,13 +8,14 @@ from fastapi.responses import JSONResponse
 import httpx
 import os
 from app.core.logger import logger
+from app.core.config import JWT_SECRET_KEY
 
 # ── YAPILANDIRMA ──────────────────────────────────────────────────────
-SECRET_KEY     = os.getenv("JWT_SECRET_KEY", "profaix-super-secret-key-2026")
-ALGORITHM      = "HS256"
-TOKEN_SURE     = timedelta(hours=8)
+# SECRET_KEY artık config.py'den geliyor — validate_config() boş geçmesine izin vermez.
+ALGORITHM          = "HS256"
+TOKEN_SURE         = timedelta(hours=8)
 TOKEN_SURE_HATIRLA = timedelta(days=7)
-PROFAIX_API    = "https://profaix.com/api/users"
+PROFAIX_API        = "https://profaix.com/api/users"
 
 
 # ── PROFAİX.COM KULLANICI DOĞRULAMA ──────────────────────────────────
@@ -48,20 +43,20 @@ async def profaix_kullanici_dogrula(user_id: str) -> Optional[dict]:
 # ── JWT TOKEN ────────────────────────────────────────────────────────
 def token_uret(profaix_user_id: str, full_name: str, email: str,
                beni_hatirla: bool = False) -> str:
-    sure = TOKEN_SURE_HATIRLA if beni_hatirla else TOKEN_SURE
-    expire = datetime.utcnow() + sure
+    sure    = TOKEN_SURE_HATIRLA if beni_hatirla else TOKEN_SURE
+    expire  = datetime.utcnow() + sure
     payload = {
-        "sub": profaix_user_id,
+        "sub":       profaix_user_id,
         "full_name": full_name,
-        "email": email,
-        "exp": expire,
+        "email":     email,
+        "exp":       expire,
     }
-    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+    return jwt.encode(payload, JWT_SECRET_KEY, algorithm=ALGORITHM)
 
 
 def token_coz(token: str) -> Optional[dict]:
     try:
-        return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return jwt.decode(token, JWT_SECRET_KEY, algorithms=[ALGORITHM])
     except JWTError:
         return None
 
@@ -77,7 +72,7 @@ def mevcut_kullanici(request: Request) -> Optional[dict]:
     if not payload:
         return None
 
-    # Yeni format: profaix.com user_id (full_name var, username yok)
+    # Yeni format: profaix.com user_id
     if payload.get("full_name"):
         return {
             "id": None,
@@ -88,7 +83,7 @@ def mevcut_kullanici(request: Request) -> Optional[dict]:
             "rol": "user"
         }
 
-    # Eski format: local admin (username/rol var)
+    # Eski format: local admin
     return {
         "id": int(payload.get("sub", 0)),
         "username": payload.get("username", ""),
@@ -117,11 +112,11 @@ def audit_kaydet(user_id: int, username: str, intent: str,
     db = SessionLocal()
     try:
         log = AuditLog(
-            user_id=user_id,
-            username=username,
-            intent=intent,
-            params=json.dumps(params or {}, ensure_ascii=False),
-            ip_adresi=ip
+            user_id   = user_id,
+            username  = username,
+            intent    = intent,
+            params    = json.dumps(params or {}, ensure_ascii=False),
+            ip_adresi = ip
         )
         db.add(log)
         db.commit()
@@ -137,19 +132,22 @@ def ilk_admin_olustur():
     from passlib.context import CryptContext
     from app.core.database import SessionLocal, User
     admin_username = os.getenv("ADMIN_USERNAME", "admin")
-    admin_password = os.getenv("ADMIN_PASSWORD", "profaix2026")
+    admin_password = os.getenv("ADMIN_PASSWORD", "")
+    if not admin_password:
+        logger.warning("⚠️ ADMIN_PASSWORD .env'de set edilmemiş, admin oluşturulmadı.")
+        return
     pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
-    db = SessionLocal()
+    db  = SessionLocal()
     try:
         mevcut = db.query(User).first()
         if mevcut:
             return
         admin = User(
-            username=admin_username.lower(),
-            password_hash=pwd.hash(admin_password),
-            ad_soyad="Admin",
-            rol="admin",
-            aktif=1
+            username      = admin_username.lower(),
+            password_hash = pwd.hash(admin_password),
+            ad_soyad      = "Admin",
+            rol           = "admin",
+            aktif         = 1
         )
         db.add(admin)
         db.commit()

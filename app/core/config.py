@@ -1,21 +1,9 @@
 # config.py — Projenin Ayar Merkezi
-#
-# NEDEN BU DOSYA VAR?
-# Projedeki her modül API key, şifre, URL gibi bilgilere ihtiyaç duyar.
-# Bunları her dosyaya ayrı ayrı yazmak yerine tek bir yerden yönetiyoruz.
-# Bir değer değişince sadece .env'i güncelliyoruz, kod hiç dokunulmuyor.
-#
-# NASIL ÇALIŞIR?
-# python-dotenv kütüphanesi .env dosyasını okur ve
-# os.getenv() ile bu değerlere ulaşırız.
-# Render'da Secret Files /etc/secrets/.env konumunda olur.
 
 import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Render'da Secret Files /etc/secrets/.env konumunda
-# Local'de proje kökündeki .env dosyası
 secret_env = Path("/etc/secrets/.env")
 if secret_env.exists():
     load_dotenv(secret_env)
@@ -41,7 +29,7 @@ PARASUT_HURDA_PRODUCT_ID = os.getenv("PARASUT_HURDA_PRODUCT_ID")
 # ── VERİTABANI ─────────────────────────────────────────────────────────
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# ── MAİL — SMTP (gönderme) ─────────────────────────────────────────────
+# ── MAİL — SMTP ────────────────────────────────────────────────────────
 MAIL_HOST     = os.getenv("MAIL_HOST", "smtp.gmail.com")
 MAIL_PORT     = int(os.getenv("MAIL_PORT", "587"))
 MAIL_USER     = os.getenv("MAIL_USER", "")
@@ -49,10 +37,7 @@ MAIL_PASSWORD = os.getenv("MAIL_PASSWORD", "")
 MAIL_FROM     = os.getenv("MAIL_FROM", "")
 FABRIKA_MAIL  = os.getenv("FABRIKA_MAIL", "")
 
-# ── MAİL — IMAP (okuma) ────────────────────────────────────────────────
-# SMTP → mail göndermek için
-# IMAP → mail okumak için (fabrika reply'larını yakalamak)
-# Gmail IMAP: imap.gmail.com:993 (SSL)
+# ── MAİL — IMAP ────────────────────────────────────────────────────────
 IMAP_HOST     = os.getenv("IMAP_HOST", "imap.gmail.com")
 IMAP_PORT     = int(os.getenv("IMAP_PORT", "993"))
 IMAP_USER     = os.getenv("IMAP_USER", "")
@@ -68,13 +53,21 @@ TWILIO_WHATSAPP_FROM = os.getenv("TWILIO_WHATSAPP_FROM")
 MUHASEBECI_WHATSAPP = os.getenv("MUHASEBECI_WHATSAPP")
 PATRON_WHATSAPP     = os.getenv("PATRON_WHATSAPP")
 
-
-# ── ADMIN ─────────────────────────────────────────────────────────────
-ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "profaix-admin-2026")
+# ── GÜVENLİK ───────────────────────────────────────────────────────────
+# UYARI: Bunlar production'da mutlaka .env'de set edilmeli.
+# Varsayılan değerler sadece local development içindir.
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "")
+ADMIN_TOKEN    = os.getenv("ADMIN_TOKEN", "")
 
 # ── DOĞRULAMA ──────────────────────────────────────────────────────────
+_GUVENSIZ_DEFAULTS = {
+    "profaix-super-secret-key-2026",
+    "profaix-admin-2026",
+    "",
+}
+
 def validate_config():
-    """Kritik ayarların dolu olduğunu kontrol eder. Eksik varsa hata fırlatır."""
+    """Kritik ayarların dolu ve güvenli olduğunu kontrol eder."""
 
     kritik_alanlar = {
         "ANTHROPIC_API_KEY":     ANTHROPIC_API_KEY,
@@ -84,14 +77,28 @@ def validate_config():
         "PARASUT_USERNAME":      PARASUT_USERNAME,
         "PARASUT_PASSWORD":      PARASUT_PASSWORD,
         "PARASUT_COMPANY_ID":    PARASUT_COMPANY_ID,
+        "JWT_SECRET_KEY":        JWT_SECRET_KEY,
+        "ADMIN_TOKEN":           ADMIN_TOKEN,
     }
 
     eksikler = [isim for isim, deger in kritik_alanlar.items() if not deger]
-
     if eksikler:
         raise ValueError(
             f"Şu .env değerleri eksik: {', '.join(eksikler)}\n"
             f".env dosyasını kontrol et!"
         )
+
+    # Production'da varsayılan/güvensiz değer kontrolü
+    if IS_PRODUCTION:
+        guvensiz = []
+        if JWT_SECRET_KEY in _GUVENSIZ_DEFAULTS:
+            guvensiz.append("JWT_SECRET_KEY")
+        if ADMIN_TOKEN in _GUVENSIZ_DEFAULTS:
+            guvensiz.append("ADMIN_TOKEN")
+        if guvensiz:
+            raise ValueError(
+                f"PRODUCTION'DA GÜVENSİZ DEĞER: {', '.join(guvensiz)}\n"
+                f"Bu değerleri .env'de benzersiz, güçlü bir değerle set edin!"
+            )
 
     print(f"✅ Config yüklendi — Ortam: {ENV}")

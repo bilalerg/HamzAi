@@ -1,6 +1,7 @@
 # reader.py — OCR Engine
 
 import anthropic
+import asyncio
 import base64
 import json
 import re
@@ -16,6 +17,7 @@ _client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
 OCR_MODEL      = "claude-sonnet-4-20250514"
 OCR_MAX_TOKENS = 1024
+OCR_MAX_RETRY  = 2  # Başarısız OCR'da kaç kez tekrar denensin
 
 
 @dataclass
@@ -32,7 +34,7 @@ class FisVerisi:
     malzemeler:       Optional[Dict[str,int]] = None
     claude_ham_cikti: Optional[str]           = None
     hata:             Optional[str]           = None
-    plaka_uyari:      Optional[str]           = None  # Plaka format sorunu varsa uyarı mesajı
+    plaka_uyari:      Optional[str]           = None
 
 
 OCR_SYSTEM = "Sen sadece JSON üreten bir API'sin. Yanıtın SADECE '{' ile başlamalı ve '}' ile bitmelidir. Hiçbir açıklama, başlık veya markdown ekleme."
@@ -65,13 +67,12 @@ Tanıma: Gönderen "HURDA@kromancelik.com.tr" veya üstte "Fişno:" başlığı 
 - fis_no     → "Fiş No" satırı
 - plaka      → "Plaka No" satırı
 - tarih      → "Tarih" satırı
-- firma      → Her zaman sabit: "KROMAN ÇELİK" yaz (gönderen mail veya Firma Adı değil)
+- firma      → Her zaman sabit: "KROMAN ÇELİK" yaz
 - net_tartim_kg → "Net Tartım" satırındaki değer (ham, tenzil düşülmemiş)
 - fire_kg    → "Tenzil" satırındaki değer
 - malzemeler → Alt tablodaki "Hurda Tipi | Miktar | Tenz.Miktar" satırları
                Net miktar = Miktar - Tenz.Miktar
                Örnek: HURDA YERLİ EXTRA | 4.711 | 84 → {"HURDA YERLİ EXTRA": 4627}
-               Tüm satırları ekle, net > 0 olanları
 
 FORMAT C — KAPTAN DEMİR ÇELİK
 Tanıma: Başlıkta "KAPTAN DEMİR ÇELİK" yazar.
@@ -81,17 +82,14 @@ Tanıma: Başlıkta "KAPTAN DEMİR ÇELİK" yazar.
 - tarih      → "Geliş - Gidiş Tarihi" satırındaki ilk tarih
 - firma      → Sabit: "KAPTAN DEMİR ÇELİK" yaz
 - net_tartim_kg → "NET" satırındaki değer
-- fire_kg    → 0 (bu fişte fire gösterilmez)
+- fire_kg    → 0
 - malzemeler → "Mal Cinsi" satırındaki değer, ağırlık = net_tartim_kg
-               Örnek: {"YERLI HURDA": 15200}
 
 FORMAT D — DİĞER/BİLİNMEYEN FORMAT
-Tanıma: Yukarıdakilerden hiçbiri değilse.
-- fis_no     → Fiş/slip/makbuz numarası olarak görünen sayı
+- fis_no     → Fiş/slip/makbuz numarası
 - plaka      → Araç plakası — iki plaka varsa sadece ilki
 - tarih      → Tarihi bul
 - firma      → Fişin EN ÜSTÜNDE büyük harfle yazan şirket/fabrika adı
-               "Firma Adı", "Nakliye Firması", "Ad Soyad" satırlarını ASLA yazma
 - net_tartim_kg → NET veya NET TARTIM satırı
 - fire_kg    → Fire/Tenzil satırı, yoksa 0
 - malzemeler → Malzeme tablosu varsa doldur, yoksa {}
@@ -111,10 +109,8 @@ def _fotograf_to_base64(fotograf_yolu: str) -> tuple[str, str]:
         from PIL import Image
         import io as _io
         with Image.open(fotograf_yolu) as img:
-            # RGBA → RGB dönüşümü (PNG şeffaflık sorunu)
             if img.mode in ("RGBA", "P"):
                 img = img.convert("RGB")
-            # Max 1500px — kantar fişi için fazlasıyla yeterli
             img.thumbnail((1500, 1500), Image.LANCZOS)
             buffer = _io.BytesIO()
             img.save(buffer, format="JPEG", quality=85)
@@ -122,7 +118,6 @@ def _fotograf_to_base64(fotograf_yolu: str) -> tuple[str, str]:
             logger.info(f"Fotoğraf boyutlandırıldı: {img.size} | {len(data)//1024}KB base64")
         return data, "image/jpeg"
     except ImportError:
-        # Pillow yoksa eski yöntem
         with open(fotograf_yolu, "rb") as f:
             data = base64.standard_b64encode(f.read()).decode("utf-8")
         uzanti = Path(fotograf_yolu).suffix.lower()
@@ -156,15 +151,14 @@ def _parse_kg(deger) -> int:
         return 0
 
 
-def claude_fis_oku(fotograf_yolu: str) -> FisVerisi:
-    logger.info(f"OCR başlıyor: {fotograf_yolu} | model={OCR_MODEL}")
-
+def _claude_fis_oku_once(fotograf_yolu: str, temperature: float = 0.0) -> FisVerisi:
+    """Tek OCR denemesi."""
     foto_base64, media_type = _fotograf_to_base64(fotograf_yolu)
 
     response = _client.messages.create(
         model=OCR_MODEL,
         max_tokens=OCR_MAX_TOKENS,
-        temperature=0.0,
+        temperature=temperature,
         system=OCR_SYSTEM,
         messages=[{
             "role": "user",
@@ -181,77 +175,106 @@ def claude_fis_oku(fotograf_yolu: str) -> FisVerisi:
     claude_cevap = response.content[0].text
     logger.info(f"OCR ham cevap: {claude_cevap}")
 
-    try:
-        veri = _parse_json(claude_cevap)
+    veri = _parse_json(claude_cevap)
 
-        net_tartim  = _parse_kg(veri.get("net_tartim_kg"))
-        fire        = _parse_kg(veri.get("fire_kg"))
-        net_agirlik = net_tartim - fire
+    net_tartim  = _parse_kg(veri.get("net_tartim_kg"))
+    fire        = _parse_kg(veri.get("fire_kg"))
+    net_agirlik = net_tartim - fire
 
-        if net_agirlik < 0:
-            logger.warning(f"⚠️ Net ağırlık negatif (tartım={net_tartim}, fire={fire}), fire sıfırlanıyor")
-            net_agirlik = net_tartim
-            fire = 0
+    if net_agirlik < 0:
+        logger.warning(f"⚠️ Net ağırlık negatif (tartım={net_tartim}, fire={fire}), fire sıfırlanıyor")
+        net_agirlik = net_tartim
+        fire = 0
 
-        if net_agirlik == 0 or net_tartim == 0:
-            logger.error(f"⚠️ Sıfır ağırlık tespit edildi — fiş geçersiz olabilir")
-            return FisVerisi(
-                hata="Fişteki ağırlık değeri okunamadı veya sıfır. Fotoğrafı daha net çekip tekrar deneyin.",
-                claude_ham_cikti=claude_cevap
-            )
+    if net_agirlik == 0 or net_tartim == 0:
+        raise ValueError("Fişteki ağırlık değeri okunamadı veya sıfır.")
 
-        FIRE_KELIMELERI = {'fire', 'tenzil', 'fire kg', 'kayıp', 'kayip', 'hurda fire'}
-        malzemeler_ham = veri.get("malzemeler") or {}
-        malzemeler = {
-            k: _parse_kg(v) for k, v in malzemeler_ham.items()
-            if v and _parse_kg(v) > 0 and k.strip().lower() not in FIRE_KELIMELERI
-        }
+    FIRE_KELIMELERI = {'fire', 'tenzil', 'fire kg', 'kayıp', 'kayip', 'hurda fire'}
+    malzemeler_ham = veri.get("malzemeler") or {}
+    malzemeler = {
+        k: _parse_kg(v) for k, v in malzemeler_ham.items()
+        if v and _parse_kg(v) > 0 and k.strip().lower() not in FIRE_KELIMELERI
+    }
 
-        # Plaka normalizasyonu — boşluk/tire kaldır, büyük harf
-        ham_plaka = veri.get("plaka")
-        temiz_plaka = re.sub(r'[\s\-]', '', ham_plaka).upper() if ham_plaka else None
+    ham_plaka = veri.get("plaka")
+    temiz_plaka = re.sub(r'[\s\-]', '', ham_plaka).upper() if ham_plaka else None
 
-        # Türk plaka format kontrolü
-        # Geçerli format: 2 rakam + 1-3 harf + 2-4 rakam (örn: 27Z3024, 06FH8714)
-        plaka_gecerli = bool(re.match(r'^\d{2}[A-Z]{1,3}\d{2,4}$', temiz_plaka)) if temiz_plaka else False
-        if temiz_plaka and not plaka_gecerli:
-            logger.warning(
-                f"⚠️ GEÇERSİZ PLAKA FORMATI: '{temiz_plaka}' — "
-                f"Beklenen format: 27Z3024, 06FH8714. "
-                f"Fotoğraf kalitesi düşük olabilir, manuel kontrol gerekebilir."
-            )
+    plaka_gecerli = bool(re.match(r'^\d{2}[A-Z]{1,3}\d{2,4}$', temiz_plaka)) if temiz_plaka else False
+    if temiz_plaka and not plaka_gecerli:
+        logger.warning(f"⚠️ GEÇERSİZ PLAKA FORMATI: '{temiz_plaka}'")
 
-        logger.info(f"OCR sonuç — plaka={temiz_plaka} (geçerli={plaka_gecerli}) tartım={net_tartim}kg fire={fire}kg net={net_agirlik}kg firma={veri.get('firma')}")
+    plaka_uyari = None
+    if temiz_plaka and not plaka_gecerli:
+        plaka_uyari = f"⚠️ Plaka '{temiz_plaka}' geçersiz format — lütfen kontrol edin."
 
-        plaka_uyari = None
-        if temiz_plaka and not plaka_gecerli:
-            plaka_uyari = f"⚠️ Plaka '{temiz_plaka}' geçersiz format — lütfen kontrol edin."
+    logger.info(f"OCR sonuç — plaka={temiz_plaka} tartım={net_tartim}kg fire={fire}kg net={net_agirlik}kg firma={veri.get('firma')}")
 
-        return FisVerisi(
-            plaka            = temiz_plaka,
-            fis_no           = str(veri.get("fis_no")) if veri.get("fis_no") else None,
-            net_tartim_kg    = net_tartim,
-            fire_kg          = fire,
-            net_agirlik_kg   = net_agirlik,
-            tarih            = veri.get("tarih"),
-            firma            = veri.get("firma"),
-            irsaliye_no      = veri.get("irsaliye_no"),
-            kantar_no        = veri.get("kantar_no"),
-            malzemeler       = malzemeler or None,
-            claude_ham_cikti = claude_cevap,
-            plaka_uyari      = plaka_uyari
+    return FisVerisi(
+        plaka            = temiz_plaka,
+        fis_no           = str(veri.get("fis_no")) if veri.get("fis_no") else None,
+        net_tartim_kg    = net_tartim,
+        fire_kg          = fire,
+        net_agirlik_kg   = net_agirlik,
+        tarih            = veri.get("tarih"),
+        firma            = veri.get("firma"),
+        irsaliye_no      = veri.get("irsaliye_no"),
+        kantar_no        = veri.get("kantar_no"),
+        malzemeler       = malzemeler or None,
+        claude_ham_cikti = claude_cevap,
+        plaka_uyari      = plaka_uyari
+    )
+
+
+def claude_fis_oku(fotograf_yolu: str) -> FisVerisi:
+    """
+    OCR işlemini çalıştırır.
+    Başarısız olursa OCR_MAX_RETRY kez tekrar dener (artan temperature ile).
+    Tüm denemeler başarısız olursa hata döndürür.
+    """
+    logger.info(f"OCR başlıyor: {fotograf_yolu} | model={OCR_MODEL}")
+    son_hata = None
+
+    for deneme in range(OCR_MAX_RETRY):
+        # İlk deneme temperature=0.0 (deterministik), sonrakiler biraz higher
+        temperature = 0.0 if deneme == 0 else 0.2
+        try:
+            if deneme > 0:
+                logger.info(f"OCR yeniden deneniyor ({deneme + 1}/{OCR_MAX_RETRY}), temperature={temperature}")
+            return _claude_fis_oku_once(fotograf_yolu, temperature=temperature)
+        except Exception as e:
+            son_hata = e
+            logger.warning(f"OCR deneme {deneme + 1} başarısız: {e}")
+
+    logger.error(f"OCR tüm denemeler başarısız: {son_hata}")
+    return FisVerisi(
+        hata=(
+            "Fişteki ağırlık değeri okunamadı veya sıfır. "
+            "Fotoğrafı daha net çekip tekrar deneyin."
         )
+    )
 
-    except Exception as e:
-        logger.error(f"OCR parse hatası: {e} | ham: {claude_cevap[:200]}")
-        return FisVerisi(hata=str(e), claude_ham_cikti=claude_cevap)
+
+# ── ASYNC WRAPPER — FastAPI event loop'unu bloklamaz ──────────────────
+
+async def claude_fis_oku_async(fotograf_yolu: str) -> FisVerisi:
+    """
+    Senkron OCR işlemini thread pool'a taşır.
+    FastAPI async endpoint'lerinden bu fonksiyon çağrılmalı.
+    """
+    return await asyncio.to_thread(claude_fis_oku, fotograf_yolu)
 
 
 def fis_oku(fotograf_yolu: str) -> FisVerisi:
+    """Senkron çağrı — background task veya senkron bağlamlar için."""
     fis = claude_fis_oku(fotograf_yolu)
     if fis.hata:
         logger.error(f"Fiş okunamadı: {fis.hata}")
     return fis
+
+
+async def fis_oku_async(fotograf_yolu: str) -> FisVerisi:
+    """Async çağrı — FastAPI endpoint'lerinden kullanılmalı."""
+    return await claude_fis_oku_async(fotograf_yolu)
 
 
 def fis_db_kaydet(fis: FisVerisi, foto_path: str, db) -> object:

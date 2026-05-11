@@ -4,8 +4,8 @@ from sqlalchemy import (
     create_engine, Column, String, Integer,
     DateTime, Text, Enum, ForeignKey, BigInteger
 )
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, relationship
+# SQLAlchemy 2.0+ uyumlu import — ext.declarative deprecated
+from sqlalchemy.orm import DeclarativeBase, sessionmaker, relationship
 from sqlalchemy.sql import func
 import enum
 from app.core.config import DATABASE_URL
@@ -13,7 +13,10 @@ from app.core.logger import logger
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True, echo=False)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
+
+
+class Base(DeclarativeBase):
+    pass
 
 
 class TicketStatus(str, enum.Enum):
@@ -118,7 +121,6 @@ class ChatSession(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
-
 class IslemLog(Base):
     __tablename__ = "islem_logs"
     id          = Column(Integer, primary_key=True, autoincrement=True)
@@ -135,20 +137,12 @@ class IslemLog(Base):
 
 
 class User(Base):
-    """
-    Kullanıcı tablosu.
-    - username: giriş adı (benzersiz)
-    - password_hash: bcrypt ile hashlenmiş şifre (düz metin asla saklanmaz)
-    - rol: "admin" veya "staff" — ileride yetki ayrımı için
-    - aktif: 0 yapılırsa kullanıcı giriş yapamaz (silmeden devre dışı bırakma)
-    - son_giris: son giriş zamanı — audit için
-    """
     __tablename__ = "users"
     id            = Column(Integer, primary_key=True, autoincrement=True)
     username      = Column(String(50), unique=True, nullable=False, index=True)
     password_hash = Column(String(200), nullable=False)
     ad_soyad      = Column(String(100), nullable=True)
-    rol           = Column(String(20), default="staff", nullable=False)  # admin / staff
+    rol           = Column(String(20), default="staff", nullable=False)
     aktif         = Column(Integer, default=1)
     son_giris     = Column(DateTime, nullable=True)
     created_at    = Column(DateTime, server_default=func.now())
@@ -156,79 +150,51 @@ class User(Base):
 
 
 class AuditLog(Base):
-    """
-    Denetim kaydı — kim, ne zaman, ne yaptı.
-    Her intent tetiklendiğinde buraya yazılır.
-    Örnek: bilal | 2026-05-04 15:32 | bekleyen_irsaliyeler | params: {}
-    """
     __tablename__ = "audit_logs"
     id         = Column(Integer, primary_key=True, autoincrement=True)
     user_id    = Column(Integer, ForeignKey("users.id"), nullable=True)
-    username   = Column(String(50), nullable=True)  # join yapmadan hızlı okuma için
+    username   = Column(String(50), nullable=True)
     intent     = Column(String(50), nullable=True)
-    params     = Column(Text, nullable=True)   # JSON
+    params     = Column(Text, nullable=True)
     ip_adresi  = Column(String(50), nullable=True)
     created_at = Column(DateTime, server_default=func.now(), index=True)
     def __repr__(self): return f"<AuditLog user={self.username} intent={self.intent}>"
 
 
 class UsageLog(Base):
-    """
-    Kullanım sayacı — faturalama için.
-    Her ücretli işlemde buraya yazılır.
-    Hata mesajları ucretli=0 olarak kaydedilir.
-    """
     __tablename__ = "usage_logs"
     id               = Column(Integer, primary_key=True, autoincrement=True)
     user_id          = Column(Integer, ForeignKey("users.id"), nullable=True)
     username         = Column(String(50), nullable=True, index=True)
-    profaix_user_id  = Column(String(100), nullable=True, index=True)  # profaix.com UUID
+    profaix_user_id  = Column(String(100), nullable=True, index=True)
     islem_turu       = Column(String(50), nullable=False, index=True)
-    # İşlem tipleri:
-    # FIS_OCR       — fiş yükleme ve OCR işlemi
-    # IRSALIYE      — irsaliye oluşturma
-    # FATURA        — tek fatura kesme
-    # TOPLU_FATURA  — toplu fatura kesme
-    # TAHSILAT      — tahsilat ekleme
-    # CARI          — yeni cari oluşturma
-    # CHAT          — her chat mesajı (sohbet dahil)
-    # SORGU         — fatura/bakiye/hesap özeti sorguları
-    aciklama    = Column(Text, nullable=True)      # kısa özet
-    ucretli     = Column(Integer, default=1)       # 1=ücretli, 0=hata/iptal
+    aciklama    = Column(Text, nullable=True)
+    ucretli     = Column(Integer, default=1)
     created_at  = Column(DateTime, server_default=func.now(), index=True)
     def __repr__(self): return f"<UsageLog user={self.username} islem={self.islem_turu} ucretli={self.ucretli}>"
 
 
 class HataLog(Base):
-    """
-    Sistem hata kaydı.
-    Render logları 7 günde siliniyor — kritik hatalar burada kalıcı.
-    Hangi endpoint, hangi hata, kim tetikledi.
-    """
     __tablename__ = "hata_logs"
     id           = Column(Integer, primary_key=True, autoincrement=True)
-    endpoint     = Column(String(100), nullable=True, index=True)   # /api/upload, /api/fatura-kes
-    hata_tipi    = Column(String(100), nullable=True)               # Exception sınıfı adı
-    hata_mesaji  = Column(Text, nullable=True)                      # str(e)
-    kullanici    = Column(String(100), nullable=True)               # kim tetikledi
+    endpoint     = Column(String(100), nullable=True, index=True)
+    hata_tipi    = Column(String(100), nullable=True)
+    hata_mesaji  = Column(Text, nullable=True)
+    kullanici    = Column(String(100), nullable=True)
     ip_adresi    = Column(String(50), nullable=True)
     created_at   = Column(DateTime, server_default=func.now(), index=True)
     def __repr__(self): return f"<HataLog endpoint={self.endpoint} hata={self.hata_tipi}>"
 
 
 class TahsilatLog(Base):
-    """
-    Tahsilat geçmişi — Paraşüt'ten bağımsız yerel kayıt.
-    Paraşüt'te veri değişse veya silinse bile burada kalır.
-    """
     __tablename__ = "tahsilat_logs"
     id               = Column(Integer, primary_key=True, autoincrement=True)
     cari_adi         = Column(String(200), nullable=False, index=True)
-    cari_id          = Column(String(100), nullable=True)            # Paraşüt contact ID
+    cari_id          = Column(String(100), nullable=True)
     tutar            = Column(BigInteger, nullable=False)
-    tarih            = Column(String(20), nullable=True)             # YYYY-MM-DD
+    tarih            = Column(String(20), nullable=True)
     aciklama         = Column(Text, nullable=True)
-    parasut_odeme_id = Column(String(100), nullable=True)           # Paraşüt payment ID
+    parasut_odeme_id = Column(String(100), nullable=True)
     kullanici        = Column(String(100), nullable=True)
     profaix_user_id  = Column(String(100), nullable=True)
     created_at       = Column(DateTime, server_default=func.now(), index=True)
@@ -236,16 +202,11 @@ class TahsilatLog(Base):
 
 
 class OcrHataLog(Base):
-    """
-    OCR başarısızlık kaydı.
-    Hangi fotoğraf yüklendi, kim yükledi, ne hatası aldı.
-    Fotoğraf binary kaydedilmiyor — sadece metadata.
-    """
     __tablename__ = "ocr_hata_logs"
     id              = Column(Integer, primary_key=True, autoincrement=True)
-    foto_boyut_kb   = Column(Integer, nullable=True)                 # KB cinsinden
+    foto_boyut_kb   = Column(Integer, nullable=True)
     hata_mesaji     = Column(Text, nullable=True)
-    claude_ham_cikti = Column(Text, nullable=True)                  # Claude'un ham yanıtı
+    claude_ham_cikti = Column(Text, nullable=True)
     kullanici       = Column(String(100), nullable=True)
     profaix_user_id = Column(String(100), nullable=True)
     ip_adresi       = Column(String(50), nullable=True)
@@ -254,17 +215,12 @@ class OcrHataLog(Base):
 
 
 class GirisLog(Base):
-    """
-    Giriş denemeleri — başarılı ve başarısız.
-    Birisi kaba kuvvetle şifre deniyorsa burada görürsün.
-    basarili=0 + ayni IP'den çok sayıda kayıt = şüpheli.
-    """
     __tablename__ = "giris_logs"
     id              = Column(Integer, primary_key=True, autoincrement=True)
-    kullanici_adi   = Column(String(100), nullable=True, index=True)  # girilen username/user_id
-    basarili        = Column(Integer, default=0)                      # 1=başarılı, 0=başarısız
-    giris_tipi      = Column(String(20), nullable=True)               # "profaix" veya "local"
-    hata_sebebi     = Column(String(200), nullable=True)              # neden başarısız
+    kullanici_adi   = Column(String(100), nullable=True, index=True)
+    basarili        = Column(Integer, default=0)
+    giris_tipi      = Column(String(20), nullable=True)
+    hata_sebebi     = Column(String(200), nullable=True)
     ip_adresi       = Column(String(50), nullable=True, index=True)
     created_at      = Column(DateTime, server_default=func.now(), index=True)
     def __repr__(self): return f"<GirisLog kullanici={self.kullanici_adi} basarili={self.basarili}>"

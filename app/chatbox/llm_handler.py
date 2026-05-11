@@ -1,15 +1,4 @@
 # llm_handler.py — Profaix Intent Classifier
-#
-# MİMARİ:
-# Haiku SADECE kullanıcının niyetini tespit eder.
-# Veri çekmez, karar almaz, Paraşüt'e istek atmaz.
-# Gerçek işlemler frontend + FastAPI endpoint'lerde.
-#
-# İYİLEŞTİRMELER:
-# 1. Tool use ile JSON zorlama — parse hatası sıfır
-# 2. BackgroundTasks uyumlu session kayıt
-# 3. %80 güven eşiği — alakasız sorularda "none" döner
-# 4. İrsaliye/fatura ayrımı prompt'ta netleştirildi
 
 import json
 import anthropic
@@ -25,22 +14,19 @@ INTENTLER = {
     "bekleyen_irsaliyeler":  "Bekleyen (faturalanmamış) irsaliyeleri listeler",
     "toplu_fatura":          "Toplu fatura kesme akışını başlatır",
     "fatura_sorgula":        "Kesilmiş fatura listesi ve sorgulama ekranını açar",
+    "satis_faturasi_kes":    "Belirli bir cariye yeni satış faturası keser",
     "tahsilat_ekle":         "Tahsilat ekleme formunu açar",
+    "odeme_ekle":            "Tedarikçiye ödeme kaydetme formunu açar",
     "yeni_cari":             "Yeni cari oluşturma formunu açar",
+    "cari_detay":            "Belirli bir carinin iletişim, adres ve vergi bilgilerini gösterir",
     "musteri_bakiyeleri":    "Tüm müşteri bakiyelerini listeler",
     "hesap_ozeti":           "Genel hesap özetini gösterir",
     "gunluk_ozet":           "Günlük özeti gösterir",
     "son_fisler":            "Son yüklenen fişleri listeler",
-    "cari_detay":            "Belirli bir carinin iletişim, adres ve vergi bilgilerini gösterir",
-    "none":                  "Genel soru veya sistem hakkında bilgi"
+    "none":                  "Genel soru veya sistem hakkında bilgi",
 }
 
-INTENT_ENUM = [k for k in INTENTLER.keys()]
-
-# ── İYİLEŞTİRME 1: TOOL USE İLE JSON ZORLAMA ─────────────────────────
-# Model bu tool'u "çağırmak" zorunda — böylece direkt şemayı dolduruyor.
-# json.loads + fence temizleme + fallback döngüsüne gerek kalmıyor.
-# Parse hatası pratikte sıfır.
+INTENT_ENUM = list(INTENTLER.keys())
 
 INTENT_TOOL = [
     {
@@ -60,19 +46,19 @@ INTENT_TOOL = [
                 },
                 "params": {
                     "type": "object",
-                    "description": "Cümleden çıkarılan parametreler. Sadece cümlede geçenler doldurulur, tahmin yapma.",
+                    "description": "Cümlede geçen parametreler. Sadece açıkça belirtilenleri doldur, tahmin yapma.",
                     "properties": {
                         "musteri": {
                             "type": "string",
-                            "description": "Cümlede geçen müşteri/firma adı. Örn: Kroman, UHT, Samsun Makine"
+                            "description": "Müşteri/firma adı. Örn: Kroman, UHT, Samsun Makine"
                         },
                         "tarih_baslangic": {
                             "type": "string",
-                            "description": "Tarih aralığı başlangıcı YYYY-MM-DD formatında. 'geçen hafta', 'bu ay' gibi ifadeleri hesapla."
+                            "description": "Tarih aralığı başlangıcı YYYY-MM-DD. 'geçen hafta', 'bu ay' gibi ifadeleri hesapla."
                         },
                         "tarih_bitis": {
                             "type": "string",
-                            "description": "Tarih aralığı bitişi YYYY-MM-DD formatında."
+                            "description": "Tarih aralığı bitişi YYYY-MM-DD."
                         },
                         "tutar": {
                             "type": "number",
@@ -88,7 +74,6 @@ INTENT_TOOL = [
 
 INTENT_LISTESI = "\n".join([f"- {k}: {v}" for k, v in INTENTLER.items()])
 
-# ── İYİLEŞTİRME 3 + 4: GÜVEN EŞİĞİ + İRSALİYE/FATURA AYRIMI ─────────
 SISTEM_PROMPTU = f"""Sen Profaix'in muhasebe asistanısın — hurda metal sektöründe çalışan, işi bilen, samimi bir yardımcı.
 Kullanıcılar genellikle muhasebeci veya patron. Onlara kısa, sıcak, doğal konuş. Resmi değil ama saçmalama.
 
@@ -98,10 +83,14 @@ Kullanıcının mesajını oku, ne yapmak istediğini anla, intent_tespit fonksi
 MEVCUT İNTENTLER:
 {INTENT_LISTESI}
 
-SEKTÖRE ÖZEL AYRИМ (ÇOK ÖNEMLİ):
+SEKTÖRE ÖZEL AYIRIM (ÇOK ÖNEMLİ):
 - Kantar fişi / tartım / irsaliye / bekleyen / faturalanmamış → bekleyen_irsaliyeler
 - Kesilmiş fatura / ödeme durumu / tahsilat geçmişi / fatura sorgula → fatura_sorgula
-Bu ikisi hurda sektöründe çok karışır, dikkatli ayırt et.
+- Müşteriden para geldi / tahsilat / ödeme aldık → tahsilat_ekle
+- Tedarikçiye para çıktı / ödeme yaptık / biz ödedik → odeme_ekle
+- Fatura kes (belirli bir cariye yeni fatura) → satis_faturasi_kes
+- Cari iletişim / adres / vergi bilgisi / telefon → cari_detay
+Bu ayrımlar hurda sektöründe çok karışır, dikkatli ayırt et.
 
 GÜVENİRLİK KURALI:
 Eğer mesaj listedeki intentlerden hiçbirine %80'den fazla uymuyorsa kesinlikle "none" döndür.
@@ -114,28 +103,28 @@ MESAJ YAZARKEN:
 - Bazen emoji kullan, her cümlede değil
 - Asla "Nasıl yardımcı olabilirim?" deme
 
-"NE YAPABİLİRSİN / NELER YAPABİLİRSİN / DETAY" SORULARINDA:
-Şu özellikleri doğal sohbet diliyle anlat:
-Bekleyen irsaliyeleri gösterip fatura kesme, fatura sorgulama, müşteri bakiyeleri,
-tahsilat ekleme, yeni cari açma, hesap özeti, işlem geçmişi, günlük özet.
+"NE YAPABİLİRSİN" SORULARINDA:
+Bekleyen irsaliyeleri görüp fatura kesme, toplu fatura, fatura sorgulama, tahsilat ve ödeme ekleme,
+müşteri bakiyeleri, hesap özeti, günlük özet, yeni cari açma, cari detay, son fişler.
 Soldaki menüden de erişilebileceğini hatırlat.
 
 ÖRNEKLER (bu tonu yakala):
-"bekleyen irsaliyeler var mi" = intent: bekleyen_irsaliyeler, mesaj: "Hemen bakiyorum"
-"irsaliye" = intent: bekleyen_irsaliyeler, mesaj: "Bekleyenleri getiriyorum."
-"fatura kestik mi" = intent: fatura_sorgula, mesaj: "Fatura ekranini aciyorum."
-"kroman ne kadar borclu" = intent: musteri_bakiyeleri, mesaj: "Bakiyeleri aciyorum."
-"kroman iletişim bilgileri" = intent: cari_detay, mesaj: "Kroman'ın bilgilerini getiriyorum."
-"samsun makinenin adresi" = intent: cari_detay, mesaj: "Cari bilgilerini açıyorum."
-"tahsilat girdim" = intent: tahsilat_ekle, mesaj: "Tahsilat ekranini aciyorum"
-"kroman para odedi" = intent: tahsilat_ekle, mesaj: "Tahsilat ekranini aciyorum"
-"arene odeme yaptim" = intent: odeme_ekle, mesaj: "Odeme ekranini aciyorum"
-"tedarikcie para ciktı" = intent: odeme_ekle, mesaj: "Odeme ekranini aciyorum"
-"uht e fatura kes" = intent: satis_faturasi_kes, mesaj: "Satis faturasi ekranini aciyorum"
-"merhaba" = intent: none, mesaj: "Merhaba! Ne yapiyoruz bugun?"
-"neler yapabilirsin" = intent: none, mesaj: "Bekleyen irsaliyeleri goruyorum, fatura kesiyorum, bakiyelere bakiyorum, tahsilat giriyorum, hesap ozeti cikartiyorum. Kisacasi muhasebe islerinin cogunu hallederim. Ne yapalim?"
-"ne yapabiliyorsun detay" = intent: none, mesaj: "Hurda metal muhasebesinin tam ortasindayim. Irsaliye, fatura, tahsilat, bakiye, gunluk ozet hepsi burada. Soldaki menuye bir bak, istedigine tikla ya da yaz bana."
-"besiktas maci kac kac" = intent: none, mesaj: "Bunu bilemem ama muhasebe konusunda yardimci olabilirim"
+"bekleyen irsaliyeler var mi" → intent: bekleyen_irsaliyeler, mesaj: "Hemen bakıyorum"
+"irsaliye" → intent: bekleyen_irsaliyeler, mesaj: "Bekleyenleri getiriyorum."
+"fatura kestik mi" → intent: fatura_sorgula, mesaj: "Fatura ekranını açıyorum."
+"kroman ne kadar borclu" → intent: musteri_bakiyeleri, mesaj: "Bakiyeleri açıyorum."
+"kroman iletişim bilgileri" → intent: cari_detay, mesaj: "Kroman'ın bilgilerini getiriyorum.", params: {{musteri: "kroman"}}
+"samsun makinenin adresi" → intent: cari_detay, mesaj: "Cari bilgilerini açıyorum.", params: {{musteri: "samsun makine"}}
+"tahsilat girdim" → intent: tahsilat_ekle, mesaj: "Tahsilat ekranını açıyorum."
+"kroman para ödedi" → intent: tahsilat_ekle, mesaj: "Tahsilat ekranını açıyorum.", params: {{musteri: "kroman"}}
+"arene ödeme yaptım" → intent: odeme_ekle, mesaj: "Ödeme ekranını açıyorum.", params: {{musteri: "arene"}}
+"tedarikçiye para çıktı" → intent: odeme_ekle, mesaj: "Ödeme ekranını açıyorum."
+"uht'e fatura kes" → intent: satis_faturasi_kes, mesaj: "Satış faturası ekranını açıyorum.", params: {{musteri: "uht"}}
+"günlük özet" → intent: gunluk_ozet, mesaj: "Bugünün özetine bakıyorum."
+"son fişler" → intent: son_fisler, mesaj: "Son fişleri getiriyorum."
+"merhaba" → intent: none, mesaj: "Merhaba! Ne yapıyoruz bugün?"
+"neler yapabilirsin" → intent: none, mesaj: "Bekleyen irsaliyeleri görüyorum, fatura kesiyorum, bakiyelere bakıyorum, tahsilat ve ödeme giriyorum, hesap özeti çıkartıyorum. Kısacası muhasebenin çoğunu hallederim. Ne yapalım?"
+"beşiktaş maçı kaç kaç" → intent: none, mesaj: "Bunu bilemem ama muhasebe konusunda yardımcı olabilirim."
 """
 
 
@@ -143,38 +132,32 @@ Soldaki menüden de erişilebileceğini hatırlat.
 
 def soru_cevapla(mesaj: str, session_id: str = "") -> dict:
     """
-    Kullanıcı mesajını alır, intent + mesaj döndürür.
+    Kullanıcı mesajını alır, intent + mesaj + params döndürür.
     DB işlemi yok — session kaydı BackgroundTasks ile ayrıca yapılır.
-
-    Return:
-        {"intent": "bekleyen_irsaliyeler", "mesaj": "Hemen bakıyorum 📋"}
     """
     try:
         response = _client.messages.create(
             model=MODEL,
             max_tokens=200,
-            temperature=0.0,  # Intent classification'da tutarlılık şart
+            temperature=0.0,
             system=SISTEM_PROMPTU,
             tools=INTENT_TOOL,
-            tool_choice={"type": "any"},  # Modeli her zaman tool çağırmaya zorla
+            tool_choice={"type": "any"},
             messages=[{"role": "user", "content": mesaj}]
         )
 
-        # Tool use ile gelen cevabı parse et
         for block in response.content:
             if block.type == "tool_use" and block.name == "intent_tespit":
                 intent      = block.input.get("intent", "none")
                 mesaj_cevap = block.input.get("mesaj", "Sol menüden işlem seçebilirsiniz.")
                 params      = block.input.get("params", {}) or {}
 
-                # Geçersiz intent kontrolü (şema bunu zaten engelliyor ama ekstra güvenlik)
                 if intent not in INTENTLER:
                     intent = "none"
 
                 logger.info(f"Intent: {intent} | Params: {params} | Mesaj: {mesaj_cevap[:60]}")
                 return {"intent": intent, "mesaj": mesaj_cevap, "params": params}
 
-        # Tool çağrılmadıysa fallback (olmaması lazım ama güvenlik için)
         logger.warning("Tool çağrılmadı, fallback kullanılıyor")
         return {
             "intent": "none",
@@ -189,9 +172,7 @@ def soru_cevapla(mesaj: str, session_id: str = "") -> dict:
         }
 
 
-# ── İYİLEŞTİRME 2: BACKGROUND TASK UYUMLU SESSION KAYIT ──────────────
-# main.py'de background_tasks.add_task(session_kaydet_bg, ...) ile çağrılır.
-# Kullanıcı cevabı anında alır, DB kaydı arka planda tamamlanır.
+# ── BACKGROUND TASK UYUMLU SESSION KAYIT ──────────────────────────────
 
 def session_kaydet_bg(session_id: str, user_mesaj: str, bot_mesaj: str):
     """BackgroundTask olarak çalışır — kullanıcıyı bekletmez."""
@@ -211,6 +192,7 @@ def session_kaydet_bg(session_id: str, user_mesaj: str, bot_mesaj: str):
         tam_gecmis.append({"role": "user",      "content": user_mesaj, "ts": bugun})
         tam_gecmis.append({"role": "assistant",  "content": bot_mesaj,  "ts": bugun})
 
+        # Son 100 mesajı tut
         if len(tam_gecmis) > 100:
             tam_gecmis = tam_gecmis[-100:]
 
