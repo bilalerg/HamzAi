@@ -4,14 +4,29 @@ from sqlalchemy import (
     create_engine, Column, String, Integer,
     DateTime, Text, Enum, ForeignKey, BigInteger
 )
-# SQLAlchemy 2.0+ uyumlu import — ext.declarative deprecated
 from sqlalchemy.orm import DeclarativeBase, sessionmaker, relationship
 from sqlalchemy.sql import func
 import enum
 from app.core.config import DATABASE_URL
 from app.core.logger import logger
 
-engine = create_engine(DATABASE_URL, pool_pre_ping=True, echo=False)
+# ── BAĞLANTI HAVUZU ────────────────────────────────────────────────────
+# Supabase ücretsiz plan ~20 bağlantı limiti var.
+# pool_size=5     → kalıcı açık bağlantı sayısı
+# max_overflow=10 → yoğunlukta ek açılabilecek bağlantı (toplam max=15)
+# pool_timeout=30 → bağlantı beklerken max süre (saniye)
+# pool_recycle=300 → 5dk'da bir bağlantıyı yenile (Supabase idle timeout koruması)
+# pool_pre_ping   → süresi dolmuş bağlantıyı kullanmadan önce test et
+
+engine = create_engine(
+    DATABASE_URL,
+    pool_size=5,
+    max_overflow=10,
+    pool_timeout=30,
+    pool_recycle=300,
+    pool_pre_ping=True,
+    echo=False
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
@@ -42,31 +57,31 @@ class Vehicle(Base):
     notlar     = Column(Text, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
-    tickets = relationship("WeighTicket", back_populates="vehicle")
+    tickets    = relationship("WeighTicket", back_populates="vehicle")
     def __repr__(self): return f"<Vehicle plaka={self.plaka}>"
 
 
 class WeighTicket(Base):
     __tablename__ = "weigh_tickets"
-    id               = Column(Integer, primary_key=True, autoincrement=True)
-    foto_path        = Column(String(500), nullable=True)
-    plaka            = Column(String(20), nullable=True, index=True)
-    fis_no           = Column(String(50), nullable=True, index=True)
-    agirlik_kg       = Column(Integer, nullable=True)
-    net_tartim_kg    = Column(Integer, nullable=True)
-    fire_kg          = Column(Integer, default=0, nullable=True)
-    malzeme          = Column(String(100), nullable=True)
-    firma            = Column(String(200), nullable=True)
-    malzemeler       = Column(Text, nullable=True)  # JSON: {"BONUS": 7700, "KARMA": 6000}
-    fis_tarihi       = Column(DateTime, nullable=True)
-    ocr_ham_cikti    = Column(Text, nullable=True)
+    id                = Column(Integer, primary_key=True, autoincrement=True)
+    foto_path         = Column(String(500), nullable=True)
+    plaka             = Column(String(20), nullable=True, index=True)
+    fis_no            = Column(String(50), nullable=True, index=True)
+    agirlik_kg        = Column(Integer, nullable=True)
+    net_tartim_kg     = Column(Integer, nullable=True)
+    fire_kg           = Column(Integer, default=0, nullable=True)
+    malzeme           = Column(String(100), nullable=True)
+    firma             = Column(String(200), nullable=True)
+    malzemeler        = Column(Text, nullable=True)
+    fis_tarihi        = Column(DateTime, nullable=True)
+    ocr_ham_cikti     = Column(Text, nullable=True)
     tesseract_agirlik = Column(Integer, nullable=True)
-    ocr_uyusma       = Column(Integer, nullable=True)
-    status           = Column(Enum(TicketStatus), default=TicketStatus.ALINDI, nullable=False)
-    hata_mesaji      = Column(Text, nullable=True)
-    vehicle_id       = Column(Integer, ForeignKey("vehicles.id"), nullable=True)
-    created_at       = Column(DateTime, server_default=func.now())
-    updated_at       = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    ocr_uyusma        = Column(Integer, nullable=True)
+    status            = Column(Enum(TicketStatus), default=TicketStatus.ALINDI, nullable=False)
+    hata_mesaji       = Column(Text, nullable=True)
+    vehicle_id        = Column(Integer, ForeignKey("vehicles.id"), nullable=True)
+    created_at        = Column(DateTime, server_default=func.now())
+    updated_at        = Column(DateTime, server_default=func.now(), onupdate=func.now())
     vehicle = relationship("Vehicle", back_populates="tickets")
     waybill = relationship("Waybill", back_populates="ticket", uselist=False)
     def __repr__(self): return f"<WeighTicket id={self.id} plaka={self.plaka} status={self.status}>"
@@ -74,20 +89,20 @@ class WeighTicket(Base):
 
 class Waybill(Base):
     __tablename__ = "waybills"
-    id                 = Column(Integer, primary_key=True, autoincrement=True)
-    irsaliye_no        = Column(String(50), nullable=True, unique=True)
-    ref_kodu           = Column(String(20), nullable=True, unique=True, index=True)
-    fabrika_mail       = Column(String(200), nullable=True)
-    mail_gonderildi_at = Column(DateTime, nullable=True)
-    teyit_geldi_at     = Column(DateTime, nullable=True)
-    teyit_mail_icerik  = Column(Text, nullable=True)
-    nlp_karar          = Column(String(20), nullable=True)
+    id                  = Column(Integer, primary_key=True, autoincrement=True)
+    irsaliye_no         = Column(String(50), nullable=True, unique=True)
+    ref_kodu            = Column(String(20), nullable=True, unique=True, index=True)
+    fabrika_mail        = Column(String(200), nullable=True)
+    mail_gonderildi_at  = Column(DateTime, nullable=True)
+    teyit_geldi_at      = Column(DateTime, nullable=True)
+    teyit_mail_icerik   = Column(Text, nullable=True)
+    nlp_karar           = Column(String(20), nullable=True)
     parasut_irsaliye_id = Column(String(100), nullable=True)
-    malzemeler_json    = Column(Text, nullable=True)
-    status             = Column(Enum(TicketStatus), default=TicketStatus.IRSALIYE_OLUSTURULUYOR)
-    ticket_id          = Column(Integer, ForeignKey("weigh_tickets.id"))
-    created_at         = Column(DateTime, server_default=func.now())
-    updated_at         = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    malzemeler_json     = Column(Text, nullable=True)
+    status              = Column(Enum(TicketStatus), default=TicketStatus.IRSALIYE_OLUSTURULUYOR)
+    ticket_id           = Column(Integer, ForeignKey("weigh_tickets.id"))
+    created_at          = Column(DateTime, server_default=func.now())
+    updated_at          = Column(DateTime, server_default=func.now(), onupdate=func.now())
     ticket  = relationship("WeighTicket", back_populates="waybill")
     invoice = relationship("Invoice", back_populates="waybill", uselist=False)
     def __repr__(self): return f"<Waybill irsaliye_no={self.irsaliye_no}>"
@@ -95,17 +110,17 @@ class Waybill(Base):
 
 class Invoice(Base):
     __tablename__ = "invoices"
-    id               = Column(Integer, primary_key=True, autoincrement=True)
-    fatura_no        = Column(String(50), nullable=True, unique=True)
-    tutar            = Column(BigInteger, nullable=True)
-    birim_fiyat      = Column(Integer, nullable=True)
-    malzeme_fiyatlari = Column(Text, nullable=True)  # JSON: {"BONUS": 16, "KARMA": 14}
-    parasut_id       = Column(String(100), nullable=True)
-    parasut_response = Column(Text, nullable=True)
-    status           = Column(Enum(TicketStatus), default=TicketStatus.FATURA_KESILIYOR)
-    waybill_id       = Column(Integer, ForeignKey("waybills.id"))
-    created_at       = Column(DateTime, server_default=func.now())
-    updated_at       = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    id                = Column(Integer, primary_key=True, autoincrement=True)
+    fatura_no         = Column(String(50), nullable=True, unique=True)
+    tutar             = Column(BigInteger, nullable=True)
+    birim_fiyat       = Column(Integer, nullable=True)
+    malzeme_fiyatlari = Column(Text, nullable=True)
+    parasut_id        = Column(String(100), nullable=True)
+    parasut_response  = Column(Text, nullable=True)
+    status            = Column(Enum(TicketStatus), default=TicketStatus.FATURA_KESILIYOR)
+    waybill_id        = Column(Integer, ForeignKey("waybills.id"))
+    created_at        = Column(DateTime, server_default=func.now())
+    updated_at        = Column(DateTime, server_default=func.now(), onupdate=func.now())
     waybill = relationship("Waybill", back_populates="invoice")
     def __repr__(self): return f"<Invoice fatura_no={self.fatura_no} tutar={self.tutar}>"
 
@@ -163,27 +178,27 @@ class AuditLog(Base):
 
 class UsageLog(Base):
     __tablename__ = "usage_logs"
-    id               = Column(Integer, primary_key=True, autoincrement=True)
-    user_id          = Column(Integer, ForeignKey("users.id"), nullable=True)
-    username         = Column(String(50), nullable=True, index=True)
-    profaix_user_id  = Column(String(100), nullable=True, index=True)
-    islem_turu       = Column(String(50), nullable=False, index=True)
-    aciklama    = Column(Text, nullable=True)
-    ucretli     = Column(Integer, default=1)
-    created_at  = Column(DateTime, server_default=func.now(), index=True)
-    def __repr__(self): return f"<UsageLog user={self.username} islem={self.islem_turu} ucretli={self.ucretli}>"
+    id              = Column(Integer, primary_key=True, autoincrement=True)
+    user_id         = Column(Integer, ForeignKey("users.id"), nullable=True)
+    username        = Column(String(50), nullable=True, index=True)
+    profaix_user_id = Column(String(100), nullable=True, index=True)
+    islem_turu      = Column(String(50), nullable=False, index=True)
+    aciklama        = Column(Text, nullable=True)
+    ucretli         = Column(Integer, default=1)
+    created_at      = Column(DateTime, server_default=func.now(), index=True)
+    def __repr__(self): return f"<UsageLog user={self.username} islem={self.islem_turu}>"
 
 
 class HataLog(Base):
     __tablename__ = "hata_logs"
-    id           = Column(Integer, primary_key=True, autoincrement=True)
-    endpoint     = Column(String(100), nullable=True, index=True)
-    hata_tipi    = Column(String(100), nullable=True)
-    hata_mesaji  = Column(Text, nullable=True)
-    kullanici    = Column(String(100), nullable=True)
-    ip_adresi    = Column(String(50), nullable=True)
-    created_at   = Column(DateTime, server_default=func.now(), index=True)
-    def __repr__(self): return f"<HataLog endpoint={self.endpoint} hata={self.hata_tipi}>"
+    id          = Column(Integer, primary_key=True, autoincrement=True)
+    endpoint    = Column(String(100), nullable=True, index=True)
+    hata_tipi   = Column(String(100), nullable=True)
+    hata_mesaji = Column(Text, nullable=True)
+    kullanici   = Column(String(100), nullable=True)
+    ip_adresi   = Column(String(50), nullable=True)
+    created_at  = Column(DateTime, server_default=func.now(), index=True)
+    def __repr__(self): return f"<HataLog endpoint={self.endpoint}>"
 
 
 class TahsilatLog(Base):
@@ -203,26 +218,26 @@ class TahsilatLog(Base):
 
 class OcrHataLog(Base):
     __tablename__ = "ocr_hata_logs"
-    id              = Column(Integer, primary_key=True, autoincrement=True)
-    foto_boyut_kb   = Column(Integer, nullable=True)
-    hata_mesaji     = Column(Text, nullable=True)
+    id               = Column(Integer, primary_key=True, autoincrement=True)
+    foto_boyut_kb    = Column(Integer, nullable=True)
+    hata_mesaji      = Column(Text, nullable=True)
     claude_ham_cikti = Column(Text, nullable=True)
-    kullanici       = Column(String(100), nullable=True)
-    profaix_user_id = Column(String(100), nullable=True)
-    ip_adresi       = Column(String(50), nullable=True)
-    created_at      = Column(DateTime, server_default=func.now(), index=True)
-    def __repr__(self): return f"<OcrHataLog kullanici={self.kullanici} hata={self.hata_mesaji[:40] if self.hata_mesaji else '-'}>"
+    kullanici        = Column(String(100), nullable=True)
+    profaix_user_id  = Column(String(100), nullable=True)
+    ip_adresi        = Column(String(50), nullable=True)
+    created_at       = Column(DateTime, server_default=func.now(), index=True)
+    def __repr__(self): return f"<OcrHataLog kullanici={self.kullanici}>"
 
 
 class GirisLog(Base):
     __tablename__ = "giris_logs"
-    id              = Column(Integer, primary_key=True, autoincrement=True)
-    kullanici_adi   = Column(String(100), nullable=True, index=True)
-    basarili        = Column(Integer, default=0)
-    giris_tipi      = Column(String(20), nullable=True)
-    hata_sebebi     = Column(String(200), nullable=True)
-    ip_adresi       = Column(String(50), nullable=True, index=True)
-    created_at      = Column(DateTime, server_default=func.now(), index=True)
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    kullanici_adi = Column(String(100), nullable=True, index=True)
+    basarili      = Column(Integer, default=0)
+    giris_tipi    = Column(String(20), nullable=True)
+    hata_sebebi   = Column(String(200), nullable=True)
+    ip_adresi     = Column(String(50), nullable=True, index=True)
+    created_at    = Column(DateTime, server_default=func.now(), index=True)
     def __repr__(self): return f"<GirisLog kullanici={self.kullanici_adi} basarili={self.basarili}>"
 
 
