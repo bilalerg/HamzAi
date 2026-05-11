@@ -449,10 +449,15 @@ async def cariler_getir(request: Request, background_tasks: BackgroundTasks, ref
 
 @app.get("/api/hesap-ozeti")
 async def hesap_ozeti(request: Request, background_tasks: BackgroundTasks):
+    """
+    Genel hesap özeti veya tek cari bakiyesi.
+    ?cari=FirmaAdı ile tek cari sorgulanabilir.
+    Dönem filtresi yoktur — bakiye anlık Paraşüt değeridir.
+    """
     aktif_user = mevcut_kullanici(request)
     if aktif_user:
         background_tasks.add_task(_usage_kaydet, aktif_user["id"], aktif_user["username"],
-                                   "SORGU", f"hesap_ozeti", 1, aktif_user.get("profaix_user_id"))
+                                   "SORGU", "hesap_ozeti", 1, aktif_user.get("profaix_user_id"))
     try:
         from app.parasut.client import async_hesap_ozeti_getir, async_cari_id_bul, async_cari_detay_getir
         cari_adi = request.query_params.get("cari")
@@ -461,12 +466,13 @@ async def hesap_ozeti(request: Request, background_tasks: BackgroundTasks):
             if not cari_id:
                 return JSONResponse({"hata": f"Cari bulunamadı: {cari_adi}"})
             detay = await async_cari_detay_getir(cari_id)
+            bakiye = detay.get("bakiye", 0)
             return JSONResponse({
                 "toplam_cari":   1,
-                "toplam_alacak": detay.get("bakiye", 0) if detay.get("bakiye", 0) > 0 else 0,
-                "toplam_borclu": abs(detay.get("bakiye", 0)) if detay.get("bakiye", 0) < 0 else 0,
+                "toplam_alacak": bakiye if bakiye > 0 else 0,
+                "toplam_borclu": abs(bakiye) if bakiye < 0 else 0,
                 "cari_adi":      detay.get("ad"),
-                "bakiye":        detay.get("bakiye", 0),
+                "bakiye":        bakiye,
             })
         return JSONResponse(await async_hesap_ozeti_getir())
     except Exception as e:
@@ -476,6 +482,18 @@ async def hesap_ozeti(request: Request, background_tasks: BackgroundTasks):
 
 @app.get("/api/islem-gecmisi/{cari_adi}")
 async def islem_gecmisi(cari_adi: str, request: Request, background_tasks: BackgroundTasks):
+    """
+    Carinin işlem geçmişi — tarih filtreli ve sayfalı.
+
+    Query params:
+        baslangic : YYYY-MM-DD
+        bitis     : YYYY-MM-DD
+        sayfa     : int (default 1)
+        limit     : int (default 25, max 25)
+
+    Dönüş:
+        {bakiye, islemler: [...], sayfa, sonraki_sayfa_var}
+    """
     aktif_user = mevcut_kullanici(request)
     if aktif_user:
         background_tasks.add_task(_usage_kaydet, aktif_user["id"], aktif_user["username"],
@@ -487,10 +505,32 @@ async def islem_gecmisi(cari_adi: str, request: Request, background_tasks: Backg
         cari_adi  = unquote(cari_adi)
         baslangic = request.query_params.get("baslangic")
         bitis     = request.query_params.get("bitis")
+        sayfa     = int(request.query_params.get("sayfa", 1))
+        limit     = min(int(request.query_params.get("limit", 25)), 25)
         cari_id   = await async_cari_id_bul(cari_adi)
         if not cari_id:
             return JSONResponse({"hata": f"Cari bulunamadı: {cari_adi}"})
-        return JSONResponse(await async_islem_gecmisi_getir(cari_id, baslangic, bitis))
+
+        sonuc    = await async_islem_gecmisi_getir(cari_id, baslangic, bitis)
+        islemler = sonuc.get("islemler", [])
+
+        # Client-side sayfalama — islem_gecmisi_getir tüm işlemleri çeker,
+        # burada dilime alıyoruz
+        baslangic_idx    = (sayfa - 1) * limit
+        bitis_idx        = baslangic_idx + limit
+        sayfa_islemleri  = islemler[baslangic_idx:bitis_idx]
+        sonraki_sayfa_var = len(islemler) > bitis_idx
+
+        return JSONResponse({
+            "cari_id":           sonuc.get("cari_id"),
+            "cari_adi":          sonuc.get("cari_adi"),
+            "bakiye":            sonuc.get("bakiye"),
+            "islemler":          sayfa_islemleri,
+            "toplam_islem":      len(islemler),
+            "sayfa":             sayfa,
+            "limit":             limit,
+            "sonraki_sayfa_var": sonraki_sayfa_var,
+        })
     except Exception as e:
         logger.error(f"İşlem geçmişi hatası: {e}")
         return JSONResponse({"hata": str(e)})
@@ -627,6 +667,18 @@ async def cari_olustur_endpoint(request: Request, background_tasks: BackgroundTa
 
 @app.get("/api/bekleyen-irsaliyeler")
 async def bekleyen_irsaliyeler(request: Request, background_tasks: BackgroundTasks):
+    """
+    Bekleyen irsaliyeleri tarih filtreli ve sayfalı getirir.
+
+    Query params:
+        baslangic : YYYY-MM-DD  (default: bu ayın 1'i)
+        bitis     : YYYY-MM-DD  (default: bugün)
+        sayfa     : int (default 1)
+        sayfa_basi: int (default 25, max 25)
+
+    Dönüş:
+        {irsaliyeler: [...], toplam, sayfa, sonraki_sayfa_var}
+    """
     aktif_user = mevcut_kullanici(request)
     if aktif_user:
         background_tasks.add_task(_usage_kaydet, aktif_user["id"], aktif_user["username"],
@@ -635,18 +687,27 @@ async def bekleyen_irsaliyeler(request: Request, background_tasks: BackgroundTas
     try:
         from app.parasut.client import async_tum_bekleyen_irsaliyeleri_getir, async_cari_listesi_getir
         from app.core.database import Waybill, TicketStatus
+        from datetime import date
+
+        # Tarih filtresi — default bu ayın başından bugüne
+        bugun     = date.today()
+        baslangic = request.query_params.get("baslangic", bugun.replace(day=1).strftime("%Y-%m-%d"))
+        bitis     = request.query_params.get("bitis", bugun.strftime("%Y-%m-%d"))
+        sayfa     = int(request.query_params.get("sayfa", 1))
+        sayfa_basi = min(int(request.query_params.get("sayfa_basi", 25)), 25)
 
         tum_waybiller  = db.query(Waybill).all()
         waybill_map    = {str(w.parasut_irsaliye_id).strip(): w for w in tum_waybiller if w.parasut_irsaliye_id}
         tamamlanan_ids = {str(w.parasut_irsaliye_id).strip() for w in tum_waybiller
                           if w.status == TicketStatus.TAMAMLANDI and w.parasut_irsaliye_id}
 
-        # Her iki Parasut çağrısı async — event loop bloklanmıyor
-        cariler, gruplu = await _json_gather(
+        cariler, api_sonuc = await _json_gather(
             async_cari_listesi_getir(),
-            async_tum_bekleyen_irsaliyeleri_getir()
+            async_tum_bekleyen_irsaliyeleri_getir(baslangic, bitis, sayfa, sayfa_basi)
         )
-        cari_id_to_ad = {c["id"]: c["ad"] for c in cariler}
+        cari_id_to_ad     = {c["id"]: c["ad"] for c in cariler}
+        gruplu            = api_sonuc.get("irsaliyeler", {})
+        sonraki_sayfa_var = api_sonuc.get("sonraki_sayfa_var", False)
 
         sonuc = []
         for contact_id, irsaliyeler in gruplu.items():
@@ -677,7 +738,14 @@ async def bekleyen_irsaliyeler(request: Request, background_tasks: BackgroundTas
                                "tarih": irs.get("tarih", "-"), "toplam_kg": toplam_kg,
                                "kalemler": kalemler, "aciklama": irs.get("aciklama", "-")})
 
-        return JSONResponse({"irsaliyeler": sonuc, "toplam": len(sonuc)})
+        return JSONResponse({
+            "irsaliyeler":       sonuc,
+            "toplam":            len(sonuc),
+            "sayfa":             sayfa,
+            "baslangic":         baslangic,
+            "bitis":             bitis,
+            "sonraki_sayfa_var": sonraki_sayfa_var,
+        })
     except Exception as e:
         logger.error(f"Bekleyen irsaliye hatası: {e}")
         return JSONResponse({"irsaliyeler": [], "hata": str(e)})
@@ -756,6 +824,19 @@ async def fatura_detay_endpoint(fatura_id: str, request: Request, background_tas
 
 @app.get("/api/cari-faturalar/{cari_adi}")
 async def cari_faturalar_endpoint(cari_adi: str, request: Request, background_tasks: BackgroundTasks):
+    """
+    Carinin faturalarını filtreli ve sayfalı getirir.
+
+    Query params:
+        baslangic : YYYY-MM-DD
+        bitis     : YYYY-MM-DD
+        sayfa     : int (default 1)
+        limit     : int (default 25, max 25)
+        durum     : "paid" | "not_paid" | "overdue" | boş=hepsi
+
+    Dönüş:
+        {faturalar, toplam, toplam_kayit, sayfa, sonraki_sayfa_var}
+    """
     aktif_user = mevcut_kullanici(request)
     if aktif_user:
         background_tasks.add_task(_usage_kaydet, aktif_user["id"], aktif_user["username"],
@@ -763,11 +844,20 @@ async def cari_faturalar_endpoint(cari_adi: str, request: Request, background_ta
                                    aktif_user.get("profaix_user_id"))
     try:
         from app.parasut.client import async_cari_id_bul, async_cari_faturalari_getir
-        cari_id   = await async_cari_id_bul(cari_adi)
+        from urllib.parse import unquote
+        cari_adi  = unquote(cari_adi)
+        baslangic = request.query_params.get("baslangic")
+        bitis     = request.query_params.get("bitis")
+        sayfa     = int(request.query_params.get("sayfa", 1))
+        limit     = min(int(request.query_params.get("limit", 25)), 25)
+        durum     = request.query_params.get("durum")
+
+        cari_id = await async_cari_id_bul(cari_adi)
         if not cari_id:
             return JSONResponse({"faturalar": [], "hata": "Cari bulunamadı"})
-        faturalar = await async_cari_faturalari_getir(cari_id, limit=25)
-        return JSONResponse({"faturalar": faturalar, "toplam": len(faturalar)})
+
+        sonuc = await async_cari_faturalari_getir(cari_id, limit, sayfa, baslangic, bitis, durum)
+        return JSONResponse(sonuc)
     except Exception as e:
         return JSONResponse({"faturalar": [], "hata": str(e)})
 
