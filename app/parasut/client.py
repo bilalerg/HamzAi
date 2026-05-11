@@ -306,7 +306,7 @@ def cari_faturalari_getir(cari_id: str, limit: int = 10) -> list:
         sonuc = parasut_get(
             f"/{PARASUT_COMPANY_ID}/purchase_bills",
             params={
-                "filter[contact_id]": cari_id,
+                "filter[supplier_id]": cari_id,
                 "page[size]": limit,
                 "sort": "-issue_date",
                 "include": "contact"
@@ -507,7 +507,7 @@ def islem_gecmisi_getir(cari_id: str, baslangic: str = None, bitis: str = None) 
             fatura_sonuc = parasut_get(
                 f"/{PARASUT_COMPANY_ID}/purchase_bills",
                 params={
-                    "filter[contact_id]": cari_id,
+                    "filter[supplier_id]": cari_id,
                     "include": "payments",
                     "page[size]": 25,
                     "page[number]": page,
@@ -717,7 +717,7 @@ def odeme_ekle(cari_adi: str, tutar: float, aciklama: str = None, tarih: str = N
         sonuc = parasut_get(
             f"/{PARASUT_COMPANY_ID}/purchase_bills",
             params={
-                "filter[contact_id]": cari_id,
+                "filter[supplier_id]": cari_id,
                 "filter[payment_status]": "overdue,not_paid",
                 "page[size]": 25,
                 "sort": "issue_date"

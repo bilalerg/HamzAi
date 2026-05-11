@@ -1078,8 +1078,11 @@ async def bekleyen_irsaliyeler(request: Request, background_tasks: BackgroundTas
         # Tek API isteğiyle tüm irsaliyeler
         gruplu = tum_bekleyen_irsaliyeleri_getir(sayfa_no=sayfa)
 
+        meta = gruplu.pop("_meta", {})
         sonuc = []
         for contact_id, irsaliyeler in gruplu.items():
+            if contact_id == "_meta":
+                continue
             cari_adi = cari_id_to_ad.get(contact_id, irsaliyeler[0].get("cari_adi", "-") if irsaliyeler else "-")
             for irs in irsaliyeler:
                 if str(irs["id"]).strip() in tamamlanan_ids:
