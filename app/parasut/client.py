@@ -309,7 +309,7 @@ def cari_faturalari_getir(cari_id: str, limit: int = 10) -> list:
                 "filter[supplier_id]": cari_id,
                 "page[size]": limit,
                 "sort": "-issue_date",
-                "include": "contact"
+                "include": "supplier"
             }
         )
         faturalar = []
