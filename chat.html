@@ -1095,15 +1095,16 @@
       fn: () => tahsilatFormGoster(),
       kelimeler: [
         ['tahsilat ekle'], ['ödeme aldım'], ['odeme aldim'], ['para aldım'], ['para aldim'],
-        ['tahsilat'], ['para geldi'], ['tahsilat yap'], ['tahsil ettim'],
-        ['para çek'], ['para cek'], ['yeni tahsilat'], ['ödeme al'],
-        ['odeme al'], ['para tahsil'], ['tahsilat girişi'], ['tahsilat girisi']
+        ['para geldi'], ['tahsilat yap'], ['tahsil ettim'],
+        ['tahsilat'], ['tahsilat ekle']
       ]
     },
     {
-      fn: () => odemeFormGoster(), // Ödeme ekle fonksiyonunu buraya bağlamalısın
+      fn: () => odemeFormGoster(),
       kelimeler: [
-        ['ödeme ekle'], ['odeme ekle'], ['tedarikçiye ödeme'], ['tedarikciye odeme'], ['para çıktı'], ['para cikti']
+        ['ödeme ekle'], ['odeme ekle'], ['tedarikçiye ödeme'], ['tedarikciye odeme'], ['para çıktı'], ['para cikti'],
+        ['para çek'], ['para cek'], ['yeni tahsilat'],
+        ['odeme al'], ['para tahsil'], ['tedarikci odeme']
       ]
     },
     {
@@ -2378,36 +2379,62 @@
 
   // ── FATURA LİSTESİ & DETAY ───────────────────────────────────────
 
+  // ── FATURA LİSTESİ — iki sekme: Alım (purchase_bills) + Satış (sales_invoices) ──
   async function faturaListesiGoster(onMusteri) {
     showTyping();
     let cariler = [];
-    try {
-      cariler = await carileriGetir(false);
-    } catch {}
+    try { cariler = await carileriGetir(false); } catch {}
     removeTyping();
 
-    // Params'tan müşteri geldi ve listede tam eşleşme var → direkt faturalarını aç
-    if (onMusteri) {
-      const filtre = onMusteri.toLowerCase();
-      const eslesen = cariler.find(function(c) { return c.ad.toLowerCase().includes(filtre); });
-      if (eslesen) {
-        cariFaturalariniGetir(eslesen.ad, null);
-        return;
-      }
-    }
-
     const wrap = document.createElement('div');
+
+    // Başlık
     const baslik = document.createElement('div');
     baslik.style.cssText = 'font-size:13px;font-weight:500;color:var(--text);margin-bottom:10px;';
     baslik.textContent = '🔍 Fatura Sorgula';
     wrap.appendChild(baslik);
-    const faturaInfo = document.createElement('div');
-    faturaInfo.style.cssText = 'font-size:12px;color:var(--muted);margin-bottom:10px;padding:8px 12px;background:var(--accent-lt);border-radius:8px;border-left:3px solid var(--accent);';
-    faturaInfo.textContent = 'Faturalarını görüntülemek istediğiniz müşteriyi seçin.';
-    wrap.appendChild(faturaInfo);
 
-    const { wrap: ddWrap } = cariSecimDropdown(cariler, function(c) {
-      cariFaturalariniGetir(c.ad, wrap);
+    // ── SEKME BUTONLARI ──
+    const sekmeWrap = document.createElement('div');
+    sekmeWrap.style.cssText = 'display:flex;gap:6px;margin-bottom:12px;';
+
+    const alimBtn = document.createElement('button');
+    alimBtn.style.cssText = 'flex:1;padding:8px 12px;border-radius:8px;font-size:12px;font-family:Inter,sans-serif;cursor:pointer;transition:all 0.15s;border:1.5px solid var(--accent);background:var(--accent);color:#fff;font-weight:500;';
+    alimBtn.textContent = '📥 Alım Faturaları';
+
+    const satisBtn = document.createElement('button');
+    satisBtn.style.cssText = 'flex:1;padding:8px 12px;border-radius:8px;font-size:12px;font-family:Inter,sans-serif;cursor:pointer;transition:all 0.15s;border:1.5px solid var(--border2);background:transparent;color:var(--text2);font-weight:400;';
+    satisBtn.textContent = '📤 Satış Faturaları';
+
+    let aktifTip = 'alim'; // 'alim' | 'satis'
+
+    alimBtn.onclick = function() {
+      aktifTip = 'alim';
+      alimBtn.style.cssText = 'flex:1;padding:8px 12px;border-radius:8px;font-size:12px;font-family:Inter,sans-serif;cursor:pointer;transition:all 0.15s;border:1.5px solid var(--accent);background:var(--accent);color:#fff;font-weight:500;';
+      satisBtn.style.cssText = 'flex:1;padding:8px 12px;border-radius:8px;font-size:12px;font-family:Inter,sans-serif;cursor:pointer;transition:all 0.15s;border:1.5px solid var(--border2);background:transparent;color:var(--text2);font-weight:400;';
+      bilgiEl.textContent = 'Alım faturaları: Giderler — AREN, Altar gibi tedarikçilerden alınan hurdalar.';
+    };
+    satisBtn.onclick = function() {
+      aktifTip = 'satis';
+      satisBtn.style.cssText = 'flex:1;padding:8px 12px;border-radius:8px;font-size:12px;font-family:Inter,sans-serif;cursor:pointer;transition:all 0.15s;border:1.5px solid var(--accent);background:var(--accent);color:#fff;font-weight:500;';
+      alimBtn.style.cssText = 'flex:1;padding:8px 12px;border-radius:8px;font-size:12px;font-family:Inter,sans-serif;cursor:pointer;transition:all 0.15s;border:1.5px solid var(--border2);background:transparent;color:var(--text2);font-weight:400;';
+      bilgiEl.textContent = 'Satış faturaları: Gelirler — UHT, Kroman, İçdaş gibi müşterilere kesilen faturalar.';
+    };
+
+    sekmeWrap.appendChild(alimBtn);
+    sekmeWrap.appendChild(satisBtn);
+    wrap.appendChild(sekmeWrap);
+
+    // Bilgi satırı
+    const bilgiEl = document.createElement('div');
+    bilgiEl.style.cssText = 'font-size:12px;color:var(--muted);margin-bottom:10px;padding:8px 12px;background:var(--accent-lt);border-radius:8px;border-left:3px solid var(--accent);';
+    bilgiEl.textContent = 'Alım faturaları: Giderler — AREN, Altar gibi tedarikçilerden alınan hurdalar.';
+    wrap.appendChild(bilgiEl);
+
+    // Cari seçim dropdown
+    const { wrap: ddWrap, inp: ddInp } = cariSecimDropdown(cariler, function(c) {
+      ddWrap.querySelector('input').disabled = true;
+      cariFaturalariniGetir(c.ad, wrap, aktifTip);
     }, 'Cari adı yazın...');
     wrap.appendChild(ddWrap);
 
@@ -2420,33 +2447,56 @@
 
     addMessage('', 'bot', wrap);
 
-    // Params'tan müşteri adı geldiyse arama kutusuna yaz
+    // Params'tan müşteri adı geldiyse
     if (onMusteri) {
-      setTimeout(function() {
-        const inp = ddWrap.querySelector('input');
-        if (inp) { inp.value = onMusteri; inp.dispatchEvent(new Event('input')); }
-      }, 150);
+      const filtre = onMusteri.toLowerCase();
+      const eslesen = cariler.find(function(c) { return c.ad.toLowerCase().includes(filtre); });
+      if (eslesen) {
+        setTimeout(function() {
+          ddInp.disabled = true;
+          cariFaturalariniGetir(eslesen.ad, wrap, aktifTip);
+        }, 200);
+      } else {
+        setTimeout(function() {
+          ddInp.value = onMusteri;
+          ddInp.dispatchEvent(new Event('input'));
+        }, 150);
+      }
     } else {
-      setTimeout(function() { ddWrap.querySelector('input').focus(); }, 100);
+      setTimeout(function() { ddInp.focus(); }, 100);
     }
   }
 
-  async function cariFaturalariniGetir(cariAdi, wrapParent) {
+  async function cariFaturalariniGetir(cariAdi, wrapParent, tip) {
+    tip = tip || 'alim';
     showTyping();
     try {
-      const res = await fetch('/api/cari-faturalar/' + encodeURIComponent(cariAdi));
+      const url = '/api/cari-faturalar/' + encodeURIComponent(cariAdi) + '?tip=' + tip;
+      const res = await fetch(url);
       const data = await res.json();
       removeTyping();
 
+      const tipEtiket = tip === 'satis' ? '📤 Satış' : '📥 Alım';
+      const tipRenk   = tip === 'satis' ? '#2563eb' : 'var(--accent)';
+
       if (!data.faturalar || data.faturalar.length === 0) {
-        addMessage(cariAdi + ' için fatura bulunamadı.', 'bot');
+        addMessage(cariAdi + ' için ' + (tip === 'satis' ? 'satış' : 'alım') + ' faturası bulunamadı.', 'bot');
         return;
       }
 
       const listWrap = document.createElement('div');
+
+      // Başlık + tip etiketi
       const listBaslik = document.createElement('div');
-      listBaslik.style.cssText = 'font-size:12px;color:var(--muted);margin-bottom:8px;';
-      listBaslik.textContent = cariAdi + ' — ' + data.faturalar.length + ' fatura (detay için tıklayın):';
+      listBaslik.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;';
+      const baslikSol = document.createElement('span');
+      baslikSol.style.cssText = 'font-size:12px;color:var(--muted);';
+      baslikSol.textContent = cariAdi + ' — ' + data.faturalar.length + ' fatura:';
+      const tipPill = document.createElement('span');
+      tipPill.style.cssText = 'font-size:11px;font-weight:600;padding:3px 8px;border-radius:100px;background:' + tipRenk + ';color:#fff;';
+      tipPill.textContent = tipEtiket;
+      listBaslik.appendChild(baslikSol);
+      listBaslik.appendChild(tipPill);
       listWrap.appendChild(listBaslik);
 
       data.faturalar.forEach(function(f) {
@@ -2481,12 +2531,12 @@
           btn.style.opacity = '1';
           btn.style.background = 'var(--accent-lt)';
           btn.disabled = false;
-          faturaDetayGoster(f.id, f.aciklama);
+          faturaDetayGoster(f.id, f.aciklama, tip);
         };
         listWrap.appendChild(btn);
       });
 
-      addMessage('📄 ' + cariAdi + ' faturaları:', 'bot', listWrap);
+      addMessage(tipEtiket + ' Faturaları — ' + cariAdi + ':', 'bot', listWrap);
     } catch(e) {
       removeTyping();
       addMessage('❌ Faturalar yüklenemedi: ' + e.message, 'bot');
@@ -3206,4 +3256,4 @@
   window.onload = function() { inputEl.focus(); };
 </script>
 </body>
-</html>  nerde hata
+</html>

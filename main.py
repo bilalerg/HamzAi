@@ -1235,18 +1235,26 @@ async def cari_detay_endpoint(cari_adi: str, request: Request, background_tasks:
         return JSONResponse({"hata": str(e)})
 
 @app.get("/api/cari-faturalar/{cari_adi}")
-async def cari_faturalar_endpoint(cari_adi: str, request: Request, background_tasks: BackgroundTasks):
+async def cari_faturalar_endpoint(cari_adi: str, request: Request, background_tasks: BackgroundTasks, tip: str = "alim"):
+    """
+    tip=alim  → purchase_bills (Giderler — tedarikçiden hurda alımı)
+    tip=satis → sales_invoices (Satışlar — müşteriye hurda satışı)
+    """
     aktif_user_cf = mevcut_kullanici(request)
     if aktif_user_cf:
-        background_tasks.add_task(_usage_kaydet, aktif_user_cf["id"], aktif_user_cf["username"], "SORGU", f"fatura_listesi | cari={cari_adi}", 1, aktif_user_cf.get("profaix_user_id"))
+        background_tasks.add_task(_usage_kaydet, aktif_user_cf["id"], aktif_user_cf["username"], "SORGU", f"fatura_listesi | cari={cari_adi} | tip={tip}", 1, aktif_user_cf.get("profaix_user_id"))
     try:
-        from app.parasut.client import cari_id_bul, cari_faturalari_getir
+        from app.parasut.client import cari_id_bul, cari_faturalari_getir, cari_satis_faturalari_getir
         cari_id = cari_id_bul(cari_adi)
         if not cari_id:
             return JSONResponse({"faturalar": [], "hata": "Cari bulunamadı"})
-        faturalar = cari_faturalari_getir(cari_id, limit=25)
-        return JSONResponse({"faturalar": faturalar, "toplam": len(faturalar)})
+        if tip == "satis":
+            faturalar = cari_satis_faturalari_getir(cari_id, limit=25)
+        else:
+            faturalar = cari_faturalari_getir(cari_id, limit=25)
+        return JSONResponse({"faturalar": faturalar, "toplam": len(faturalar), "tip": tip})
     except Exception as e:
+        logger.error(f"Cari fatura hatasi: {e}")
         return JSONResponse({"faturalar": [], "hata": str(e)})
 
 

@@ -301,6 +301,52 @@ def cari_detay_getir(cari_id: str) -> dict:
         return {}
 
 
+def cari_satis_faturalari_getir(cari_id: str, limit: int = 25) -> list:
+    """Müşteriye kesilen satış faturalarını getirir (sales_invoices)."""
+    try:
+        sonuc = parasut_get(
+            f"/{PARASUT_COMPANY_ID}/sales_invoices",
+            params={
+                "filter[contact_id]": cari_id,
+                "page[size]": limit,
+                "sort": "-issue_date",
+            }
+        )
+        faturalar = []
+        for f in sonuc.get("data", []):
+            attr = f.get("attributes", {})
+            try:
+                kalan = float(attr.get("remaining") or 0)
+            except (ValueError, TypeError):
+                kalan = 0.0
+            try:
+                tutar = float(attr.get("gross_total") or attr.get("net_total") or 0)
+            except (ValueError, TypeError):
+                tutar = 0.0
+            durum = attr.get("payment_status", "")
+            if durum == "paid":
+                durum_str = "paid"
+            elif durum in ("overdue",):
+                durum_str = "overdue"
+            else:
+                durum_str = "pending"
+            faturalar.append({
+                "id": f["id"],
+                "tarih": attr.get("issue_date", "-"),
+                "vade": attr.get("due_date", "-"),
+                "tutar": tutar,
+                "kalan": kalan,
+                "durum": durum_str,
+                "aciklama": attr.get("description", "-"),
+                "tip": "satis"
+            })
+        logger.info(f"Satış faturaları: {len(faturalar)} adet — cari_id={cari_id}")
+        return faturalar
+    except Exception as e:
+        logger.error(f"Satış fatura listesi hatasi: {e}")
+        return []
+
+
 def cari_faturalari_getir(cari_id: str, limit: int = 10) -> list:
     try:
         sonuc = parasut_get(
