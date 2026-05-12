@@ -756,10 +756,14 @@
         removeWelcome();
         
         for (const msg of data.gecmis) {
+          // Sadece kullanıcı mesajlarını yükle, otomatik bot mesajlarını atla
           if (msg.role === 'user') {
             addMessage(msg.content, 'user');
           } else if (msg.role === 'assistant') {
-            addMessage(msg.content, 'bot');
+            // Sistem tarafından otomatik eklenen "işlem tamamlandı" mesajlarını kontrol et
+            if (!msg.content.includes('işlemi tamamlandı') && !msg.content.includes('✅')) {
+              addMessage(msg.content, 'bot');
+            }
           }
         }
       }
