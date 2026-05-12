@@ -692,6 +692,10 @@
     <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
     Panele Dön
   </a>
+  <button id="clearChatBtn" onclick="sohbetiSil()" title="Sohbeti Sil" style="margin-left:8px;display:flex;align-items:center;gap:5px;padding:5px 11px;background:transparent;border:1.5px solid var(--border2);border-radius:100px;font-size:12px;font-weight:500;color:var(--text2);cursor:pointer;transition:all 0.15s;" onmouseover="this.style.background='rgba(220,38,38,0.08)';this.style.color='#dc2626';this.style.borderColor='rgba(220,38,38,0.35)';" onmouseout="this.style.background='transparent';this.style.color='var(--text2)';this.style.borderColor='var(--border2)';">
+    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+    Sohbeti Sil
+  </button>
   <div id="userPill" style="margin-left:8px;display:flex;align-items:center;">
     <span id="userAdSoyad" style="font-size:12px;font-weight:500;color:var(--text2);"></span>
   </div>
@@ -729,6 +733,25 @@
       await fetch('/api/logout', { method: 'POST' });
     } catch {}
     window.location.href = '/login';
+  }
+
+  async function sohbetiSil() {
+    if (!confirm('Tüm sohbet geçmişi silinecek. Emin misiniz?')) return;
+    if (SESSION_ID) {
+      try {
+        await fetch('/api/session/' + encodeURIComponent(SESSION_ID), { method: 'DELETE' });
+      } catch {}
+    }
+    messagesEl.innerHTML = '';
+    messagesEl.classList.remove('chat-started');
+    _welcomeRemoved = false;
+    _aktifPanel = null;
+    var ad = (document.getElementById('welcomeAd') || {}).textContent || '';
+    var w = document.createElement('div');
+    w.className = 'welcome';
+    w.id = 'welcome';
+    w.innerHTML = '<h2>İyi günler, <em id="welcomeAd">' + safeHtml(ad) + '</em></h2><p>Muhasebe işlemleri için buradayım. Ne yapalım?</p>';
+    messagesEl.appendChild(w);
   }
   const messagesEl = document.getElementById('messages');
   const inputEl    = document.getElementById('chatInput');

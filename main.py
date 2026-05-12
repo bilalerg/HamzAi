@@ -386,6 +386,30 @@ async def session_gecmis_append(request: Request, background_tasks: BackgroundTa
     return JSONResponse({"ok": True})
 
 
+@app.delete("/api/session/{session_id}")
+async def session_gecmis_sil(request: Request, session_id: str):
+    """Kullanıcının sohbet geçmişini tamamen siler."""
+    user = mevcut_kullanici(request)
+    beklenen = canonical_chat_session_id(user)
+    if not user or not beklenen:
+        return JSONResponse({"ok": False}, status_code=401)
+    if session_id != beklenen:
+        return JSONResponse({"ok": False}, status_code=403)
+    db = SessionLocal()
+    try:
+        from app.core.database import ChatSession
+        row = db.query(ChatSession).filter(ChatSession.session_id == session_id).first()
+        if row:
+            row.tam_gecmis = _json.dumps([])
+            db.commit()
+        return JSONResponse({"ok": True})
+    except Exception as e:
+        db.rollback()
+        return JSONResponse({"ok": False, "hata": _guvenli_hata(e)}, status_code=500)
+    finally:
+        db.close()
+
+
 # ── CHAT ──────────────────────────────────────────────────────────────
 
 @app.post("/api/chat")
