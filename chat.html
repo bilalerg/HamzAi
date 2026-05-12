@@ -723,6 +723,7 @@
   let SESSION_ID = null;
   let _sessionReady = false;
   let _sessionBoot = null;
+  let _isRestoring = false; // Restore sırasında DB'ye tekrar yazılmasını engeller
 
   async function cikisYap() {
     try {
@@ -746,19 +747,23 @@
 
       if (data.gecmis && data.gecmis.length > 0) {
         removeWelcome();
-
-        for (const msg of data.gecmis) {
-          if (msg.role === 'ui' && msg.ui && msg.ui.kind) {
-            await restoreUiPanel(msg.ui.kind, msg.ui.params || {});
-            continue;
+        _isRestoring = true;
+        try {
+          for (const msg of data.gecmis) {
+            if (msg.role === 'ui' && msg.ui && msg.ui.kind) {
+              await restoreUiPanel(msg.ui.kind, msg.ui.params || {});
+              continue;
+            }
+            const c = msg.content != null ? String(msg.content) : '';
+            if (msg.role === 'user') {
+              if (c.indexOf('data:image') === 0) addImageMessage(c);
+              else addMessage(c, 'user');
+            } else if (msg.role === 'assistant') {
+              addMessage(c, 'bot');
+            }
           }
-          const c = msg.content != null ? String(msg.content) : '';
-          if (msg.role === 'user') {
-            if (c.indexOf('data:image') === 0) addImageMessage(c);
-            else addMessage(c, 'user');
-          } else if (msg.role === 'assistant') {
-            addMessage(c, 'bot');
-          }
+        } finally {
+          _isRestoring = false;
         }
       }
     } catch (e) {
@@ -812,7 +817,7 @@
   }
 
   function sohbetPanelKaydet(kind, params) {
-    if (!SESSION_ID || !_sessionReady || !kind) return;
+    if (!SESSION_ID || !_sessionReady || !kind || _isRestoring) return;
     fetch('/api/session/append', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -824,7 +829,7 @@
   }
 
   function sohbetKeywordVePanelKaydet(userText, kind, params) {
-    if (!SESSION_ID || !_sessionReady || !kind) return;
+    if (!SESSION_ID || !_sessionReady || !kind || _isRestoring) return;
     const body = {
       session_id: SESSION_ID,
       ui_panel: { kind: kind, params: params || {} }
