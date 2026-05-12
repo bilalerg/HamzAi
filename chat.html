@@ -9,24 +9,24 @@
   @import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600&family=Inter:wght@300;400;500;600&display=swap');
 
   :root {
-    --bg: #ffffff;
-    --surface: #f8f9fa;
-    --surface2: #f1f3f4;
-    --border: #e1e4e8;
-    --border2: #d0d7de;
-    --accent: #0969da;
-    --accent2: #1d4ed8;
-    --accent-lt: rgba(9,105,218,0.12);
-    --accent-dim: rgba(9,105,218,0.08);
-    --text: #1a1a1a;
-    --text2: #6b7280;
-    --muted: #6c757d;
-    --muted2: #868e96;
-    --user-bg: #0969da;
-    --alacak: #0969da;
-    --s1: 0 1px 3px rgba(0,0,0,0.1);
-    --s2: 0 4px 16px rgba(0,0,0,0.15), 0 1px 4px rgba(0,0,0,0.1);
-    --s3: 0 8px 32px rgba(0,0,0,0.2), 0 2px 8px rgba(0,0,0,0.1);
+    --bg: #0d1117;
+    --surface: #161b22;
+    --surface2: #1c2333;
+    --border: #30363d;
+    --border2: #3d444d;
+    --accent: #4f8ef7;
+    --accent2: #79a8f9;
+    --accent-lt: rgba(79,142,247,0.12);
+    --accent-dim: rgba(79,142,247,0.08);
+    --text: #e6edf3;
+    --text2: #8b949e;
+    --muted: #6e7681;
+    --muted2: #484f58;
+    --user-bg: #1f6feb;
+    --alacak: #58a6ff;
+    --s1: 0 1px 3px rgba(0,0,0,0.3);
+    --s2: 0 4px 16px rgba(0,0,0,0.4), 0 1px 4px rgba(0,0,0,0.2);
+    --s3: 0 8px 32px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.3);
     --r: 12px;
     --r2: 18px;
   }
@@ -222,14 +222,14 @@
     background: var(--user-bg);
     color: #fff;
     border-radius: 18px 18px 4px 18px;
-    box-shadow: 0 3px 14px rgba(9,105,218,0.15);
+    box-shadow: 0 3px 14px rgba(191,91,42,0.28);
   }
   .message.bot .bubble {
     background: var(--surface);
     color: var(--text);
     border-radius: 4px 18px 18px 18px;
     border: 1px solid var(--border);
-    box-shadow: 0 4px 16px rgba(0,0,0,0.15), 0 1px 4px rgba(0,0,0,0.1);
+    box-shadow: var(--s2);
   }
 
   /* ── BUTONLAR ── */
@@ -541,7 +541,7 @@
   /* ── QUICK PANEL ── */
   .panel-overlay {
     position: fixed; inset: 0;
-    background: rgba(0,0,0,0.25);
+    background: rgba(30,20,16,0.35);
     backdrop-filter: blur(2px);
     z-index: 200;
     opacity: 0;
@@ -641,7 +641,7 @@
     box-shadow: 3px 0 12px rgba(191,91,42,0.28);
     transition: all 0.2s;
   }
-  .panel-toggle:hover { width: 32px; background: #1d4ed8; }
+  .panel-toggle:hover { width: 32px; background: #a84b22; }
   .panel-toggle svg { width: 13px; height: 13px; stroke: #fff; fill: none; stroke-width: 2.5; stroke-linecap: round; }
 
   @media(max-width:600px) {
@@ -720,12 +720,7 @@
 </div>
 
 <script>
-  // Session ID'yi localStorage'dan al veya yeni oluştur (kullanıcıya özel)
-  let SESSION_ID = localStorage.getItem('profaix_session_id');
-  if (!SESSION_ID) {
-    SESSION_ID = 'web_' + Math.random().toString(36).substr(2, 9);
-    localStorage.setItem('profaix_session_id', SESSION_ID);
-  }
+  const SESSION_ID = 'web_' + Math.random().toString(36).substr(2, 9);
 
   // ── KULLANICI BİLGİSİ ──────────────────────────────────────────────
   // Sayfa açılınca /api/me'den kim olduğunu öğren, header'a yaz
@@ -739,38 +734,9 @@
 
         const wadEl = document.getElementById('welcomeAd');
         if (wadEl) wadEl.textContent = ad.split(' ')[0] || ad;
-        
-        // Session geçmişini yükle
-        await loadSessionHistory();
       }
     } catch {}
   })();
-
-  // ── SESSION GEÇMİŞİ YÜKLEME ───────────────────────────────────────
-  async function loadSessionHistory() {
-    try {
-      const res = await fetch(`/api/session/${SESSION_ID}`);
-      const data = await res.json();
-      
-      if (data.gecmis && data.gecmis.length > 0) {
-        removeWelcome();
-        
-        for (const msg of data.gecmis) {
-          // Sadece kullanıcı mesajlarını yükle, otomatik bot mesajlarını atla
-          if (msg.role === 'user') {
-            addMessage(msg.content, 'user');
-          } else if (msg.role === 'assistant') {
-            // Sistem tarafından otomatik eklenen "işlem tamamlandı" mesajlarını kontrol et
-            if (!msg.content.includes('işlemi tamamlandı') && !msg.content.includes('✅')) {
-              addMessage(msg.content, 'bot');
-            }
-          }
-        }
-      }
-    } catch (e) {
-      console.log('Session geçmişi yüklenemedi:', e);
-    }
-  }
 
   async function cikisYap() {
     try {
@@ -794,30 +760,6 @@
       });
       _aktifPanel.style.opacity = '0.5';
       _aktifPanel = null;
-      
-      // Panel kapandığında session geçmişini temizle ve sadece kullanıcı mesajlarını geri yükle
-      setTimeout(async function() {
-        try {
-          const res = await fetch(`/api/session/${SESSION_ID}`);
-          const data = await res.json();
-          
-          if (data.gecmis && data.gecmis.length > 0) {
-            // Sadece kullanıcı mesajlarını yükle, otomatik bot mesajlarını atla
-            const userMessages = data.gecmis.filter(msg => msg.role === 'user');
-            const botMessages = data.gecmis.filter(msg => msg.role === 'assistant' && !msg.content.includes('işlemi tamamlandı') && !msg.content.includes('✅'));
-            
-            // Önce mevcut mesajları temizle
-            const messagesDiv = document.getElementById('messages');
-            messagesDiv.innerHTML = '';
-            
-            // Sadece kullanıcı ve temiz bot mesajlarını ekle
-            userMessages.forEach(msg => addMessage(msg.content, 'user'));
-            botMessages.forEach(msg => addMessage(msg.content, 'bot'));
-          }
-        } catch (e) {
-          console.log('Session temizlenemedi:', e);
-        }
-      }, 100);
     }
   }
 
@@ -890,7 +832,7 @@
     btn.innerHTML = '<span class="btn-icon">⏳</span> Yenileniyor…';
     btn.disabled = true;
     try {
-      await carileriGetir(true, false);  // Cache'i zorla yenile
+      await carileriGetir(true);  // Cache'i zorla yenile
       btn.innerHTML = '<span class="btn-icon">✅</span> Yenilendi!';
       setTimeout(function() {
         btn.innerHTML = orijinal;
@@ -1422,7 +1364,7 @@
           sayfa: sayfa,
           sayfa_basi: 25
         });
-        const res  = await fetch('/api/bekleyen-irsaliyeler?' + params.toString() + '&session_id=' + SESSION_ID);
+        const res  = await fetch('/api/bekleyen-irsaliyeler?' + params.toString());
         const data = await res.json();
         listeWrap.removeChild(yukleniyorEl);
 
@@ -1503,7 +1445,7 @@
   async function bakiyeleriGoster(onMusteriFiltreParam) {
     showTyping();
     try {
-      const carilerData = await carileriGetir(false, SESSION_ID, true);
+      const carilerData = await carileriGetir(false);
       removeTyping();
       if (!carilerData || carilerData.length === 0) {
         addMessage('Kayıtlı cari bulunamadı.', 'bot');
@@ -1569,7 +1511,7 @@
     showTyping();
     let cariler = [];
     try {
-      cariler = await carileriGetir(false, SESSION_ID, true);
+      cariler = await carileriGetir(false);
     } catch {}
     removeTyping();
 
@@ -1676,7 +1618,6 @@
           if (bitis)     params.set('bitis', bitis);
           params.set('sayfa', '1');
           params.set('limit', '25');
-          params.set('session_id', SESSION_ID);
 
           const res  = await fetch('/api/islem-gecmisi/' + encodeURIComponent(cari) + '?' + params.toString());
           const data = await res.json();
@@ -1779,7 +1720,6 @@
           const params = [];
           if (baslangic) params.push('baslangic=' + baslangic);
           if (bitis) params.push('bitis=' + bitis);
-          params.push('session_id=' + SESSION_ID);
           if (params.length) url += '?' + params.join('&');
           const res = await fetch(url);
           const data = await res.json();
@@ -1820,7 +1760,7 @@
     showTyping();
     let cariler = [];
     try {
-      cariler = await carileriGetir(false, SESSION_ID, true);
+      cariler = await carileriGetir(false);
     } catch {}
     removeTyping();
 
@@ -2008,7 +1948,7 @@
         const res = await fetch('/api/tahsilat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ cari_adi: cariAdi, tutar: tutar, tarih: inputs.tarih.value.trim(), session_id: SESSION_ID })
+          body: JSON.stringify({ cari_adi: cariAdi, tutar: tutar, tarih: inputs.tarih.value.trim() })
         });
         const data = await res.json();
         addMessage(data.cevap, 'bot');
@@ -2107,7 +2047,7 @@
     showTyping();
     let cariler = [];
     try {
-      cariler = await carileriGetir(false, SESSION_ID, true);
+      cariler = await carileriGetir(false);
     } catch {}
     removeTyping();
 
@@ -2231,7 +2171,7 @@
         if (bitisInp.value)     params.set('bitis', bitisInp.value);
         if (durumSel.value)     params.set('durum', durumSel.value);
 
-        const res  = await fetch('/api/cari-faturalar/' + encodeURIComponent(cariAdi) + '?' + params.toString() + '&session_id=' + SESSION_ID);
+        const res  = await fetch('/api/cari-faturalar/' + encodeURIComponent(cariAdi) + '?' + params.toString());
         const data = await res.json();
         faturaListesi.removeChild(yukEl);
 
@@ -2313,7 +2253,7 @@
   async function faturaDetayGoster(faturaId, faturaAdi) {
     showTyping();
     try {
-      const res = await fetch('/api/fatura-detay/' + faturaId + '?session_id=' + SESSION_ID);
+      const res = await fetch('/api/fatura-detay/' + faturaId);
       const f = await res.json();
       removeTyping();
 
@@ -2386,7 +2326,7 @@
   async function topluFaturaGoster() {
     showTyping();
     try {
-      const res = await fetch('/api/bekleyen-irsaliyeler?session_id=' + SESSION_ID);
+      const res = await fetch('/api/bekleyen-irsaliyeler');
       const data = await res.json();
       removeTyping();
 
@@ -2630,7 +2570,7 @@
       const res = await fetch('/api/toplu-fatura-kes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cari_adi: cariAdi, irsaliyeler: irsaliyelerData, session_id: SESSION_ID })
+        body: JSON.stringify({ cari_adi: cariAdi, irsaliyeler: irsaliyelerData })
       });
       const data = await res.json();
       removeTyping();
@@ -2704,8 +2644,7 @@
             telefon: inputs.telefon.value.trim() || null,
             vergi_no: inputs.vergi_no.value.trim() || null,
             vergi_dairesi: inputs.vergi_dairesi.value.trim() || null,
-            adres: inputs.adres.value.trim() || null,
-            session_id: SESSION_ID
+            adres: inputs.adres.value.trim() || null
           })
         });
         const data = await res.json();
@@ -2871,8 +2810,7 @@
           cari_adi: irs.cari_adi,
           agirlik_kg: agirlik_kg || irs.toplam_kg,
           malzemeler: malzemeler,
-          toplanan_fiyatlar: toplanan_fiyatlar,
-          session_id: SESSION_ID
+          toplanan_fiyatlar: toplanan_fiyatlar
         })
       });
       const data = await res.json();
@@ -2894,7 +2832,7 @@
 
   async function sonrakiIrsaliyeSor() {
     try {
-      const res = await fetch('/api/bekleyen-irsaliyeler?session_id=' + SESSION_ID);
+      const res = await fetch('/api/bekleyen-irsaliyeler');
       const data = await res.json();
       if (!data.irsaliyeler || data.irsaliyeler.length === 0) {
         addMessage('🎉 Tüm irsaliyeler faturalandı!', 'bot');
@@ -2988,13 +2926,13 @@
   let _cariCacheZamani = 0;
   const CARI_CACHE_SURE = 15 * 60 * 1000; // 15 dakika
 
-  async function carileriGetir(forceRefresh, autoLoad = false) {
+  async function carileriGetir(forceRefresh) {
     const simdi = Date.now();
     if (!forceRefresh && _cariCache && (simdi - _cariCacheZamani) < CARI_CACHE_SURE) {
       return _cariCache;
     }
     try {
-      const res = await fetch('/api/cariler' + (forceRefresh ? '?refresh=1&session_id=' + SESSION_ID : '?auto_load=' + autoLoad + '&session_id=' + SESSION_ID));
+      const res = await fetch('/api/cariler' + (forceRefresh ? '?refresh=1' : ''));
       const data = await res.json();
       _cariCache = data.cariler || [];
       _cariCacheZamani = Date.now();
@@ -3009,9 +2947,6 @@
     try {
       await carileriGetir(false);
       console.log('✅ Cari cache hazır: ' + (_cariCache ? _cariCache.length : 0) + ' cari');
-      
-      // Session geçmişini her zaman yükle
-      await loadSessionHistory();
     } catch {}
   })();
 
