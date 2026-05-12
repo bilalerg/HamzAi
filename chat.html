@@ -663,15 +663,16 @@
   </div>
   <div class="panel-body">
     <div class="panel-section-label">İşlemler</div>
-       <button class="panel-btn" onclick="panelKapat();_menuIslemKaydet('bekleyen_irsaliyeler');bekleyenIrsaliyeleriGoster()"><span class="btn-icon">📋</span> Bekleyen irsaliyeler</button>
-    <button class="panel-btn" onclick="panelKapat();_menuIslemKaydet('toplu_fatura');topluFaturaGoster()"><span class="btn-icon">🧾</span> Toplu fatura</button>
-    <button class="panel-btn" onclick="panelKapat();_menuIslemKaydet('fatura_sorgula');faturaListesiGoster()"><span class="btn-icon">🔍</span> Fatura sorgula</button>
-    <button class="panel-btn" onclick="panelKapat();_menuIslemKaydet('tahsilat_ekle');tahsilatFormGoster()"><span class="btn-icon">💵</span> Tahsilat ekle</button>
-    <button class="panel-btn" onclick="panelKapat();_menuIslemKaydet('yeni_cari');cariFormGoster()"><span class="btn-icon">➕</span> Yeni cari</button>
-    <button class="panel-btn" onclick="panelKapat();_menuIslemKaydet('musteri_bakiyeleri');bakiyeleriGoster()"><span class="btn-icon">💰</span> Müşteri bakiyeleri</button>
-    <button class="panel-btn" onclick="panelKapat();_menuIslemKaydet('hesap_ozeti');hesapOzetiGoster()"><span class="btn-icon">📊</span> Hesap özeti</button>
-    <button class="panel-btn" onclick="panelKapat();_menuIslemKaydet('gunluk_ozet');gunlukOzetGoster()"><span class="btn-icon">📈</span> Günlük özimet</button>
-    <button class="panel-btn" onclick="panelKapat();_menuIslemKaydet('son_fisler');sonFisleriGoster()"><span class="btn-icon">🗂️</span> Son yüklenen fişler</button>
+    <button class="panel-btn" onclick="panelKapat();bekleyenIrsaliyeleriGoster()"><span class="btn-icon">📋</span> Bekleyen irsaliyeler</button>
+    <button class="panel-btn" onclick="panelKapat();topluFaturaGoster()"><span class="btn-icon">🧾</span> Toplu fatura</button>
+    <button class="panel-btn" onclick="panelKapat();faturaListesiGoster()"><span class="btn-icon">🔍</span> Fatura sorgula</button>
+    <button class="panel-btn" onclick="panelKapat();tahsilatFormGoster()"><span class="btn-icon">💵</span> Tahsilat ekle</button>
+    <button class="panel-btn" onclick="panelKapat();cariFormGoster()"><span class="btn-icon">➕</span> Yeni cari</button>
+    <div class="panel-section-label">Raporlar</div>
+    <button class="panel-btn" onclick="panelKapat();bakiyeleriGoster()"><span class="btn-icon">💰</span> Müşteri bakiyeleri</button>
+    <button class="panel-btn" onclick="panelKapat();hesapOzetiGoster()"><span class="btn-icon">📊</span> Hesap özeti</button>
+    <button class="panel-btn" onclick="panelKapat();gunlukOzetGoster()"><span class="btn-icon">📈</span> Günlük özet</button>
+    <button class="panel-btn" onclick="panelKapat();sonFisleriGoster()"><span class="btn-icon">🗂️</span> Son yüklenen fişler</button>
     <div class="panel-section-label">Sistem</div>
     <button class="panel-btn" onclick="cacheYenile(this)"><span class="btn-icon">🔄</span> Bakiyeleri yenile</button>
   </div>
@@ -719,14 +720,7 @@
 </div>
 
 <script>
-  const SESSION_ID = (function() {
-    let sid = localStorage.getItem('profaix_session_id');
-    if (!sid) {
-      sid = 'web_' + Math.random().toString(36).substr(2, 9);
-      localStorage.setItem('profaix_session_id', sid);
-    }
-    return sid;
-  })();
+  const SESSION_ID = 'web_' + Math.random().toString(36).substr(2, 9);
 
   // ── KULLANICI BİLGİSİ ──────────────────────────────────────────────
   // Sayfa açılınca /api/me'den kim olduğunu öğren, header'a yaz
@@ -758,6 +752,7 @@
 
   function _panelKapat() {
     if (_aktifPanel) {
+      // Tüm buton ve inputları devre dışı bırak
       _aktifPanel.querySelectorAll('button, input, select').forEach(function(el) {
         el.disabled = true;
         el.style.opacity = '0.4';
@@ -868,6 +863,7 @@
   });
 
   function formatTarih(tarih) {
+    // "2026-03-27" → "27.03.2026"
     if (!tarih || tarih === '-') return tarih;
     const m = tarih.match(/^(\d{4})-(\d{2})-(\d{2})/);
     if (m) return m[3] + '.' + m[2] + '.' + m[1];
@@ -956,6 +952,7 @@
 
   function addMessage(text, type, extraEl) {
     removeWelcome();
+    // Önceki aktif paneli kapat
     if (extraEl && type === 'bot') {
       _panelKapat();
     }
@@ -1012,6 +1009,7 @@
 
   function showTyping() {
     removeWelcome();
+    // Mevcut typing varsa önce kaldır — duplicate olmasın
     removeTyping();
     const wrap = document.createElement('div');
     wrap.className = 'typing-wrap';
@@ -1025,6 +1023,7 @@
     wrap.appendChild(meta);
     wrap.appendChild(bubble);
     messagesEl.appendChild(wrap);
+    // requestAnimationFrame: DOM render tamamlandıktan sonra scroll yap
     requestAnimationFrame(function() {
       messagesEl.scrollTop = messagesEl.scrollHeight;
     });
@@ -1036,17 +1035,25 @@
   }
 
   function fiyatGoster(fiyat) {
+    // Fiyatı tam olarak göster — gereksiz sıfırları kırp ama değeri kesme
+    // 14.4458 → "14,4458" | 14 → "14" | 14.5 → "14,5"
     if (fiyat === null || fiyat === undefined) return '';
+    // Maksimum 4 ondalık hane, sondaki sıfırları kaldır
     let str = fiyat.toFixed(4).replace('.', ',').replace(/,?0+$/, '');
+    // Binlik ayraç ekle (tam kısım için)
     let parcalar = str.split(',');
     parcalar[0] = parcalar[0].replace(/\B(?=(\d{3})+(?!\d))/g, '.');
     return parcalar.join(',');
   }
 
   function parseFiyat(metin) {
+    // KURAL: Nokta = binlik ayraç (yoksay), Virgül = ondalık ayraç
+    // Sadece rakam, nokta ve virgül kabul et — harf içeriyorsa geçersiz
     metin = metin.trim()
       .replace(/tl/gi, '').replace(/lira/gi, '').replace('₺', '').trim();
+    // Rakam, nokta ve virgül dışında karakter varsa geçersiz
     if (/[^0-9.,]/.test(metin)) return null;
+    // Önce noktaları kaldır (binlik ayraç), sonra virgülü noktaya çevir (ondalık)
     metin = metin.replace(/\./g, '').replace(',', '.');
     const f = parseFloat(metin);
     return (f > 0) ? f : null;
@@ -1130,6 +1137,11 @@
   }
 
   // ── INTENT → FONKSİYON HARİTASI ────────────────────────────────────
+  // Haiku'dan gelen intent string'i doğrudan bu map'e bakarak çözülür.
+  // Yeni bir intent eklemek istersen buraya 1 satır eklemen yeterli.
+  // INTENT_MAP — intent string'i → frontend fonksiyonu
+  // params: Haiku'nun cümleden çıkardığı müşteri, tarih, tutar gibi değerler
+  // Fonksiyonlar params'ı alır, formu önceden doldurur — kullanıcı tekrar seçmez
   const INTENT_MAP = {
     'bekleyen_irsaliyeler': (p) => bekleyenIrsaliyeleriGoster(),
     'toplu_fatura':         (p) => topluFaturaGoster(),
@@ -1141,16 +1153,6 @@
     'gunluk_ozet':          (p) => gunlukOzetGoster(),
     'son_fisler':           (p) => sonFisleriGoster(),
   };
-  // Menüden yapılan işlemleri session'a kaydet
-  async function _menuIslemKaydet(islemAdi) {
-    try {
-      await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mesaj: '/menu ' + islemAdi, session_id: SESSION_ID })
-      });
-    } catch(e) {}
-  }
 
   // ── CHAT ─────────────────────────────────────────────────────────
 
@@ -1158,6 +1160,7 @@
     const text = inputEl.value.trim();
     if (!text || sendBtn.disabled) return;
 
+    // 1. Önce frontend keyword eşleştirmesi — hızlı, API isteği yok
     const eslesen = mesajYonlendir(text);
     if (eslesen) {
       addMessage(text, 'user');
@@ -1167,6 +1170,7 @@
       return;
     }
 
+    // 2. Keyword eşleşmedi → Haiku'ya intent sorusu
     addMessage(text, 'user');
     inputEl.value = '';
     inputEl.style.height = 'auto';
@@ -1187,9 +1191,11 @@
       const params = data.params || {};
 
       if (intent !== 'none' && INTENT_MAP[intent]) {
+        // Haiku bir intent tespit etti → önce mesajı göster, sonra akışı tetikle
         if (mesaj) addMessage(mesaj, 'bot');
         await INTENT_MAP[intent](params);
       } else {
+        // intent = "none" → sadece mesajı göster
         addMessage(mesaj, 'bot');
       }
 
@@ -1228,6 +1234,7 @@
         const wrap = document.createElement('div');
         wrap.style.cssText = 'display:flex;flex-direction:column;gap:10px;min-width:280px;max-width:420px;';
 
+        // Firma listesini cari formatına çevir
         const firmaCariler = (data.firma_listesi || []).map(function(f) {
           return { ad: f, bakiye: 0 };
         });
@@ -1242,6 +1249,7 @@
         }, 'Firma adı yazın...');
         wrap.appendChild(ddWrap);
 
+        // İptal butonu
         const iptalBtn = document.createElement('button');
         iptalBtn.className = 'btn-cancel';
         iptalBtn.style.marginTop = '4px';
@@ -1291,13 +1299,16 @@
   // ── BEKLEYENİRSALİYELER ──────────────────────────────────────────
 
   async function bekleyenIrsaliyeleriGoster() {
+    // Tarih filtresi seçim formu göster
     const wrap = document.createElement('div');
 
+    // Başlık
     const baslik = document.createElement('div');
     baslik.style.cssText = 'font-size:13px;font-weight:500;color:var(--text);margin-bottom:10px;';
     baslik.textContent = '📋 Bekleyen İrsaliyeler';
     wrap.appendChild(baslik);
 
+    // Tarih satırı
     const tarihRow = document.createElement('div');
     tarihRow.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:10px;';
 
@@ -1325,14 +1336,17 @@
     tarihRow.appendChild(bitisInp);
     wrap.appendChild(tarihRow);
 
+    // Liste alanı
     const listeWrap = document.createElement('div');
     wrap.appendChild(listeWrap);
 
+    // Daha fazla butonu alanı
     const dahaFazlaWrap = document.createElement('div');
     wrap.appendChild(dahaFazlaWrap);
 
     addMessage('', 'bot', wrap);
 
+    // İrsaliyeleri yükle
     let mevcutSayfa = 1;
     async function irsaliyeleriYukle(sayfa, temizle) {
       if (temizle) listeWrap.innerHTML = '';
@@ -1364,6 +1378,7 @@
           return;
         }
 
+        // Başlık
         if (sayfa === 1) {
           const sayacEl = document.createElement('div');
           sayacEl.style.cssText = 'font-size:12px;color:var(--muted);margin-bottom:8px;';
@@ -1394,6 +1409,7 @@
           listeWrap.appendChild(btn);
         });
 
+        // Daha fazla butonu
         if (data.sonraki_sayfa_var) {
           const dahaBtn = document.createElement('button');
           dahaBtn.className = 'btn-cancel';
@@ -1416,9 +1432,11 @@
       }
     }
 
+    // Tarih değişince yeniden yükle
     baslangicInp.onchange = function() { mevcutSayfa = 1; irsaliyeleriYukle(1, true); };
     bitisInp.onchange     = function() { mevcutSayfa = 1; irsaliyeleriYukle(1, true); };
 
+    // İlk yükleme
     irsaliyeleriYukle(1, true);
   }
 
@@ -1433,6 +1451,7 @@
         addMessage('Kayıtlı cari bulunamadı.', 'bot');
         return;
       }
+      // Params'tan müşteri adı geldiyse otomatik filtrele
       let cariler = carilerData;
       if (onMusteriFiltreParam) {
         const filtre = onMusteriFiltreParam.toLowerCase();
@@ -1498,11 +1517,13 @@
 
     const wrap = document.createElement('div');
 
+    // Başlık
     const baslik = document.createElement('div');
     baslik.style.cssText = 'font-size:13px;font-weight:500;color:var(--text);margin-bottom:12px;';
     baslik.textContent = '📊 Hesap Özeti';
     wrap.appendChild(baslik);
 
+    // Cari seçimi
     const cariLabel = document.createElement('div');
     cariLabel.style.cssText = 'font-size:11px;color:var(--muted);margin-bottom:5px;';
     cariLabel.textContent = 'Firma (boş bırakılırsa tümü):';
@@ -1517,6 +1538,7 @@
     cariWrap.appendChild(cariInp);
     wrap.appendChild(cariWrap);
 
+    // Dropdown
     let secilenCari = null;
     const dropdown = document.createElement('div');
     dropdown.className = 'cari-dropdown';
@@ -1544,6 +1566,7 @@
       dropdown.style.display = 'block';
     });
 
+    // Tarih aralığı
     const tarihLabel = document.createElement('div');
     tarihLabel.style.cssText = 'font-size:11px;color:var(--muted);margin-bottom:5px;';
     tarihLabel.textContent = 'Tarih aralığı (opsiyonel):';
@@ -1572,6 +1595,7 @@
     tarihRow.appendChild(bitisInp);
     wrap.appendChild(tarihRow);
 
+    // Buton satırı
     const btnRow = document.createElement('div');
     btnRow.className = 'btn-row';
 
@@ -1588,6 +1612,7 @@
         const bitis = bitisInp.value;
 
         if (cari) {
+          // Cari seçilmişse: bakiye + işlem geçmişi
           const params = new URLSearchParams();
           if (baslangic) params.set('baslangic', baslangic);
           if (bitis)     params.set('bitis', bitis);
@@ -1599,6 +1624,7 @@
 
           if (data.hata) { addMessage('❌ ' + data.hata, 'bot'); return; }
 
+          // Özet kartı
           const wrap = document.createElement('div');
           wrap.style.cssText = 'font-size:13px;';
 
@@ -1618,6 +1644,7 @@
           }
           wrap.appendChild(bakiyeEl);
 
+          // İşlem listesi alanı
           const islemListesi = document.createElement('div');
           const dahaFazlaWrap = document.createElement('div');
           wrap.appendChild(islemListesi);
@@ -1661,6 +1688,7 @@
               islemListesi.appendChild(row);
             });
 
+            // Daha fazla butonu
             if (data.sonraki_sayfa_var) {
               const dahaBtn = document.createElement('button');
               dahaBtn.className = 'btn-cancel';
@@ -1687,6 +1715,7 @@
 
           islemleriRenderEt(data, true);
         } else {
+          // Cari seçilmemişse: genel özet
           let url = '/api/hesap-ozeti';
           const params = [];
           if (baslangic) params.push('baslangic=' + baslangic);
@@ -1735,6 +1764,7 @@
     } catch {}
     removeTyping();
 
+    // Alacaklıları önce göster
     const alacaklilar = cariler.filter(function(c) { return c.bakiye > 0; });
     const digerler = cariler.filter(function(c) { return c.bakiye <= 0; });
     const siralanmis = alacaklilar.concat(digerler);
@@ -1757,6 +1787,7 @@
 
     addMessage('', 'bot', wrap);
 
+    // Params'tan müşteri adı geldiyse arama kutusuna yaz — kullanıcı görsün
     if (onMusteri) {
       setTimeout(function() {
         const inp = ddWrap.querySelector('input');
@@ -1783,18 +1814,21 @@
     inp.type = 'text';
     inp.className = 'fiyat-input';
     inp.placeholder = 'Örn: 100000';
+    // Params'tan tutar geldiyse önceden doldur
     if (onTutar) inp.value = String(onTutar);
 
     const tarihInp = document.createElement('input');
     tarihInp.type = 'date';
     tarihInp.className = 'fiyat-input';
     tarihInp.style.maxWidth = '150px';
+    // Bugünü default olarak set et
     tarihInp.value = new Date().toISOString().split('T')[0];
 
     const btn = document.createElement('button');
     btn.className = 'btn-primary';
     btn.textContent = 'Kaydet';
 
+    // ── İPTAL BUTONU ──
     const iptalBtn = document.createElement('button');
     iptalBtn.className = 'btn-cancel';
     iptalBtn.textContent = '✕ İptal';
@@ -1830,6 +1864,7 @@
         });
         const data = await res.json();
 
+        // Backend fazla tutar uyarisi dondu
         if (!data.basarili && data.fazla_tutar) {
           btn.disabled = false;
           btn.textContent = 'Kaydet';
@@ -2016,6 +2051,7 @@
     } catch {}
     removeTyping();
 
+    // Params'tan müşteri geldi ve listede tam eşleşme var → direkt faturalarını aç
     if (onMusteri) {
       const filtre = onMusteri.toLowerCase();
       const eslesen = cariler.find(function(c) { return c.ad.toLowerCase().includes(filtre); });
@@ -2049,6 +2085,7 @@
 
     addMessage('', 'bot', wrap);
 
+    // Params'tan müşteri adı geldiyse arama kutusuna yaz
     if (onMusteri) {
       setTimeout(function() {
         const inp = ddWrap.querySelector('input');
@@ -2060,8 +2097,10 @@
   }
 
   async function cariFaturalariniGetir(cariAdi, wrapParent) {
+    // Filtre formu
     const listWrap = document.createElement('div');
 
+    // Başlık + filtreler
     const filterRow = document.createElement('div');
     filterRow.style.cssText = 'display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:10px;';
 
@@ -2070,6 +2109,7 @@
     baslikEl.textContent = cariAdi + ' faturaları:';
     listWrap.appendChild(baslikEl);
 
+    // Tarih aralığı
     const bugun   = new Date().toISOString().split('T')[0];
     const yilBas  = new Date(new Date().getFullYear(), 0, 1).toISOString().split('T')[0];
 
@@ -2091,6 +2131,7 @@
     bitisInp.value = bugun;
     bitisInp.title = 'Bitiş tarihi';
 
+    // Durum filtresi
     const durumSel = document.createElement('select');
     durumSel.className = 'fiyat-input';
     durumSel.style.cssText = 'flex:1;min-width:110px;cursor:pointer;';
@@ -2106,6 +2147,7 @@
     filterRow.appendChild(durumSel);
     listWrap.appendChild(filterRow);
 
+    // Liste + sayfalama alanları
     const faturaListesi = document.createElement('div');
     const dahaFazlaWrap = document.createElement('div');
     listWrap.appendChild(faturaListesi);
@@ -2178,6 +2220,7 @@
           faturaListesi.appendChild(btn);
         });
 
+        // Sayfalama
         if (data.sonraki_sayfa_var) {
           const dahaBtn = document.createElement('button');
           dahaBtn.className = 'btn-cancel';
@@ -2199,6 +2242,7 @@
       }
     }
 
+    // Filtre değişince sıfırla
     baslangicInp.onchange = function() { mevcutSayfa=1; faturalariYukle(1,true); };
     bitisInp.onchange     = function() { mevcutSayfa=1; faturalariYukle(1,true); };
     durumSel.onchange     = function() { mevcutSayfa=1; faturalariYukle(1,true); };
@@ -2215,6 +2259,7 @@
 
       const detayWrap = document.createElement('div');
 
+      // Özet
       const ozet = document.createElement('div');
       ozet.style.cssText = 'font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.8;';
       const durumEmoji = f.durum === 'paid' ? '✅ Ödendi' : f.durum === 'overdue' ? '🔴 Gecikmiş' : '🟡 Bekliyor';
@@ -2224,6 +2269,7 @@
         '📌 Durum: ' + durumEmoji;
       detayWrap.appendChild(ozet);
 
+      // Kalemler
       if (f.kalemler && f.kalemler.length > 0) {
         const kalemBaslik = document.createElement('div');
         kalemBaslik.style.cssText = 'font-size:11px;color:var(--muted2);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:5px;';
@@ -2240,6 +2286,7 @@
         });
       }
 
+      // Tahsilatlar
       if (f.tahsilatlar && f.tahsilatlar.length > 0) {
         const tahBaslik = document.createElement('div');
         tahBaslik.style.cssText = 'font-size:11px;color:var(--muted2);text-transform:uppercase;letter-spacing:0.4px;margin:10px 0 5px;';
@@ -2253,6 +2300,7 @@
         });
       }
 
+      // Bağlı irsaliyeler
       if (f.irsaliye_ids && f.irsaliye_ids.length > 0) {
         const irsBaslik = document.createElement('div');
         irsBaslik.style.cssText = 'font-size:11px;color:var(--muted2);text-transform:uppercase;letter-spacing:0.4px;margin:10px 0 5px;';
@@ -2287,12 +2335,14 @@
         return;
       }
 
+      // Carileri grupla
       const cariMap = {};
       data.irsaliyeler.forEach(function(irs) {
         if (!cariMap[irs.cari_adi]) cariMap[irs.cari_adi] = [];
         cariMap[irs.cari_adi].push(irs);
       });
 
+      // Dropdown için cari listesi
       const cariListesi = Object.keys(cariMap).map(function(ad) {
         return { ad: ad, bakiye: 0, adet: cariMap[ad].length };
       });
@@ -2312,6 +2362,8 @@
         topluFaturaIrsaliyeSeç(c.ad, cariMap[c.ad], wrap);
       }, 'Cari adı yazın...');
 
+      // Dropdown item'larına irsaliye adeti ekle
+      const origRender = ddWrap._renderDropdown;
       wrap.appendChild(ddWrap);
 
       const iptalBtn = document.createElement('button');
@@ -2362,6 +2414,7 @@
       row.appendChild(cb);
       row.appendChild(info);
       row.onclick = function(e) {
+        // Checkbox'a direkt tıklanınca row.onclick'i tetikleme — çift toggle olmasın
         if (e.target === cb) return;
         cb.checked = !cb.checked;
         row.style.borderColor = cb.checked ? 'var(--accent)' : 'var(--border2)';
@@ -2408,6 +2461,7 @@
 
   function topluFaturaFiyatAkisi(cariAdi, irsaliyeler, index, toplanmis) {
     if (index >= irsaliyeler.length) {
+      // Tümü toplandı, fatura kes
       topluFaturaGonder(cariAdi, toplanmis);
       return;
     }
@@ -2655,6 +2709,7 @@
     btn.className = 'btn-primary';
     btn.textContent = 'Gönder';
 
+    // ── İPTAL BUTONU ──
     const iptalBtn = document.createElement('button');
     iptalBtn.className = 'btn-cancel';
     iptalBtn.textContent = '✕ İptal';
@@ -2666,10 +2721,12 @@
       addMessage('❌ Fatura işlemi iptal edildi.', 'bot');
     };
 
+    // Hint notu
     const fiyatHint2 = document.createElement('div');
     fiyatHint2.style.cssText = 'font-size:10.5px;color:var(--muted);margin-top:5px;line-height:1.6;';
     fiyatHint2.innerHTML = '💡 Ondalık için <b>virgül</b>: 14,4458 &nbsp;·&nbsp; Binlik için <b>nokta</b>: 14.850';
 
+    // Hata mesajı
     const fiyatHata2 = document.createElement('div');
     fiyatHata2.style.cssText = 'font-size:11px;color:#e53e3e;margin-top:5px;display:none;';
     fiyatHata2.textContent = '⚠️ Geçersiz fiyat. Örnek: 14,85 · 14.850 · 14,4458';
@@ -2863,6 +2920,8 @@
   }
 
   // ── CARİ ÖN YÜKLEME ─────────────────────────────────────────────
+  // Sayfa açılınca arka planda cari listesini çek ve cache'e al.
+  // Böylece kullanıcı herhangi bir modülü açtığında bekleme olmaz.
   let _cariCache = null;
   let _cariCacheZamani = 0;
   const CARI_CACHE_SURE = 15 * 60 * 1000; // 15 dakika
@@ -2883,6 +2942,7 @@
     }
   }
 
+  // Sayfa açılınca arka planda yükle — kullanıcı beklemez
   (async function() {
     try {
       await carileriGetir(false);
@@ -2890,7 +2950,8 @@
     } catch {}
   })();
 
-  // ── GLOBAL DROPDOWN KAPAMA ──────────────────────────────────────
+  // ── GLOBAL DROPDOWN KAPAMA — TEK LISTENER (memory leak yok) ──────
+  // Tüm dropdown'lar için tek bir click listener — her dropdown'a ayrı ayrı eklenmez.
   document.addEventListener('click', function(e) {
     document.querySelectorAll('.cari-dropdown').forEach(function(dd) {
       if (dd.parentElement && !dd.parentElement.contains(e.target)) {
@@ -2899,29 +2960,7 @@
     });
   });
 
-  window.onload = async function() {
-    inputEl.focus();
-    // Önceki konuşmaları geri yükle
-    try {
-      const res = await fetch('/api/session-gecmis/' + SESSION_ID);
-      const data = await res.json();
-      if (data.oturum_var && data.mesajlar && data.mesajlar.length > 0) {
-        removeWelcome();
-        data.mesajlar.forEach(function(m) {
-          if (m.role === 'user') {
-            addMessage(m.content, 'user');
-          } else if (m.role === 'assistant') {
-            addMessage(m.content, 'bot');
-          }
-        });
-        setTimeout(function() {
-          messagesEl.scrollTop = messagesEl.scrollHeight;
-        }, 300);
-      }
-    } catch(e) {
-      // Session yüklenemezse sessizce devam et
-    }
-  };
+  window.onload = function() { inputEl.focus(); };
 </script>
 </body>
 </html>
