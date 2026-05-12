@@ -871,6 +871,7 @@
         `🕐 Bekleyen: <b>${d.bekleyen}</b><br>` +
         `${durum}`;
       addMessage('', 'bot', wrap);
+      sohbetPanelKaydet('gunluk_ozet', {});
     } catch {
       removeTyping();
       addMessage('❌ Günlük özet yüklenemedi.', 'bot');
@@ -906,6 +907,7 @@
         wrap.appendChild(row);
       });
       addMessage('🗂️ Son yüklenen fişler:', 'bot', wrap);
+      sohbetPanelKaydet('son_fisler', {});
     } catch {
       removeTyping();
       addMessage('❌ Fişler yüklenemedi.', 'bot');
@@ -1244,7 +1246,7 @@
     'tahsilat_ekle':        (p) => tahsilatFormGoster(p.musteri, p.tutar),
     'yeni_cari':            (p) => cariFormGoster(),
     'musteri_bakiyeleri':   (p) => bakiyeleriGoster(p.musteri),
-    'hesap_ozeti':          (p) => hesapOzetiGoster(),
+    'hesap_ozeti':          (p) => hesapOzetiGoster(p.musteri, p.baslangic, p.bitis),
     'gunluk_ozet':          (p) => gunlukOzetGoster(),
     'son_fisler':           (p) => sonFisleriGoster(),
   };
@@ -1456,6 +1458,7 @@
     wrap.appendChild(dahaFazlaWrap);
 
     addMessage('', 'bot', wrap);
+    sohbetPanelKaydet('bekleyen_irsaliyeler', {});
 
     // İrsaliyeleri yükle
     let mevcutSayfa = 1;
@@ -1610,6 +1613,7 @@
         wrap.appendChild(toplamRow);
       }
       addMessage('💰 Müşteri Bakiyeleri:', 'bot', wrap);
+      sohbetPanelKaydet('musteri_bakiyeleri', onMusteriFiltreParam ? { musteri: onMusteriFiltreParam } : {});
     } catch {
       removeTyping();
       addMessage('❌ Bakiyeler yüklenemedi, tekrar deneyin.', 'bot');
@@ -1618,13 +1622,60 @@
 
   // ── HESAP ÖZETİ ──────────────────────────────────────────────────
 
-  async function hesapOzetiGoster() {
+  async function hesapOzetiGoster(restoreMusteri, restoreBaslangic, restoreBitis) {
     showTyping();
     let cariler = [];
     try {
       cariler = await carileriGetir(false, true);
     } catch {}
     removeTyping();
+
+    // Geri yüklemede cari zaten seçilmişse direkt işlem geçmişini aç
+    if (restoreMusteri) {
+      const eslesen = cariler.find(function(c) { return c.ad.toLowerCase().includes(restoreMusteri.toLowerCase()); });
+      const cariAdi = eslesen ? eslesen.ad : restoreMusteri;
+      (async function() {
+        try {
+          const params = new URLSearchParams({ sayfa: '1', limit: '25' });
+          if (restoreBaslangic) params.set('baslangic', restoreBaslangic);
+          if (restoreBitis)     params.set('bitis', restoreBitis);
+          const res  = await fetch('/api/islem-gecmisi/' + encodeURIComponent(cariAdi) + '?' + params.toString());
+          const data = await res.json();
+          if (!data.hata) {
+            const wrap = document.createElement('div');
+            wrap.style.cssText = 'font-size:13px;';
+            const baslikEl = document.createElement('div');
+            baslikEl.style.cssText = 'font-weight:500;margin-bottom:10px;font-size:14px;';
+            baslikEl.textContent = '📊 ' + (data.cari_adi || cariAdi);
+            wrap.appendChild(baslikEl);
+            const bakiyeEl = document.createElement('div');
+            bakiyeEl.style.cssText = 'margin-bottom:12px;padding:10px 14px;background:var(--accent-lt);border-radius:10px;border-left:3px solid var(--accent);';
+            const bakiye = data.bakiye || 0;
+            bakiyeEl.innerHTML = '<b>Güncel Bakiye:</b> <span style="color:' + (bakiye > 0 ? 'var(--alacak)' : 'var(--muted)') + ';font-weight:600;">' +
+              bakiye.toLocaleString('tr-TR', {minimumFractionDigits:2}) + ' TL</span>';
+            wrap.appendChild(bakiyeEl);
+            const islemListesi = document.createElement('div');
+            wrap.appendChild(islemListesi);
+            const islemler = (data.islemler || []).slice(0, 25);
+            if (islemler.length === 0) {
+              islemListesi.innerHTML = '<div style="color:var(--muted);font-size:12px;">Bu dönemde işlem bulunamadı.</div>';
+            } else {
+              islemler.forEach(function(is) {
+                const row = document.createElement('div');
+                row.style.cssText = 'display:flex;justify-content:space-between;font-size:12px;padding:5px 10px;background:var(--bg);border-radius:7px;margin-bottom:4px;';
+                const tarih = formatTarih(is.tarih) || '-';
+                const tur = is.tur || is.tip || 'İşlem';
+                const tutar = parseFloat(is.tutar || 0).toLocaleString('tr-TR', {minimumFractionDigits:0});
+                row.innerHTML = '<span>' + tarih + ' — ' + tur + '</span><span style="font-weight:600">' + tutar + ' TL</span>';
+                islemListesi.appendChild(row);
+              });
+            }
+            addMessage('', 'bot', wrap);
+          }
+        } catch {}
+      })();
+      return;
+    }
 
     const wrap = document.createElement('div');
 
@@ -1761,6 +1812,7 @@
           wrap.appendChild(islemListesi);
           wrap.appendChild(dahaFazlaWrap);
           addMessage('', 'bot', wrap);
+          sohbetPanelKaydet('hesap_ozeti', { musteri: cari, baslangic: baslangic || '', bitis: bitis || '' });
 
           let mevcutSayfa = 1;
           function islemleriRenderEt(data, temizle) {
@@ -1862,6 +1914,7 @@
     wrap.appendChild(btnRow);
 
     addMessage('', 'bot', wrap);
+    sohbetPanelKaydet('hesap_ozeti', {});
     setTimeout(function() { cariInp.focus(); }, 100);
   }
 
@@ -1897,6 +1950,7 @@
     wrap.appendChild(ddWrap);
 
     addMessage('', 'bot', wrap);
+    sohbetPanelKaydet('tahsilat_ekle', onMusteri ? { musteri: onMusteri } : {});
 
     // Params'tan müşteri adı geldiyse arama kutusuna yaz — kullanıcı görsün
     if (onMusteri) {
@@ -2500,6 +2554,7 @@
       wrap.appendChild(iptalBtn);
 
       addMessage('', 'bot', wrap);
+      sohbetPanelKaydet('toplu_fatura', {});
       setTimeout(function() { ddWrap.querySelector('input').focus(); }, 100);
     } catch {
       removeTyping();
@@ -2791,6 +2846,7 @@
     wrap.appendChild(formWrap);
 
     addMessage('', 'bot', wrap);
+    sohbetPanelKaydet('yeni_cari', {});
     setTimeout(function() { inputs.firma_adi.focus(); }, 100);
   }
 
