@@ -862,6 +862,8 @@ async def cari_faturalar_endpoint(cari_adi: str, request: Request, background_ta
         return JSONResponse({"faturalar": [], "hata": str(e)})
 
 
+
+
 # ── TOPLU FATURA KES ─────────────────────────────────────────────────
 
 @app.post("/api/toplu-fatura-kes")
@@ -984,6 +986,36 @@ async def toplu_fatura_kes_endpoint(request: Request, background_tasks: Backgrou
     finally:
         db.close()
 
+
+# ── SESSION GEÇMİŞ ───────────────────────────────────────────────────
+
+@app.get("/api/session-gecmis/{session_id}")
+async def session_gecmisi_getir(session_id: str, request: Request):
+    """Daha önceki konuşma geçmişini getirir."""
+    db = SessionLocal()
+    try:
+        from app.core.database import ChatSession
+        import json as _json
+
+        session = db.query(ChatSession).filter(
+            ChatSession.session_id == session_id
+        ).first()
+
+        if not session or not session.tam_gecmis:
+            return JSONResponse({"oturum_var": False, "mesajlar": []})
+
+        gecmis = _json.loads(session.tam_gecmis) if session.tam_gecmis else []
+
+        return JSONResponse({
+            "oturum_var": True,
+            "mesajlar": gecmis[-50:],
+            "toplam_mesaj": len(gecmis)
+        })
+    except Exception as e:
+        logger.error(f"Session geçmiş hatası: {e}")
+        return JSONResponse({"oturum_var": False, "mesajlar": []})
+    finally:
+        db.close()
 
 # ── FATURA KES ────────────────────────────────────────────────────────
 
