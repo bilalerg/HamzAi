@@ -33,6 +33,7 @@ SESSION_UI_RESTORE_INTENTS = frozenset({
     "bekleyen_irsaliyeler",
     "toplu_fatura",
     "fatura_sorgula",
+    "fatura_detay",
     "tahsilat_ekle",
     "yeni_cari",
     "musteri_bakiyeleri",

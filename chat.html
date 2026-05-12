@@ -1240,6 +1240,7 @@
     'bekleyen_irsaliyeler': (p) => bekleyenIrsaliyeleriGoster(),
     'toplu_fatura':         (p) => topluFaturaGoster(),
     'fatura_sorgula':       (p) => faturaListesiGoster(p.musteri),
+    'fatura_detay':         (p) => faturaDetayGoster(String(p.fatura_id || p.faturaId || ''), p.aciklama || 'Fatura', p.musteri || ''),
     'tahsilat_ekle':        (p) => tahsilatFormGoster(p.musteri, p.tutar),
     'yeni_cari':            (p) => cariFormGoster(),
     'musteri_bakiyeleri':   (p) => bakiyeleriGoster(p.musteri),
@@ -2195,6 +2196,8 @@
 
     addMessage('', 'bot', wrap);
 
+    sohbetPanelKaydet('fatura_sorgula', onMusteri ? { musteri: onMusteri } : {});
+
     // Params'tan müşteri adı geldiyse arama kutusuna yaz
     if (onMusteri) {
       setTimeout(function() {
@@ -2263,6 +2266,8 @@
     listWrap.appendChild(faturaListesi);
     listWrap.appendChild(dahaFazlaWrap);
 
+    listWrap._faturaUiPersisted = false;
+
     addMessage('', 'bot', listWrap);
 
     let mevcutSayfa = 1;
@@ -2284,6 +2289,11 @@
         const res  = await fetch('/api/cari-faturalar/' + encodeURIComponent(cariAdi) + '?' + params.toString());
         const data = await res.json();
         faturaListesi.removeChild(yukEl);
+
+        if (sayfa === 1 && !listWrap._faturaUiPersisted) {
+          listWrap._faturaUiPersisted = true;
+          sohbetPanelKaydet('fatura_sorgula', { musteri: cariAdi });
+        }
 
         if (!data.faturalar || data.faturalar.length === 0) {
           if (sayfa === 1) {
@@ -2325,7 +2335,7 @@
           btn.onclick = function() {
             Array.from(faturaListesi.querySelectorAll('.irsaliye-btn')).forEach(function(b) { b.style.opacity='0.5'; b.disabled=true; });
             btn.style.opacity = '1'; btn.style.background = 'var(--accent-lt)'; btn.disabled = false;
-            faturaDetayGoster(f.id, f.aciklama);
+            faturaDetayGoster(f.id, f.aciklama, cariAdi);
           };
           faturaListesi.appendChild(btn);
         });
@@ -2360,7 +2370,8 @@
     faturalariYukle(1, true);
   }
 
-  async function faturaDetayGoster(faturaId, faturaAdi) {
+  async function faturaDetayGoster(faturaId, faturaAdi, cariCtx) {
+    cariCtx = cariCtx || '';
     showTyping();
     try {
       const res = await fetch('/api/fatura-detay/' + faturaId);
@@ -2425,6 +2436,11 @@
       }
 
       addMessage('🧾 Fatura #' + faturaId, 'bot', detayWrap);
+      sohbetPanelKaydet('fatura_detay', {
+        fatura_id: String(faturaId),
+        aciklama: faturaAdi || '',
+        musteri: cariCtx || ''
+      });
     } catch(e) {
       removeTyping();
       addMessage('❌ Fatura detayı yüklenemedi.', 'bot');
