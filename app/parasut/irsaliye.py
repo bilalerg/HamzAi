@@ -18,9 +18,6 @@ def irsaliye_olustur(ticket_id: int, beklet: bool = False) -> dict:
             return {"basarili": False, "hata": "ticket_bulunamadi"}
 
         # ── DUPLICATE KORUMASI ────────────────────────────────────────────
-        # Aynı ticket için zaten irsaliye var mı? Varsa tekrar oluşturma.
-        # Çift tıklama, timeout retry, network kopması gibi durumlarda
-        # Paraşüt'te duplicate irsaliye oluşmasını engeller.
         mevcut_waybill = db.query(Waybill).filter(
             Waybill.ticket_id == ticket_id
         ).first()
@@ -30,17 +27,15 @@ def irsaliye_olustur(ticket_id: int, beklet: bool = False) -> dict:
                 f"ticket_id={ticket_id} mevcut waybill_id={mevcut_waybill.id}"
             )
             return {
-                "basarili": True,  # True dönüyoruz — irsaliye zaten var, hata değil
+                "basarili": True,
                 "irsaliye_no": str(mevcut_waybill.parasut_irsaliye_id),
                 "parasut_id": str(mevcut_waybill.parasut_irsaliye_id),
                 "waybill_id": mevcut_waybill.id,
                 "bekliyor_onay": beklet,
-                "duplicate": True  # Caller'a bilgi için
+                "duplicate": True
             }
 
         # ── RACE CONDITION KORUMASI ───────────────────────────────────────
-        # Aynı anda iki istek gelirse, birincisi işlenirken ikincisi
-        # IRSALIYE_OLUSTURULUYOR görür ve bekler.
         if ticket.status == TicketStatus.IRSALIYE_OLUSTURULUYOR:
             logger.warning(f"⚠️ İrsaliye zaten işleniyor: ticket_id={ticket_id}")
             return {"basarili": False, "hata": "irsaliye_zaten_isleniyor"}
@@ -53,17 +48,15 @@ def irsaliye_olustur(ticket_id: int, beklet: bool = False) -> dict:
         tarih_str = _tarih_formatla(ticket.fis_tarihi)
 
         contact_id = cari_id_bul(ticket.firma)
-        if not contact_id:
-            logger.warning(f"Cari bulunamadı: {ticket.firma}, ilk cari kullanılıyor")
-            from app.parasut.client import cari_listesi_getir
-            cariler = cari_listesi_getir()
-            contact_id = cariler[0]["id"] if cariler else None
 
+        # DÜZELTME: Cari bulunamazsa işlemi sert bir şekilde durdur!
         if not contact_id:
+            hata_mesaji = f"'{ticket.firma}' adlı firma Paraşüt'te bulunamadı. Lütfen önce cari oluşturun."
+            logger.warning(hata_mesaji)
             ticket.status = TicketStatus.HATA
-            ticket.hata_mesaji = "Cari bulunamadı"
+            ticket.hata_mesaji = hata_mesaji
             db.commit()
-            return {"basarili": False, "hata": "Cari bulunamadı"}
+            return {"basarili": False, "hata": hata_mesaji}
 
         attributes = {
             "description": f"Kantar Fişi — {ticket.plaka} — {ticket.agirlik_kg} kg",

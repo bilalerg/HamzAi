@@ -1,7 +1,7 @@
 # fatura.py — Paraşüt Satış Faturası Modülü
 
 from datetime import datetime
-from app.parasut.client import parasut_post, cari_id_bul, cari_listesi_getir
+from app.parasut.client import parasut_post, cari_id_bul
 from app.core.config import PARASUT_COMPANY_ID, PARASUT_HURDA_PRODUCT_ID
 from app.core.database import SessionLocal, Waybill, Invoice, WeighTicket, TicketStatus
 from app.core.logger import logger
@@ -11,11 +11,10 @@ def _contact_id_bul(firma_adi: str) -> str:
     cid = cari_id_bul(firma_adi)
     if cid:
         return str(cid)
-    cariler = cari_listesi_getir()
-    if cariler:
-        logger.warning(f"Cari bulunamadı: {firma_adi}, ilk cari kullanılıyor")
-        return str(cariler[0]["id"])
-    raise Exception("Hiç cari bulunamadı")
+    # CARİ BULUNAMAZSA DİREKT İŞLEMİ DURDUR
+    hata_mesaji = f"'{firma_adi}' adlı firma Paraşüt'te bulunamadı. Lütfen önce cari kaydını oluşturun."
+    logger.error(hata_mesaji)
+    raise Exception(hata_mesaji)
 
 
 def fatura_kes(waybill_id: int, birim_fiyat: float = 0) -> dict:
@@ -31,7 +30,6 @@ def fatura_kes(waybill_id: int, birim_fiyat: float = 0) -> dict:
             return {"basarili": False, "hata": "ticket_bulunamadi"}
 
         # ── DUPLICATE KORUMASI ────────────────────────────────────────────
-        # Zaten fatura kesilmişse tekrar kesme.
         if waybill.status == TicketStatus.TAMAMLANDI:
             logger.warning(f"⚠️ Duplicate fatura girişimi engellendi: waybill_id={waybill_id}")
             mevcut_invoice = db.query(Invoice).filter(Invoice.waybill_id == waybill_id).first()
