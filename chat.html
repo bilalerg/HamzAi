@@ -2981,6 +2981,9 @@
     try {
       await carileriGetir(false);
       console.log('✅ Cari cache hazır: ' + (_cariCache ? _cariCache.length : 0) + ' cari');
+      
+      // Session geçmişini her zaman yükle
+      await loadSessionHistory();
     } catch {}
   })();
 
