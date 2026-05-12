@@ -720,7 +720,12 @@
 </div>
 
 <script>
-  const SESSION_ID = 'web_' + Math.random().toString(36).substr(2, 9);
+  // Session ID'yi localStorage'dan al veya yeni oluştur (kullanıcıya özel)
+  let SESSION_ID = localStorage.getItem('profaix_session_id');
+  if (!SESSION_ID) {
+    SESSION_ID = 'web_' + Math.random().toString(36).substr(2, 9);
+    localStorage.setItem('profaix_session_id', SESSION_ID);
+  }
 
   // ── KULLANICI BİLGİSİ ──────────────────────────────────────────────
   // Sayfa açılınca /api/me'den kim olduğunu öğren, header'a yaz
@@ -734,9 +739,34 @@
 
         const wadEl = document.getElementById('welcomeAd');
         if (wadEl) wadEl.textContent = ad.split(' ')[0] || ad;
+        
+        // Session geçmişini yükle
+        await loadSessionHistory();
       }
     } catch {}
   })();
+
+  // ── SESSION GEÇMİŞİ YÜKLEME ───────────────────────────────────────
+  async function loadSessionHistory() {
+    try {
+      const res = await fetch(`/api/session/${SESSION_ID}`);
+      const data = await res.json();
+      
+      if (data.gecmis && data.gecmis.length > 0) {
+        removeWelcome();
+        
+        for (const msg of data.gecmis) {
+          if (msg.role === 'user') {
+            addMessage(msg.content, 'user');
+          } else if (msg.role === 'assistant') {
+            addMessage(msg.content, 'bot');
+          }
+        }
+      }
+    } catch (e) {
+      console.log('Session geçmişi yüklenemedi:', e);
+    }
+  }
 
   async function cikisYap() {
     try {
@@ -1364,7 +1394,7 @@
           sayfa: sayfa,
           sayfa_basi: 25
         });
-        const res  = await fetch('/api/bekleyen-irsaliyeler?' + params.toString());
+        const res  = await fetch('/api/bekleyen-irsaliyeler?' + params.toString() + '&session_id=' + SESSION_ID);
         const data = await res.json();
         listeWrap.removeChild(yukleniyorEl);
 
@@ -1445,7 +1475,7 @@
   async function bakiyeleriGoster(onMusteriFiltreParam) {
     showTyping();
     try {
-      const carilerData = await carileriGetir(false);
+      const carilerData = await carileriGetir(false, SESSION_ID);
       removeTyping();
       if (!carilerData || carilerData.length === 0) {
         addMessage('Kayıtlı cari bulunamadı.', 'bot');
@@ -1511,7 +1541,7 @@
     showTyping();
     let cariler = [];
     try {
-      cariler = await carileriGetir(false);
+      cariler = await carileriGetir(false, SESSION_ID);
     } catch {}
     removeTyping();
 
@@ -1618,6 +1648,7 @@
           if (bitis)     params.set('bitis', bitis);
           params.set('sayfa', '1');
           params.set('limit', '25');
+          params.set('session_id', SESSION_ID);
 
           const res  = await fetch('/api/islem-gecmisi/' + encodeURIComponent(cari) + '?' + params.toString());
           const data = await res.json();
@@ -1720,6 +1751,7 @@
           const params = [];
           if (baslangic) params.push('baslangic=' + baslangic);
           if (bitis) params.push('bitis=' + bitis);
+          params.push('session_id=' + SESSION_ID);
           if (params.length) url += '?' + params.join('&');
           const res = await fetch(url);
           const data = await res.json();
@@ -1760,7 +1792,7 @@
     showTyping();
     let cariler = [];
     try {
-      cariler = await carileriGetir(false);
+      cariler = await carileriGetir(false, SESSION_ID);
     } catch {}
     removeTyping();
 
@@ -1948,7 +1980,7 @@
         const res = await fetch('/api/tahsilat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ cari_adi: cariAdi, tutar: tutar, tarih: inputs.tarih.value.trim() })
+          body: JSON.stringify({ cari_adi: cariAdi, tutar: tutar, tarih: inputs.tarih.value.trim(), session_id: SESSION_ID })
         });
         const data = await res.json();
         addMessage(data.cevap, 'bot');
@@ -2047,7 +2079,7 @@
     showTyping();
     let cariler = [];
     try {
-      cariler = await carileriGetir(false);
+      cariler = await carileriGetir(false, SESSION_ID);
     } catch {}
     removeTyping();
 
@@ -2171,7 +2203,7 @@
         if (bitisInp.value)     params.set('bitis', bitisInp.value);
         if (durumSel.value)     params.set('durum', durumSel.value);
 
-        const res  = await fetch('/api/cari-faturalar/' + encodeURIComponent(cariAdi) + '?' + params.toString());
+        const res  = await fetch('/api/cari-faturalar/' + encodeURIComponent(cariAdi) + '?' + params.toString() + '&session_id=' + SESSION_ID);
         const data = await res.json();
         faturaListesi.removeChild(yukEl);
 
@@ -2253,7 +2285,7 @@
   async function faturaDetayGoster(faturaId, faturaAdi) {
     showTyping();
     try {
-      const res = await fetch('/api/fatura-detay/' + faturaId);
+      const res = await fetch('/api/fatura-detay/' + faturaId + '?session_id=' + SESSION_ID);
       const f = await res.json();
       removeTyping();
 
@@ -2326,7 +2358,7 @@
   async function topluFaturaGoster() {
     showTyping();
     try {
-      const res = await fetch('/api/bekleyen-irsaliyeler');
+      const res = await fetch('/api/bekleyen-irsaliyeler?session_id=' + SESSION_ID);
       const data = await res.json();
       removeTyping();
 
@@ -2570,7 +2602,7 @@
       const res = await fetch('/api/toplu-fatura-kes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cari_adi: cariAdi, irsaliyeler: irsaliyelerData })
+        body: JSON.stringify({ cari_adi: cariAdi, irsaliyeler: irsaliyelerData, session_id: SESSION_ID })
       });
       const data = await res.json();
       removeTyping();
@@ -2644,7 +2676,8 @@
             telefon: inputs.telefon.value.trim() || null,
             vergi_no: inputs.vergi_no.value.trim() || null,
             vergi_dairesi: inputs.vergi_dairesi.value.trim() || null,
-            adres: inputs.adres.value.trim() || null
+            adres: inputs.adres.value.trim() || null,
+            session_id: SESSION_ID
           })
         });
         const data = await res.json();
@@ -2810,7 +2843,8 @@
           cari_adi: irs.cari_adi,
           agirlik_kg: agirlik_kg || irs.toplam_kg,
           malzemeler: malzemeler,
-          toplanan_fiyatlar: toplanan_fiyatlar
+          toplanan_fiyatlar: toplanan_fiyatlar,
+          session_id: SESSION_ID
         })
       });
       const data = await res.json();
@@ -2832,7 +2866,7 @@
 
   async function sonrakiIrsaliyeSor() {
     try {
-      const res = await fetch('/api/bekleyen-irsaliyeler');
+      const res = await fetch('/api/bekleyen-irsaliyeler?session_id=' + SESSION_ID);
       const data = await res.json();
       if (!data.irsaliyeler || data.irsaliyeler.length === 0) {
         addMessage('🎉 Tüm irsaliyeler faturalandı!', 'bot');
@@ -2932,7 +2966,7 @@
       return _cariCache;
     }
     try {
-      const res = await fetch('/api/cariler' + (forceRefresh ? '?refresh=1' : ''));
+      const res = await fetch('/api/cariler' + (forceRefresh ? '?refresh=1&session_id=' + SESSION_ID : '?session_id=' + SESSION_ID));
       const data = await res.json();
       _cariCache = data.cariler || [];
       _cariCacheZamani = Date.now();
