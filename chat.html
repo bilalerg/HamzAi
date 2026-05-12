@@ -750,6 +750,28 @@
   let faturaAkisi  = null;
   let _aktifPanel  = null; // Aktif panel elementi
 
+  // ── SESSION GEÇMİŞİ YÜKLEME ───────────────────────────────────────
+  async function loadSessionHistory() {
+    try {
+      const res = await fetch(`/api/session/${SESSION_ID}`);
+      const data = await res.json();
+      
+      if (data.gecmis && data.gecmis.length > 0) {
+        removeWelcome();
+        
+        for (const msg of data.gecmis) {
+          if (msg.role === 'user') {
+            addMessage(msg.content, 'user');
+          } else if (msg.role === 'assistant') {
+            addMessage(msg.content, 'bot');
+          }
+        }
+      }
+    } catch (e) {
+      console.log('Session geçmişi yüklenemedi:', e);
+    }
+  }
+
   function _panelKapat() {
     if (_aktifPanel) {
       // Tüm buton ve inputları devre dışı bırak
@@ -1445,7 +1467,7 @@
   async function bakiyeleriGoster(onMusteriFiltreParam) {
     showTyping();
     try {
-      const carilerData = await carileriGetir(false);
+      const carilerData = await carileriGetir(false, true);
       removeTyping();
       if (!carilerData || carilerData.length === 0) {
         addMessage('Kayıtlı cari bulunamadı.', 'bot');
@@ -1511,7 +1533,7 @@
     showTyping();
     let cariler = [];
     try {
-      cariler = await carileriGetir(false);
+      cariler = await carileriGetir(false, true);
     } catch {}
     removeTyping();
 
@@ -1760,7 +1782,7 @@
     showTyping();
     let cariler = [];
     try {
-      cariler = await carileriGetir(false);
+      cariler = await carileriGetir(false, true);
     } catch {}
     removeTyping();
 
@@ -2047,7 +2069,7 @@
     showTyping();
     let cariler = [];
     try {
-      cariler = await carileriGetir(false);
+      cariler = await carileriGetir(false, true);
     } catch {}
     removeTyping();
 
@@ -2945,7 +2967,7 @@
   // Sayfa açılınca arka planda yükle — kullanıcı beklemez
   (async function() {
     try {
-      await carileriGetir(false);
+      await carileriGetir(false, true);
       console.log('✅ Cari cache hazır: ' + (_cariCache ? _cariCache.length : 0) + ' cari');
     } catch {}
   })();
