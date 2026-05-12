@@ -59,6 +59,12 @@ PATRON_WHATSAPP     = os.getenv("PATRON_WHATSAPP")
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "")
 ADMIN_TOKEN    = os.getenv("ADMIN_TOKEN", "")
 
+# ── CORS ───────────────────────────────────────────────────────────
+# Üretimde izin verilen origin'leri .env'de virgülle ayırarak tanımlayın.
+# Örnek: ALLOWED_ORIGINS=https://profaix.com,https://chat.profaix.com
+_raw_origins    = os.getenv("ALLOWED_ORIGINS", "")
+ALLOWED_ORIGINS: list = [o.strip() for o in _raw_origins.split(",") if o.strip()] if _raw_origins else ["*"]
+
 # ── DOĞRULAMA ──────────────────────────────────────────────────────────
 _GUVENSIZ_DEFAULTS = {
     "profaix-super-secret-key-2026",
@@ -101,4 +107,5 @@ def validate_config():
                 f"Bu değerleri .env'de benzersiz, güçlü bir değerle set edin!"
             )
 
-    print(f"✅ Config yüklendi — Ortam: {ENV}")
+    from app.core.logger import logger
+    logger.info(f"✅ Config yüklendi — Ortam: {ENV}")

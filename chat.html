@@ -1044,6 +1044,14 @@
     return new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
   }
 
+  // API'den gelen metinleri innerHTML'de kullanmadan önce HTML karakter kaçışı uygular.
+  function safeHtml(s) {
+    if (s == null) return '';
+    var d = document.createElement('div');
+    d.textContent = String(s);
+    return d.innerHTML;
+  }
+
   function addMessage(text, type, extraEl) {
     removeWelcome();
     // Önceki aktif paneli kapat
@@ -1671,7 +1679,7 @@
                 const tarih = formatTarih(is.tarih) || '-';
                 const tur = is.tur || is.tip || 'İşlem';
                 const tutar = parseFloat(is.tutar || 0).toLocaleString('tr-TR', {minimumFractionDigits:0});
-                row.innerHTML = '<span>' + tarih + ' — ' + tur + '</span><span style="font-weight:600">' + tutar + ' TL</span>';
+                row.innerHTML = '<span>' + safeHtml(tarih) + ' — ' + safeHtml(tur) + '</span><span style="font-weight:600">' + safeHtml(tutar) + ' TL</span>';
                 islemListesi.appendChild(row);
               });
             }
@@ -1846,7 +1854,7 @@
               const sol = document.createElement('div');
               const tur = i.tur || '-';
               const turEmoji = tur.includes('invoice') || tur.includes('fatura') ? '📄' : tur.includes('payment') || tur.includes('tahsilat') ? '💵' : '📋';
-              sol.innerHTML = '<span style="color:var(--muted);margin-right:6px;">' + i.tarih + '</span>' + turEmoji + ' ' + (i.aciklama || tur);
+              sol.innerHTML = '<span style="color:var(--muted);margin-right:6px;">' + safeHtml(i.tarih) + '</span>' + safeHtml(turEmoji) + ' ' + safeHtml(i.aciklama || tur);
               const sag = document.createElement('div');
               sag.style.cssText = 'font-weight:600;white-space:nowrap;margin-left:8px;';
               const tutar = i.tutar || 0;
@@ -2461,7 +2469,7 @@
           const aciklama = k.aciklama || 'Hurda';
           const tutar = parseFloat(k.tutar||0);
           const miktarStr = k.miktar > 0 ? ' — ' + parseFloat(k.miktar).toLocaleString('tr-TR') + ' kg' : '';
-          row.innerHTML = '<span>' + aciklama + miktarStr + '</span><span style="font-weight:600">' + tutar.toLocaleString('tr-TR',{minimumFractionDigits:0}) + ' TL</span>';
+          row.innerHTML = '<span>' + safeHtml(aciklama) + safeHtml(miktarStr) + '</span><span style="font-weight:600">' + tutar.toLocaleString('tr-TR',{minimumFractionDigits:0}) + ' TL</span>';
           detayWrap.appendChild(row);
         });
       }
@@ -2475,7 +2483,7 @@
         f.tahsilatlar.forEach(function(t) {
           const row = document.createElement('div');
           row.style.cssText = 'display:flex;justify-content:space-between;font-size:12px;padding:5px 10px;background:#f0fdf4;border-radius:7px;margin-bottom:4px;';
-          row.innerHTML = '<span>✅ ' + t.tarih + ' — ' + t.aciklama + '</span><span style="font-weight:600;color:var(--accent)">' + parseFloat(t.tutar||0).toLocaleString('tr-TR',{minimumFractionDigits:0}) + ' TL</span>';
+          row.innerHTML = '<span>✅ ' + safeHtml(t.tarih) + ' — ' + safeHtml(t.aciklama) + '</span><span style="font-weight:600;color:var(--accent)">' + parseFloat(t.tutar||0).toLocaleString('tr-TR',{minimumFractionDigits:0}) + ' TL</span>';
           detayWrap.appendChild(row);
         });
       }

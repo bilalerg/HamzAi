@@ -6,12 +6,14 @@
 from app.core.logger import logger
 
 
-async def calistir(engine, db):
+def calistir(engine, db):
     """
     Uygulama başlangıcında çalışır.
     1. Eksik kolonları ekler (ADD COLUMN IF NOT EXISTS)
     2. Eksik tabloları oluşturur
     3. Yarım kalan işlemleri tespit eder
+
+    Senkron fonksiyon — main.py'de asyncio.to_thread ile çağrılır.
     """
     from sqlalchemy import text
 

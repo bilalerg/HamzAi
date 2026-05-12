@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, UploadFile, File, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
-from app.core.config import validate_config, ENV, ADMIN_TOKEN
+from app.core.config import validate_config, ENV, ADMIN_TOKEN, ALLOWED_ORIGINS
 from app.core.database import init_db, SessionLocal, engine
 from app.core.logger import logger
 from app.core.database import UsageLog
@@ -91,7 +91,7 @@ async def _startup_background():
         from app.core import migrations
         db = SessionLocal()
         try:
-            await migrations.calistir(engine, db)
+            await asyncio.to_thread(migrations.calistir, engine, db)
         finally:
             db.close()
     except Exception as e:
@@ -104,7 +104,29 @@ async def _startup_background():
 
 
 app = FastAPI(title="Profaix", description="Muhasebe Otomasyon Ajanı", version="1.0.0", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-Admin-Token"],
+)
+
+# ── KİMLİK DOĞRULAMA MIDDLEWARE ───────────────────────────────────────────────
+# /api/login, /api/logout ve /api/me herkese açık; diğer tüm /api/* giriş zorunlu.
+_ACIK_API_YOLLARI = {"/api/login", "/api/logout", "/api/me"}
+
+@app.middleware("http")
+async def api_auth_middleware(request: Request, call_next):
+    path = request.url.path
+    if path.startswith("/api/") and path not in _ACIK_API_YOLLARI:
+        user = mevcut_kullanici(request)
+        if not user:
+            return JSONResponse(
+                {"hata": "Bu işlem için giriş yapmanız gerekiyor.", "code": "AUTH_REQUIRED"},
+                status_code=401,
+            )
+    return await call_next(request)
 
 
 def _islem_log(db, islem_tipi: str, cari_adi: str = None, tutar: int = None,
@@ -142,11 +164,32 @@ def _admin_kontrol(request: Request) -> bool:
     return bool(ADMIN_TOKEN) and token == ADMIN_TOKEN
 
 
+def _guvenli_hata(e: Exception, genel: str = "Bir hata oluştu, lütfen tekrar deneyin.") -> str:
+    """Production'da dahili hata detaylarını client'a sızdırmaz."""
+    if ENV != "production":
+        return str(e)
+    return genel
+
+
 # ── TEMEL ENDPOINT'LER ────────────────────────────────────────────────
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": "1.0.0", "env": ENV}
+    db_ok = False
+    try:
+        from sqlalchemy import text as _text
+        db = SessionLocal()
+        try:
+            db.execute(_text("SELECT 1"))
+            db_ok = True
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning(f"Health check DB hatası: {e}")
+    return JSONResponse(
+        {"status": "ok" if db_ok else "degraded", "db": db_ok, "version": "1.0.0", "env": ENV},
+        status_code=200 if db_ok else 503,
+    )
 
 
 @app.get("/status")
@@ -449,7 +492,7 @@ async def upload_fis(request: Request, background_tasks: BackgroundTasks,
                               "malzemeler": malzemeler, "firma_listesi": firma_listesi})
     except Exception as e:
         logger.error(f"Upload hatası: {e}")
-        return JSONResponse({"cevap": f"❌ Hata oluştu: {str(e)}"})
+        return JSONResponse({"cevap": f"❌ Hata oluştu: {_guvenli_hata(e)}"})
     finally:
         db.close()
         try:
@@ -518,7 +561,7 @@ async def firma_sec(request: Request, background_tasks: BackgroundTasks):
         })
     except Exception as e:
         logger.error(f"Firma seç hatası: {e}")
-        return JSONResponse({"cevap": f"❌ Hata oluştu: {str(e)}"})
+        return JSONResponse({"cevap": f"❌ Hata oluştu: {_guvenli_hata(e)}"})
     finally:
         db.close()
 
@@ -540,7 +583,7 @@ async def cariler_getir(request: Request, background_tasks: BackgroundTasks, ref
         return JSONResponse({"cariler": sonuc, "toplam": len(sonuc)})
     except Exception as e:
         logger.error(f"Cariler hatası: {e}")
-        return JSONResponse({"cariler": [], "hata": str(e)})
+        return JSONResponse({"cariler": [], "hata": _guvenli_hata(e)})
 
 
 # ── HESAP ÖZETİ ───────────────────────────────────────────────────────
@@ -575,7 +618,7 @@ async def hesap_ozeti(request: Request, background_tasks: BackgroundTasks):
         return JSONResponse(await async_hesap_ozeti_getir())
     except Exception as e:
         logger.error(f"Hesap özeti hatası: {e}")
-        return JSONResponse({"hata": str(e)})
+        return JSONResponse({"hata": _guvenli_hata(e)})
 
 
 @app.get("/api/islem-gecmisi/{cari_adi}")
@@ -631,7 +674,7 @@ async def islem_gecmisi(cari_adi: str, request: Request, background_tasks: Backg
         })
     except Exception as e:
         logger.error(f"İşlem geçmişi hatası: {e}")
-        return JSONResponse({"hata": str(e)})
+        return JSONResponse({"hata": _guvenli_hata(e)})
 
 
 # ── TAHSİLAT ─────────────────────────────────────────────────────────
@@ -715,7 +758,7 @@ async def tahsilat_ekle_endpoint(request: Request, background_tasks: BackgroundT
                                   "cevap": f"❌ Tahsilat eklenemedi: {sonuc.get('hata', 'Bilinmeyen hata')}"})
     except Exception as e:
         logger.error(f"Tahsilat endpoint hatası: {e}")
-        return JSONResponse({"basarili": False, "cevap": f"❌ Hata: {str(e)}"})
+        return JSONResponse({"basarili": False, "cevap": f"❌ Hata: {_guvenli_hata(e)}"})
 
 
 # ── YENİ CARİ ────────────────────────────────────────────────────────
@@ -758,7 +801,7 @@ async def cari_olustur_endpoint(request: Request, background_tasks: BackgroundTa
                                   "cevap": f"❌ Cari oluşturulamadı: {sonuc.get('hata', 'Bilinmeyen hata')}"})
     except Exception as e:
         logger.error(f"Cari oluştur hatası: {e}")
-        return JSONResponse({"basarili": False, "cevap": f"❌ Hata: {str(e)}"})
+        return JSONResponse({"basarili": False, "cevap": f"❌ Hata: {_guvenli_hata(e)}"})
 
 
 # ── BEKLEYENİRSALİYELER ──────────────────────────────────────────────
@@ -846,7 +889,7 @@ async def bekleyen_irsaliyeler(request: Request, background_tasks: BackgroundTas
         })
     except Exception as e:
         logger.error(f"Bekleyen irsaliye hatası: {e}")
-        return JSONResponse({"irsaliyeler": [], "hata": str(e)})
+        return JSONResponse({"irsaliyeler": [], "hata": _guvenli_hata(e)})
     finally:
         db.close()
 
@@ -866,9 +909,9 @@ async def gunluk_ozet(request: Request, background_tasks: BackgroundTasks):
     db = SessionLocal()
     try:
         from app.core.database import WeighTicket, TicketStatus
-        from datetime import date
-        bugun        = date.today().strftime("%Y-%m-%d")
-        bugun_fisler = db.query(WeighTicket).filter(WeighTicket.created_at >= bugun).all()
+        from datetime import date, datetime, time
+        bugun_baslangic = datetime.combine(date.today(), time.min)
+        bugun_fisler = db.query(WeighTicket).filter(WeighTicket.created_at >= bugun_baslangic).all()
         toplam_kg    = sum(t.agirlik_kg or 0 for t in bugun_fisler)
         tamamlanan   = sum(1 for t in bugun_fisler if t.status == TicketStatus.TAMAMLANDI)
         bekleyen     = sum(1 for t in bugun_fisler if t.status not in [
@@ -877,7 +920,7 @@ async def gunluk_ozet(request: Request, background_tasks: BackgroundTasks):
                               "toplam_kg": toplam_kg, "toplam_ton": round(toplam_kg / 1000, 2),
                               "tamamlanan": tamamlanan, "bekleyen": bekleyen})
     except Exception as e:
-        return JSONResponse({"hata": str(e)})
+        return JSONResponse({"hata": _guvenli_hata(e)})
     finally:
         db.close()
 
@@ -901,7 +944,7 @@ async def son_fisler(request: Request, background_tasks: BackgroundTasks):
             for t in fisler
         ]})
     except Exception as e:
-        return JSONResponse({"fisler": [], "hata": str(e)})
+        return JSONResponse({"fisler": [], "hata": _guvenli_hata(e)})
     finally:
         db.close()
 
@@ -917,7 +960,7 @@ async def fatura_detay_endpoint(fatura_id: str, request: Request, background_tas
         from app.parasut.client import async_fatura_detay_getir
         return JSONResponse(await async_fatura_detay_getir(fatura_id))
     except Exception as e:
-        return JSONResponse({"hata": str(e)})
+        return JSONResponse({"hata": _guvenli_hata(e)})
 
 
 @app.get("/api/cari-faturalar/{cari_adi}")
@@ -957,7 +1000,7 @@ async def cari_faturalar_endpoint(cari_adi: str, request: Request, background_ta
         sonuc = await async_cari_faturalari_getir(cari_id, limit, sayfa, baslangic, bitis, durum)
         return JSONResponse(sonuc)
     except Exception as e:
-        return JSONResponse({"faturalar": [], "hata": str(e)})
+        return JSONResponse({"faturalar": [], "hata": _guvenli_hata(e)})
 
 
 # ── TOPLU FATURA KES ─────────────────────────────────────────────────
@@ -1059,9 +1102,16 @@ async def toplu_fatura_kes_endpoint(request: Request, background_tasks: Backgrou
                     ticket = db.query(WeighTicket).filter(WeighTicket.id == waybill.ticket_id).first()
                     if ticket:
                         ticket.status = TicketStatus.TAMAMLANDI
-                    db.commit()
             except Exception as e:
                 logger.error(f"DB güncelleme hatası ({pid}): {e}")
+                db.rollback()
+        try:
+            db.commit()
+        except Exception as e:
+            logger.error(f"Toplu fatura DB commit hatası: {e}")
+            db.rollback()
+
+        for pid in irsaliye_ids:
             try:
                 await async_parasut_delete(f"/{PARASUT_COMPANY_ID}/shipment_documents/{pid}")
             except Exception as e:
@@ -1078,7 +1128,7 @@ async def toplu_fatura_kes_endpoint(request: Request, background_tasks: Backgrou
         })
     except Exception as e:
         logger.error(f"Toplu fatura kes hatası: {e}")
-        return JSONResponse({"cevap": f"❌ Toplu fatura kesilemedi: {str(e)}", "basarili": False})
+        return JSONResponse({"cevap": f"❌ Toplu fatura kesilemedi: {_guvenli_hata(e)}", "basarili": False})
     finally:
         db.close()
 
@@ -1195,7 +1245,7 @@ async def fatura_kes_endpoint(request: Request, background_tasks: BackgroundTask
     except Exception as e:
         logger.error(f"Fatura kes hatası: {e}")
         _islem_log(db, "FATURA_HATA", cari_adi=cari_adi, irsaliye_id=str(parasut_irsaliye_id), aciklama=str(e))
-        return JSONResponse({"cevap": f"❌ Fatura kesilemedi: {str(e)}", "basarili": False})
+        return JSONResponse({"cevap": f"❌ Fatura kesilemedi: {_guvenli_hata(e)}", "basarili": False})
     finally:
         db.close()
 
@@ -1203,16 +1253,24 @@ async def fatura_kes_endpoint(request: Request, background_tasks: BackgroundTask
 # ── KULLANIM ÖZETİ ────────────────────────────────────────────────────
 
 @app.get("/api/kullanim-ozeti/{user_id}")
-def kullanim_ozeti_endpoint(user_id: str):
+def kullanim_ozeti_endpoint(user_id: str, request: Request):
     from app.core.database import SessionLocal, UsageLog
     from sqlalchemy import func as sqlfunc, text, or_
     from datetime import date, timedelta
+    # Kullanıcı yalnızca kendi özetine erişebilir; adminler herkese bakabilir.
+    aktif_user = mevcut_kullanici(request)
+    if not _admin_kontrol(request):
+        kendi_id       = str(aktif_user.get("profaix_user_id") or "")
+        kendi_username = str(aktif_user.get("username") or "")
+        if user_id not in {kendi_id, kendi_username, str(aktif_user.get("id", ""))}:
+            return JSONResponse({"hata": "Yetkisiz erişim"}, status_code=403)
     db = SessionLocal()
     try:
+        from datetime import datetime, time as _time
         bugun              = date.today()
-        bu_ay_baslangic    = bugun.replace(day=1).strftime("%Y-%m-%d")
+        bu_ay_baslangic    = datetime.combine(bugun.replace(day=1), _time.min)
         gecen_ay_son       = bugun.replace(day=1)
-        gecen_ay_baslangic = (gecen_ay_son - timedelta(days=1)).replace(day=1).strftime("%Y-%m-%d")
+        gecen_ay_baslangic = datetime.combine((gecen_ay_son - timedelta(days=1)).replace(day=1), _time.min)
         filtre  = or_(UsageLog.profaix_user_id == user_id, UsageLog.username == user_id)
         toplam  = db.query(UsageLog).filter(filtre, UsageLog.ucretli == 1).count()
         dagilim = db.query(UsageLog.islem_turu, sqlfunc.count(UsageLog.id).label("adet")).filter(
@@ -1235,7 +1293,7 @@ def kullanim_ozeti_endpoint(user_id: str):
                               "gunluk_son30": [{"tarih": str(row.gun), "adet": row.adet} for row in gunluk]})
     except Exception as e:
         logger.error(f"Kullanım özeti hatası: {e}")
-        return JSONResponse({"hata": str(e)}, status_code=500)
+        return JSONResponse({"hata": _guvenli_hata(e, "Sunucu hatası")}, status_code=500)
     finally:
         db.close()
 
@@ -1252,7 +1310,7 @@ def irsaliye_debug(irsaliye_id: str, request: Request):
         return JSONResponse(parasut_get(f"/{PARASUT_COMPANY_ID}/shipment_documents/{irsaliye_id}",
                                          params={"include": "stock_movements,contact"}))
     except Exception as e:
-        return JSONResponse({"hata": str(e)})
+        return JSONResponse({"hata": _guvenli_hata(e)})
 
 
 @app.get("/admin/islem-loglari")
@@ -1274,7 +1332,7 @@ def islem_loglari(request: Request, limit: int = 50, islem_tipi: str = None):
             for l in loglar
         ], "toplam": len(loglar)})
     except Exception as e:
-        return JSONResponse({"hata": str(e)})
+        return JSONResponse({"hata": _guvenli_hata(e)})
     finally:
         db.close()
 
@@ -1296,7 +1354,7 @@ def konusmalar(request: Request, limit: int = 20):
             for s in sessionlar
         ]})
     except Exception as e:
-        return JSONResponse({"hata": str(e)})
+        return JSONResponse({"hata": _guvenli_hata(e)})
     finally:
         db.close()
 
@@ -1316,7 +1374,7 @@ async def accounts_debug(request: Request):
                     for h in sonuc.get("data", [])]
         return JSONResponse({"hesaplar": hesaplar})
     except Exception as e:
-        return JSONResponse({"hata": str(e)})
+        return JSONResponse({"hata": _guvenli_hata(e)})
 
 
 # ── ADMIN RESET-DB — GET'ten POST'a alındı ────────────────────────────
