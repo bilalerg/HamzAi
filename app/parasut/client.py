@@ -327,89 +327,100 @@ def cari_faturalari_getir(
     sayfa: int = 1,
     baslangic: str = None,
     bitis: str = None,
-    durum: str = None,          # "paid" | "not_paid" | "overdue" | None=hepsi
+    durum: str = None,
 ) -> dict:
     """
-    Carinin faturalarını sayfalı ve filtrelenmiş olarak getirir.
-
-    Dönüş:
-        {
-            "faturalar": [...],
-            "toplam": int,          # bu sayfadaki kayıt sayısı
-            "sayfa": int,
-            "sonraki_sayfa_var": bool
-        }
-
-    Parametreler:
-        limit     : Sayfa başına kayıt (max 25, Paraşüt limiti)
-        sayfa     : Kaçıncı sayfa (1'den başlar)
-        baslangic : "YYYY-MM-DD" — bu tarihten itibaren
-        bitis     : "YYYY-MM-DD" — bu tarihe kadar
-        durum     : Ödeme durumu filtresi
+    Carinin faturalarını sayfalı ve filtrelenmiş getirir.
+    NOT: Paraşüt tarih aralığı filtresini (gte/lte) desteklemiyor.
+    Tarih filtresi client-side uygulanıyor — tüm faturalar çekilip sonra filtreleniyor.
+    durum filtresi (payment_status) Paraşüt tarafında uygulanıyor.
     """
     try:
-        params = {
-            "filter[contact_id]": cari_id,
-            "page[size]":         min(limit, 25),
-            "page[number]":       sayfa,
-            "sort":               "-issue_date",
-            "include":            "contact"
-        }
-        if baslangic:
-            params["filter[issue_date_gte]"] = baslangic
-        if bitis:
-            params["filter[issue_date_lte]"] = bitis
-        if durum:
-            params["filter[payment_status]"] = durum
+        # Tüm faturalar üzerinde tarih filtresi uygulayacağız
+        # durum filtresi Paraşüt'e gönderiliyor (destekleniyor)
+        tum_faturalar = []
+        page = 1
+        while page <= 60:
+            params = {
+                "filter[contact_id]": cari_id,
+                "page[size]":         25,
+                "page[number]":       page,
+                "sort":               "-issue_date",
+                "include":            "contact"
+            }
+            if durum:
+                params["filter[payment_status]"] = durum
 
-        sonuc     = parasut_get(f"/{PARASUT_COMPANY_ID}/sales_invoices", params=params)
-        data      = sonuc.get("data", [])
-        meta      = sonuc.get("meta", {})
-        # Paraşüt toplam kayıt sayısını meta'da döndürür
-        toplam_kayit = int(meta.get("total_count", len(data)))
+            sonuc = parasut_get(f"/{PARASUT_COMPANY_ID}/sales_invoices", params=params)
+            data  = sonuc.get("data", [])
+            if not data:
+                break
 
-        faturalar = []
-        for f in data:
-            attr = f.get("attributes", {})
-            try:
-                kalan = float(attr.get("remaining") or 0)
-            except (ValueError, TypeError):
-                kalan = 0.0
-            try:
-                tutar = float(attr.get("gross_total") or 0)
-            except (ValueError, TypeError):
-                tutar = 0.0
-            aciklama    = attr.get("description") or ""
-            plaka       = None
-            plaka_match = re.search(r'\b(\d{2}[A-ZÇŞĞÜÖİ]{1,3}\d{2,4})\b', aciklama)
-            if plaka_match:
-                plaka = plaka_match.group(1)
-            irsaliye_ids = [
-                d["id"] for d in f.get("relationships", {}).get("shipment_documents", {}).get("data", [])
-            ]
-            irsaliye_id = None
-            m = re.search(r'[İI]rsaliye\s+(\d{8,})', aciklama)
-            if m:
-                irsaliye_id = m.group(1)
-            faturalar.append({
-                "id":           f["id"],
-                "tarih":        attr.get("issue_date", "-"),
-                "vade":         attr.get("due_date", "-"),
-                "tutar":        tutar,
-                "kalan":        kalan,
-                "durum":        attr.get("payment_status", "-"),
-                "aciklama":     aciklama or "-",
-                "plaka":        plaka,
-                "irsaliye_id":  irsaliye_id or (irsaliye_ids[0] if irsaliye_ids else None),
-                "irsaliye_ids": irsaliye_ids,
-            })
+            for f in data:
+                attr  = f.get("attributes", {})
+                tarih = attr.get("issue_date", "")
+
+                # Client-side tarih filtresi
+                if baslangic and tarih < baslangic:
+                    continue
+                if bitis and tarih > bitis:
+                    continue
+
+                try:
+                    kalan = float(attr.get("remaining") or 0)
+                except (ValueError, TypeError):
+                    kalan = 0.0
+                try:
+                    tutar = float(attr.get("gross_total") or 0)
+                except (ValueError, TypeError):
+                    tutar = 0.0
+                aciklama    = attr.get("description") or ""
+                plaka       = None
+                plaka_match = re.search(r'\b(\d{2}[A-ZÇŞĞÜÖİ]{1,3}\d{2,4})\b', aciklama)
+                if plaka_match:
+                    plaka = plaka_match.group(1)
+                irsaliye_ids = [
+                    d["id"] for d in f.get("relationships", {}).get("shipment_documents", {}).get("data", [])
+                ]
+                irsaliye_id = None
+                m = re.search(r'[İI]rsaliye\s+(\d{8,})', aciklama)
+                if m:
+                    irsaliye_id = m.group(1)
+                tum_faturalar.append({
+                    "id":           f["id"],
+                    "tarih":        tarih,
+                    "vade":         attr.get("due_date", "-"),
+                    "tutar":        tutar,
+                    "kalan":        kalan,
+                    "durum":        attr.get("payment_status", "-"),
+                    "aciklama":     aciklama or "-",
+                    "plaka":        plaka,
+                    "irsaliye_id":  irsaliye_id or (irsaliye_ids[0] if irsaliye_ids else None),
+                    "irsaliye_ids": irsaliye_ids,
+                })
+
+            # Erken çıkış: tarih azalan sırada geliyor
+            if baslangic and data:
+                en_eski = data[-1].get("attributes", {}).get("issue_date", "")
+                if en_eski and en_eski < baslangic:
+                    break
+
+            if len(data) < 25:
+                break
+            page += 1
+
+        # Sayfalama
+        toplam_kayit     = len(tum_faturalar)
+        baslangic_idx    = (sayfa - 1) * min(limit, 25)
+        bitis_idx        = baslangic_idx + min(limit, 25)
+        sayfa_faturalari = tum_faturalar[baslangic_idx:bitis_idx]
 
         return {
-            "faturalar":          faturalar,
-            "toplam":             len(faturalar),
+            "faturalar":          sayfa_faturalari,
+            "toplam":             len(sayfa_faturalari),
             "toplam_kayit":       toplam_kayit,
             "sayfa":              sayfa,
-            "sonraki_sayfa_var":  len(faturalar) == min(limit, 25),
+            "sonraki_sayfa_var":  toplam_kayit > bitis_idx,
         }
     except Exception as e:
         logger.error(f"Cari fatura hatası: {e}")
@@ -715,88 +726,115 @@ def tum_bekleyen_irsaliyeleri_getir(
     sayfa_basi: int = 25,
 ) -> dict:
     """
-    Bekleyen irsaliyeleri sayfalı ve tarih filtreli getirir.
-
-    Parametreler:
-        baslangic  : "YYYY-MM-DD" — bu tarihten itibaren
-        bitis      : "YYYY-MM-DD" — bu tarihe kadar
-        sayfa      : Kaçıncı sayfa (1'den başlar)
-        sayfa_basi : Sayfa başına irsaliye (max 25)
-
-    Dönüş:
-        {
-            "irsaliyeler": {contact_id: [...]},
-            "sonraki_sayfa_var": bool,
-            "sayfa": int
-        }
+    Bekleyen irsaliyeleri sayfalı getirir.
+    NOT: Paraşüt issue_date_gte/lte filtrelerini desteklemiyor.
+    Tarih filtresi API'dan tüm veri çekildikten sonra client-side uygulanıyor.
     """
     try:
+        # Paraşüt sadece issue_date (tam eşleşme) destekliyor,
+        # aralık filtresi yok — tüm irsaliyeleri çekip filtrele
+        tum_irsaliyeler = []
+        page = 1
+        while page <= 50:
+            params = {
+                "page[size]":   25,
+                "page[number]": page,
+                "sort":         "-issue_date",
+                "include":      "stock_movements,contact"
+            }
+            sonuc    = parasut_get(f"/{PARASUT_COMPANY_ID}/shipment_documents", params=params)
+            data     = sonuc.get("data", [])
+            if not data:
+                break
+            included    = sonuc.get("included", [])
+            sm_map      = {inc["id"]: inc.get("attributes", {}) for inc in included if inc.get("type") == "stock_movements"}
+            contact_map = {inc["id"]: inc.get("attributes", {}).get("name", "-") for inc in included if inc.get("type") == "contacts"}
+
+            for i in data:
+                attr         = i.get("attributes", {})
+                rels         = i.get("relationships", {})
+                contact_data = rels.get("contact", {}).get("data", {})
+                contact_id   = contact_data.get("id") if contact_data else None
+                if not contact_id:
+                    continue
+                tarih = attr.get("issue_date", "")
+
+                # Client-side tarih filtresi
+                if baslangic and tarih < baslangic:
+                    # issue_date azalan sırada geliyor, başlangıçtan küçükse artık geri kalanlar da küçük
+                    # ama sayfa sınırlarını aşmamak için continue kullan, while'da kontrol et
+                    continue
+                if bitis and tarih > bitis:
+                    continue
+
+                sm_rels  = rels.get("stock_movements", {}).get("data", [])
+                kalemler = []
+                for sm_ref in sm_rels:
+                    sm_attr = sm_map.get(sm_ref["id"], {})
+                    miktar  = float(sm_attr.get("quantity", 0))
+                    if miktar > 0:
+                        desc        = sm_attr.get("description") or ""
+                        detail_no   = sm_attr.get("detail_no", len(kalemler) + 1)
+                        malzeme_adi = f"Malzeme {detail_no}"
+                        if desc:
+                            try:
+                                norm     = desc.replace(' - ', '—').replace('–', '—')
+                                parcalar = [p.strip() for p in norm.split("—")]
+                                if len(parcalar) >= 3 and "kg" in parcalar[-1].lower():
+                                    malzeme_adi = parcalar[1].strip()
+                                elif len(parcalar) == 2 and "kg" not in parcalar[1].lower():
+                                    malzeme_adi = parcalar[1].strip()
+                                elif len(parcalar) == 1 and parcalar[0]:
+                                    malzeme_adi = parcalar[0].strip()
+                            except Exception:
+                                pass
+                        kalemler.append({"aciklama": malzeme_adi, "miktar_kg": miktar})
+
+                tum_irsaliyeler.append({
+                    "id":         i["id"],
+                    "contact_id": contact_id,
+                    "cari_adi":   contact_map.get(contact_id, "-"),
+                    "tarih":      tarih,
+                    "aciklama":   attr.get("description", "-"),
+                    "kalemler":   kalemler,
+                    "toplam_kg":  sum(k["miktar_kg"] for k in kalemler),
+                })
+
+            # Erken çıkış: sıralı geliyor, başlangıçtan küçük tarihler artık gelmez
+            if baslangic and data:
+                en_eski_tarih = data[-1].get("attributes", {}).get("issue_date", "")
+                if en_eski_tarih and en_eski_tarih < baslangic:
+                    break
+
+            if len(data) < 25:
+                break
+            page += 1
+
+        # Sayfalama (client-side)
+        toplam            = len(tum_irsaliyeler)
+        baslangic_idx     = (sayfa - 1) * sayfa_basi
+        bitis_idx         = baslangic_idx + sayfa_basi
+        sayfa_irsaliyeler = tum_irsaliyeler[baslangic_idx:bitis_idx]
+        sonraki_sayfa_var = toplam > bitis_idx
+
+        # contact_id'ye göre grupla
         gruplu = {}
-        params = {
-            "page[size]":   min(sayfa_basi, 25),
-            "page[number]": sayfa,
-            "sort":         "-issue_date",
-            "include":      "stock_movements,contact"
-        }
-        if baslangic:
-            params["filter[issue_date_gte]"] = baslangic
-        if bitis:
-            params["filter[issue_date_lte]"] = bitis
+        for irs in sayfa_irsaliyeler:
+            cid = irs["contact_id"]
+            if cid not in gruplu:
+                gruplu[cid] = []
+            gruplu[cid].append(irs)
 
-        sonuc    = parasut_get(f"/{PARASUT_COMPANY_ID}/shipment_documents", params=params)
-        data     = sonuc.get("data", [])
-        included = sonuc.get("included", [])
-
-        sm_map      = {inc["id"]: inc.get("attributes", {}) for inc in included if inc.get("type") == "stock_movements"}
-        contact_map = {inc["id"]: inc.get("attributes", {}).get("name", "-") for inc in included if inc.get("type") == "contacts"}
-
-        for i in data:
-            attr         = i.get("attributes", {})
-            rels         = i.get("relationships", {})
-            contact_data = rels.get("contact", {}).get("data", {})
-            contact_id   = contact_data.get("id") if contact_data else None
-            if not contact_id:
-                continue
-            sm_rels  = rels.get("stock_movements", {}).get("data", [])
-            kalemler = []
-            for sm_ref in sm_rels:
-                sm_attr = sm_map.get(sm_ref["id"], {})
-                miktar  = float(sm_attr.get("quantity", 0))
-                if miktar > 0:
-                    desc        = sm_attr.get("description") or ""
-                    detail_no   = sm_attr.get("detail_no", len(kalemler) + 1)
-                    malzeme_adi = f"Malzeme {detail_no}"
-                    if desc:
-                        try:
-                            norm     = desc.replace(' - ', '—').replace('–', '—')
-                            parcalar = [p.strip() for p in norm.split("—")]
-                            if len(parcalar) >= 3 and "kg" in parcalar[-1].lower():
-                                malzeme_adi = parcalar[1].strip()
-                            elif len(parcalar) == 2 and "kg" not in parcalar[1].lower():
-                                malzeme_adi = parcalar[1].strip()
-                            elif len(parcalar) == 1 and parcalar[0]:
-                                malzeme_adi = parcalar[0].strip()
-                        except Exception:
-                            pass
-                    kalemler.append({"aciklama": malzeme_adi, "miktar_kg": miktar})
-            irs = {"id": i["id"], "contact_id": contact_id, "cari_adi": contact_map.get(contact_id, "-"),
-                   "tarih": attr.get("issue_date", "-"), "aciklama": attr.get("description", "-"),
-                   "kalemler": kalemler, "toplam_kg": sum(k["miktar_kg"] for k in kalemler)}
-            if contact_id not in gruplu:
-                gruplu[contact_id] = []
-            gruplu[contact_id].append(irs)
-
-        toplam            = sum(len(v) for v in gruplu.values())
-        sonraki_sayfa_var = len(data) == min(sayfa_basi, 25)
-        logger.info(f"Bekleyen irsaliyeler: {toplam} kayıt, sayfa={sayfa}, sonraki={sonraki_sayfa_var}")
+        logger.info(f"Bekleyen irsaliyeler: {toplam} toplam, sayfa={sayfa}, bu sayfada={len(sayfa_irsaliyeler)}")
         return {
             "irsaliyeler":      gruplu,
             "sonraki_sayfa_var": sonraki_sayfa_var,
             "sayfa":            sayfa,
+            "toplam":           toplam,
         }
     except Exception as e:
         logger.error(f"Tüm bekleyen irsaliye hatası: {e}")
-        return {"irsaliyeler": {}, "sonraki_sayfa_var": False, "sayfa": sayfa}
+        return {"irsaliyeler": {}, "sonraki_sayfa_var": False, "sayfa": sayfa, "toplam": 0}
 
 
 def cari_bekleyen_irsaliyeleri_getir(cari_adi: str) -> list:
