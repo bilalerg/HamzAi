@@ -15,6 +15,7 @@ import difflib
 import asyncio
 import requests
 import time
+import threading
 from app.core.config import (
     PARASUT_CLIENT_ID,
     PARASUT_CLIENT_SECRET,
@@ -26,18 +27,20 @@ from app.core.config import (
 from app.core.logger import logger
 
 # ── TOKEN ─────────────────────────────────────────────────────────────
-_access_token     = None
-_refresh_token    = None
+_access_token = None
+_refresh_token = None
 _token_expires_at = 0
+_token_lock = threading.Lock()
 
 # ── CARİ CACHE ────────────────────────────────────────────────────────
-_cari_cache      = None
+_cari_cache = None
 _cari_cache_time = 0
-CACHE_SURE       = 900  # 15 dakika
+CACHE_SURE = 900  # 15 dakika
+_cache_lock = threading.Lock()
 
 # ── RATE LIMIT ────────────────────────────────────────────────────────
 _son_istek_zamani = 0.0
-MIN_ISTEK_ARASI   = 0.35
+MIN_ISTEK_ARASI = 0.35
 
 
 def _rate_limit_bekle():
@@ -53,12 +56,12 @@ def _token_al() -> dict:
     response = requests.post(
         "https://api.parasut.com/oauth/token",
         data={
-            "grant_type":    "password",
-            "client_id":     PARASUT_CLIENT_ID,
+            "grant_type": "password",
+            "client_id": PARASUT_CLIENT_ID,
             "client_secret": PARASUT_CLIENT_SECRET,
-            "username":      PARASUT_USERNAME,
-            "password":      PARASUT_PASSWORD,
-            "redirect_uri":  "urn:ietf:wg:oauth:2.0:oob"
+            "username": PARASUT_USERNAME,
+            "password": PARASUT_PASSWORD,
+            "redirect_uri": "urn:ietf:wg:oauth:2.0:oob"
         }
     )
     if response.status_code != 200:
@@ -72,11 +75,11 @@ def _token_yenile(refresh_token: str) -> dict:
     response = requests.post(
         "https://api.parasut.com/oauth/token",
         data={
-            "grant_type":    "refresh_token",
-            "client_id":     PARASUT_CLIENT_ID,
+            "grant_type": "refresh_token",
+            "client_id": PARASUT_CLIENT_ID,
             "client_secret": PARASUT_CLIENT_SECRET,
             "refresh_token": refresh_token,
-            "redirect_uri":  "urn:ietf:wg:oauth:2.0:oob"
+            "redirect_uri": "urn:ietf:wg:oauth:2.0:oob"
         }
     )
     if response.status_code != 200:
@@ -87,16 +90,25 @@ def _token_yenile(refresh_token: str) -> dict:
 
 def get_token() -> str:
     global _access_token, _refresh_token, _token_expires_at
-    if _access_token is None:
-        veri = _token_al()
-    elif time.time() > _token_expires_at - 60:
-        veri = _token_yenile(_refresh_token)
-    else:
+
+    # Kilitsiz hızlı okuma (Performance optimizasyonu)
+    if _access_token is not None and time.time() <= _token_expires_at - 60:
         return _access_token
-    _access_token     = veri["access_token"]
-    _refresh_token    = veri["refresh_token"]
-    _token_expires_at = time.time() + veri["expires_in"]
-    return _access_token
+
+    with _token_lock:
+        # Kilidi aldıktan sonra tekrar kontrol (Double-checked locking - Race Condition Koruması)
+        if _access_token is not None and time.time() <= _token_expires_at - 60:
+            return _access_token
+
+        if _access_token is None:
+            veri = _token_al()
+        else:
+            veri = _token_yenile(_refresh_token)
+
+        _access_token = veri["access_token"]
+        _refresh_token = veri["refresh_token"]
+        _token_expires_at = time.time() + veri["expires_in"]
+        return _access_token
 
 
 def _istek_yap(method: str, url: str, headers: dict, **kwargs) -> requests.Response:
@@ -107,7 +119,7 @@ def _istek_yap(method: str, url: str, headers: dict, **kwargs) -> requests.Respo
         if response.status_code not in (429, 503, 504):
             return response
         retry_after = response.headers.get("Retry-After")
-        bekleme     = float(retry_after) if retry_after else (2 ** deneme)
+        bekleme = float(retry_after) if retry_after else (2 ** deneme)
         logger.warning(
             f"Paraşüt {response.status_code} — {deneme + 1}. deneme, "
             f"{bekleme:.1f}s bekleniyor... (URL: {url})"
@@ -117,8 +129,8 @@ def _istek_yap(method: str, url: str, headers: dict, **kwargs) -> requests.Respo
 
 
 def parasut_get(endpoint: str, params: dict = None) -> dict:
-    token    = get_token()
-    url      = f"{PARASUT_BASE_URL}{endpoint}"
+    token = get_token()
+    url = f"{PARASUT_BASE_URL}{endpoint}"
     response = _istek_yap(
         "GET", url,
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
@@ -130,8 +142,8 @@ def parasut_get(endpoint: str, params: dict = None) -> dict:
 
 
 def parasut_post(endpoint: str, veri: dict) -> dict:
-    token    = get_token()
-    url      = f"{PARASUT_BASE_URL}{endpoint}"
+    token = get_token()
+    url = f"{PARASUT_BASE_URL}{endpoint}"
     response = _istek_yap(
         "POST", url,
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/vnd.api+json"},
@@ -143,8 +155,8 @@ def parasut_post(endpoint: str, veri: dict) -> dict:
 
 
 def parasut_delete(endpoint: str) -> bool:
-    token    = get_token()
-    url      = f"{PARASUT_BASE_URL}{endpoint}"
+    token = get_token()
+    url = f"{PARASUT_BASE_URL}{endpoint}"
     response = _istek_yap(
         "DELETE", url,
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/vnd.api+json"}
@@ -158,7 +170,7 @@ def parasut_delete(endpoint: str) -> bool:
 
 def _cari_listesi_api() -> list:
     cariler = []
-    page    = 1
+    page = 1
     while page <= 100:
         sonuc = parasut_get(
             f"/{PARASUT_COMPANY_ID}/contacts",
@@ -171,17 +183,17 @@ def _cari_listesi_api() -> list:
             attr = c.get("attributes", {})
             try:
                 bakiye_raw = attr.get("balance")
-                bakiye     = float(bakiye_raw) if bakiye_raw is not None and bakiye_raw != "" else 0.0
+                bakiye = float(bakiye_raw) if bakiye_raw is not None and bakiye_raw != "" else 0.0
             except (ValueError, TypeError):
                 bakiye = 0.0
             cariler.append({
-                "id":            c["id"],
-                "ad":            attr.get("name", "-"),
-                "email":         attr.get("email", "-"),
-                "telefon":       attr.get("phone", "-"),
-                "bakiye":        bakiye,
-                "vergi_no":      attr.get("tax_number", "-"),
-                "adres":         attr.get("address", "-"),
+                "id": c["id"],
+                "ad": attr.get("name", "-"),
+                "email": attr.get("email", "-"),
+                "telefon": attr.get("phone", "-"),
+                "bakiye": bakiye,
+                "vergi_no": attr.get("tax_number", "-"),
+                "adres": attr.get("address", "-"),
                 "vergi_dairesi": attr.get("tax_office", "-"),
             })
         if len(data) < 25:
@@ -194,31 +206,43 @@ def _cari_listesi_api() -> list:
 
 def cari_cache_yenile() -> list:
     global _cari_cache, _cari_cache_time
-    _cari_cache      = _cari_listesi_api()
-    _cari_cache_time = time.time()
+    yeni_liste = _cari_listesi_api()
+    with _cache_lock:
+        _cari_cache = yeni_liste
+        _cari_cache_time = time.time()
     return _cari_cache
 
 
 def cari_listesi_getir(force_refresh: bool = False) -> list:
     global _cari_cache, _cari_cache_time
+
+    # Kilitsiz hızlı okuma
     if not force_refresh and _cari_cache and time.time() - _cari_cache_time < CACHE_SURE:
         return _cari_cache
-    try:
-        return cari_cache_yenile()
-    except Exception as e:
-        logger.error(f"Cari cache yenileme hatası: {e}")
-        return _cari_cache or []
+
+    with _cache_lock:
+        # Kilidi aldıktan sonra double-check
+        if not force_refresh and _cari_cache and time.time() - _cari_cache_time < CACHE_SURE:
+            return _cari_cache
+
+        try:
+            _cari_cache = _cari_listesi_api()
+            _cari_cache_time = time.time()
+            return _cari_cache
+        except Exception as e:
+            logger.error(f"Cari cache yenileme hatası: {e}")
+            return _cari_cache or []
 
 
 # ── CARİ EŞLEŞTIRME — Fuzzy Matching ─────────────────────────────────
 
 _GEREKSIZ_KELIMELER = {"A.S", "A.Ş", "LTD", "ŞTİ", "STI", "SAN", "TIC", "TİC", "VE", "GERI", "DONUSUM", "AS"}
-_FUZZY_ESIK         = 0.72
+_FUZZY_ESIK = 0.72
 
 
 def _normalize_cari_adi(ad: str) -> str:
-    ad        = ad.upper().strip()
-    ad        = re.sub(r'[().،,]', ' ', ad)
+    ad = ad.upper().strip()
+    ad = re.sub(r'[().،,]', ' ', ad)
     kelimeler = [k for k in ad.split() if k not in _GEREKSIZ_KELIMELER]
     return " ".join(kelimeler)
 
@@ -231,8 +255,8 @@ def cari_id_bul(firma_adi: str) -> str | None:
     if not firma_adi:
         return None
     firma_upper = firma_adi.upper().strip()
-    firma_norm  = _normalize_cari_adi(firma_adi)
-    cariler     = cari_listesi_getir()
+    firma_norm = _normalize_cari_adi(firma_adi)
+    cariler = cari_listesi_getir()
 
     for c in cariler:
         if c["ad"].upper() == firma_upper:
@@ -241,21 +265,21 @@ def cari_id_bul(firma_adi: str) -> str | None:
 
     try:
         kelimeler = [k for k in firma_norm.split() if k not in _GEREKSIZ_KELIMELER]
-        arama     = " ".join(kelimeler[:2]) if kelimeler else firma_adi
-        sonuc     = parasut_get(
+        arama = " ".join(kelimeler[:2]) if kelimeler else firma_adi
+        sonuc = parasut_get(
             f"/{PARASUT_COMPANY_ID}/contacts",
             params={"filter[name]": arama, "page[size]": 25}
         )
         api_cariler = sonuc.get("data", [])
         for item in api_cariler:
-            ad      = item.get("attributes", {}).get("name", "")
+            ad = item.get("attributes", {}).get("name", "")
             cari_id = item.get("id")
             if ad.upper() == firma_upper:
                 logger.info(f"Cari tam eşleşme (API): {firma_adi} → {ad} (ID: {cari_id})")
                 return cari_id
         if api_cariler:
-            item    = api_cariler[0]
-            ad      = item.get("attributes", {}).get("name", "")
+            item = api_cariler[0]
+            ad = item.get("attributes", {}).get("name", "")
             cari_id = item.get("id")
             logger.info(f"Cari API ilk sonuç: {firma_adi} → {ad} (ID: {cari_id})")
             return cari_id
@@ -271,7 +295,7 @@ def cari_id_bul(firma_adi: str) -> str | None:
     firma_kelimeler = set(firma_norm.split())
     for c in cariler:
         cari_kelimeler = set(_normalize_cari_adi(c["ad"]).split())
-        anlamli_ortak  = firma_kelimeler & cari_kelimeler - _GEREKSIZ_KELIMELER
+        anlamli_ortak = firma_kelimeler & cari_kelimeler - _GEREKSIZ_KELIMELER
         if len(anlamli_ortak) >= 2:
             logger.info(f"Cari kelime eşleşme (cache): {firma_adi} → {c['ad']} (ID: {c['id']})")
             return c["id"]
@@ -300,21 +324,21 @@ def cari_id_bul(firma_adi: str) -> str | None:
 def cari_detay_getir(cari_id: str) -> dict:
     try:
         sonuc = parasut_get(f"/{PARASUT_COMPANY_ID}/contacts/{cari_id}")
-        attr  = sonuc.get("data", {}).get("attributes", {})
+        attr = sonuc.get("data", {}).get("attributes", {})
         try:
             bakiye_raw = attr.get("balance")
-            bakiye     = float(bakiye_raw) if bakiye_raw is not None and bakiye_raw != "" else 0.0
+            bakiye = float(bakiye_raw) if bakiye_raw is not None and bakiye_raw != "" else 0.0
         except (ValueError, TypeError):
             bakiye = 0.0
         return {
-            "id":            cari_id,
-            "ad":            attr.get("name", "-"),
-            "email":         attr.get("email", "-"),
-            "telefon":       attr.get("phone", "-"),
-            "adres":         attr.get("address", "-"),
-            "vergi_no":      attr.get("tax_number", "-"),
+            "id": cari_id,
+            "ad": attr.get("name", "-"),
+            "email": attr.get("email", "-"),
+            "telefon": attr.get("phone", "-"),
+            "adres": attr.get("address", "-"),
+            "vergi_no": attr.get("tax_number", "-"),
             "vergi_dairesi": attr.get("tax_office", "-"),
-            "bakiye":        bakiye,
+            "bakiye": bakiye,
         }
     except Exception as e:
         logger.error(f"Cari detay hatası: {e}")
@@ -322,45 +346,36 @@ def cari_detay_getir(cari_id: str) -> dict:
 
 
 def cari_faturalari_getir(
-    cari_id: str,
-    limit: int = 25,
-    sayfa: int = 1,
-    baslangic: str = None,
-    bitis: str = None,
-    durum: str = None,
+        cari_id: str,
+        limit: int = 25,
+        sayfa: int = 1,
+        baslangic: str = None,
+        bitis: str = None,
+        durum: str = None,
 ) -> dict:
-    """
-    Carinin faturalarını sayfalı ve filtrelenmiş getirir.
-    NOT: Paraşüt tarih aralığı filtresini (gte/lte) desteklemiyor.
-    Tarih filtresi client-side uygulanıyor — tüm faturalar çekilip sonra filtreleniyor.
-    durum filtresi (payment_status) Paraşüt tarafında uygulanıyor.
-    """
     try:
-        # Tüm faturalar üzerinde tarih filtresi uygulayacağız
-        # durum filtresi Paraşüt'e gönderiliyor (destekleniyor)
         tum_faturalar = []
         page = 1
         while page <= 60:
             params = {
                 "filter[contact_id]": cari_id,
-                "page[size]":         25,
-                "page[number]":       page,
-                "sort":               "-issue_date",
-                "include":            "contact"
+                "page[size]": 25,
+                "page[number]": page,
+                "sort": "-issue_date",
+                "include": "contact"
             }
             if durum:
                 params["filter[payment_status]"] = durum
 
             sonuc = parasut_get(f"/{PARASUT_COMPANY_ID}/sales_invoices", params=params)
-            data  = sonuc.get("data", [])
+            data = sonuc.get("data", [])
             if not data:
                 break
 
             for f in data:
-                attr  = f.get("attributes", {})
+                attr = f.get("attributes", {})
                 tarih = attr.get("issue_date", "")
 
-                # Client-side tarih filtresi
                 if baslangic and tarih < baslangic:
                     continue
                 if bitis and tarih > bitis:
@@ -374,11 +389,15 @@ def cari_faturalari_getir(
                     tutar = float(attr.get("gross_total") or 0)
                 except (ValueError, TypeError):
                     tutar = 0.0
-                aciklama    = attr.get("description") or ""
-                plaka       = None
-                plaka_match = re.search(r'\b(\d{2}[A-ZÇŞĞÜÖİ]{1,3}\d{2,4})\b', aciklama)
+
+                aciklama = attr.get("description") or ""
+                plaka = None
+
+                # YENİ PLAKA REGEX'İ: Boşluklu yazımları da (örn: 34 ABC 123) yakalar
+                plaka_match = re.search(r'\b(\d{2}\s*[A-ZÇŞĞÜÖİ]{1,3}\s*\d{2,4})\b', aciklama)
                 if plaka_match:
-                    plaka = plaka_match.group(1)
+                    plaka = plaka_match.group(1).replace(" ", "")  # Sisteme boşluksuz standart kaydet
+
                 irsaliye_ids = [
                     d["id"] for d in f.get("relationships", {}).get("shipment_documents", {}).get("data", [])
                 ]
@@ -387,19 +406,18 @@ def cari_faturalari_getir(
                 if m:
                     irsaliye_id = m.group(1)
                 tum_faturalar.append({
-                    "id":           f["id"],
-                    "tarih":        tarih,
-                    "vade":         attr.get("due_date", "-"),
-                    "tutar":        tutar,
-                    "kalan":        kalan,
-                    "durum":        attr.get("payment_status", "-"),
-                    "aciklama":     aciklama or "-",
-                    "plaka":        plaka,
-                    "irsaliye_id":  irsaliye_id or (irsaliye_ids[0] if irsaliye_ids else None),
+                    "id": f["id"],
+                    "tarih": tarih,
+                    "vade": attr.get("due_date", "-"),
+                    "tutar": tutar,
+                    "kalan": kalan,
+                    "durum": attr.get("payment_status", "-"),
+                    "aciklama": aciklama or "-",
+                    "plaka": plaka,
+                    "irsaliye_id": irsaliye_id or (irsaliye_ids[0] if irsaliye_ids else None),
                     "irsaliye_ids": irsaliye_ids,
                 })
 
-            # Erken çıkış: tarih azalan sırada geliyor
             if baslangic and data:
                 en_eski = data[-1].get("attributes", {}).get("issue_date", "")
                 if en_eski and en_eski < baslangic:
@@ -409,18 +427,17 @@ def cari_faturalari_getir(
                 break
             page += 1
 
-        # Sayfalama
-        toplam_kayit     = len(tum_faturalar)
-        baslangic_idx    = (sayfa - 1) * min(limit, 25)
-        bitis_idx        = baslangic_idx + min(limit, 25)
+        toplam_kayit = len(tum_faturalar)
+        baslangic_idx = (sayfa - 1) * min(limit, 25)
+        bitis_idx = baslangic_idx + min(limit, 25)
         sayfa_faturalari = tum_faturalar[baslangic_idx:bitis_idx]
 
         return {
-            "faturalar":          sayfa_faturalari,
-            "toplam":             len(sayfa_faturalari),
-            "toplam_kayit":       toplam_kayit,
-            "sayfa":              sayfa,
-            "sonraki_sayfa_var":  toplam_kayit > bitis_idx,
+            "faturalar": sayfa_faturalari,
+            "toplam": len(sayfa_faturalari),
+            "toplam_kayit": toplam_kayit,
+            "sayfa": sayfa,
+            "sonraki_sayfa_var": toplam_kayit > bitis_idx,
         }
     except Exception as e:
         logger.error(f"Cari fatura hatası: {e}")
@@ -429,33 +446,33 @@ def cari_faturalari_getir(
 
 def fatura_detay_getir(fatura_id: str) -> dict:
     try:
-        sonuc    = parasut_get(
+        sonuc = parasut_get(
             f"/{PARASUT_COMPANY_ID}/sales_invoices/{fatura_id}",
             params={"include": "contact,details,details.product,payments"}
         )
-        data     = sonuc.get("data", {})
-        attr     = data.get("attributes", {})
+        data = sonuc.get("data", {})
+        attr = data.get("attributes", {})
         included = sonuc.get("included", [])
-        detail_ids  = {d["id"] for d in data.get("relationships", {}).get("details", {}).get("data", [])}
-        kalemler    = []
+        detail_ids = {d["id"] for d in data.get("relationships", {}).get("details", {}).get("data", [])}
+        kalemler = []
         for inc in included:
             if inc.get("type") == "sales_invoice_details" and inc["id"] in detail_ids:
                 a = inc.get("attributes", {})
                 try:
-                    miktar      = float(a.get("quantity") or 0)
+                    miktar = float(a.get("quantity") or 0)
                     birim_fiyat = float(a.get("unit_price") or 0)
                     tutar_kalem = miktar * birim_fiyat
                 except (ValueError, TypeError):
                     miktar = birim_fiyat = tutar_kalem = 0.0
                 kalemler.append({"aciklama": a.get("description") or "Hurda", "miktar": miktar,
-                                  "birim_fiyat": birim_fiyat, "tutar": tutar_kalem})
+                                 "birim_fiyat": birim_fiyat, "tutar": tutar_kalem})
         payment_ids = {p["id"] for p in data.get("relationships", {}).get("payments", {}).get("data", [])}
         tahsilatlar = []
         for inc in included:
             if inc.get("type") == "payments" and inc["id"] in payment_ids:
                 a = inc.get("attributes", {})
                 tahsilatlar.append({"tarih": a.get("date", "-"), "tutar": float(a.get("amount", 0)),
-                                     "aciklama": a.get("description", "-")})
+                                    "aciklama": a.get("description", "-")})
         irsaliye_ids = [d["id"] for d in data.get("relationships", {}).get("shipment_documents", {}).get("data", [])]
         try:
             tutar = float(attr.get("gross_total") or 0)
@@ -494,16 +511,16 @@ def acik_faturalar_getir() -> list:
         )
         faturalar = []
         for f in sonuc.get("data", []):
-            attr     = f.get("attributes", {})
+            attr = f.get("attributes", {})
             aciklama = attr.get("description") or ""
             irsaliye_id = None
             m = re.search(r'[İI]rsaliye\s+(\d{8,})', aciklama)
             if m:
                 irsaliye_id = m.group(1)
             faturalar.append({"id": f["id"], "tarih": attr.get("issue_date", "-"),
-                               "vade": attr.get("due_date", "-"), "tutar": attr.get("gross_total", 0),
-                               "kalan": attr.get("remaining", 0), "aciklama": aciklama or "-",
-                               "irsaliye_id": irsaliye_id})
+                              "vade": attr.get("due_date", "-"), "tutar": attr.get("gross_total", 0),
+                              "kalan": attr.get("remaining", 0), "aciklama": aciklama or "-",
+                              "irsaliye_id": irsaliye_id})
         return faturalar
     except Exception as e:
         logger.error(f"Açık fatura hatası: {e}")
@@ -511,14 +528,9 @@ def acik_faturalar_getir() -> list:
 
 
 def hesap_ozeti_getir() -> dict:
-    """
-    DÜZELTME: Eskiden force_refresh=True kullanılıyordu — her sorguda
-    tüm cariler Paraşüt'ten çekiliyordu (~30 saniye, event loop donuyordu).
-    Artık cache kullanılıyor. Güncel bakiye için /api/cariler?refresh=true.
-    """
     try:
-        cariler         = cari_listesi_getir()  # force_refresh kaldırıldı
-        toplam_alacak   = sum(c["bakiye"] for c in cariler if c["bakiye"] > 0)
+        cariler = cari_listesi_getir()
+        toplam_alacak = sum(c["bakiye"] for c in cariler if c["bakiye"] > 0)
         toplam_odeyecek = sum(abs(c["bakiye"]) for c in cariler if c["bakiye"] < 0)
         return {"toplam_cari": len(cariler), "toplam_alacak": toplam_alacak, "toplam_borclu": toplam_odeyecek}
     except Exception as e:
@@ -528,9 +540,9 @@ def hesap_ozeti_getir() -> dict:
 
 def islem_gecmisi_getir(cari_id: str, baslangic: str = None, bitis: str = None) -> dict:
     try:
-        cari                 = cari_detay_getir(cari_id)
-        bakiye               = cari.get("bakiye", 0.0)
-        islemler             = []
+        cari = cari_detay_getir(cari_id)
+        bakiye = cari.get("bakiye", 0.0)
+        islemler = []
         eklenen_tahsilat_ids = set()
         page = 1
         while page <= 50:
@@ -539,12 +551,12 @@ def islem_gecmisi_getir(cari_id: str, baslangic: str = None, bitis: str = None) 
                 params={"filter[contact_id]": cari_id, "include": "payments",
                         "page[size]": 25, "page[number]": page, "sort": "-issue_date"}
             )
-            faturalar   = fatura_sonuc.get("data", [])
-            included    = fatura_sonuc.get("included", [])
+            faturalar = fatura_sonuc.get("data", [])
+            included = fatura_sonuc.get("included", [])
             payment_map = {item["id"]: item for item in included if item.get("type") == "payments"}
 
             for f in faturalar:
-                attr  = f.get("attributes", {})
+                attr = f.get("attributes", {})
                 tarih = attr.get("issue_date", "-")
                 if not baslangic or tarih >= baslangic:
                     if not bitis or tarih <= bitis:
@@ -553,9 +565,9 @@ def islem_gecmisi_getir(cari_id: str, baslangic: str = None, bitis: str = None) 
                         except (ValueError, TypeError):
                             tutar = 0.0
                         islemler.append({"id": f.get("id"), "tarih": tarih, "tur": "sales_invoice",
-                                          "aciklama": attr.get("description") or "Satış Faturası",
-                                          "tutar": tutar, "durum": attr.get("payment_status", "-"),
-                                          "kalan": float(attr.get("remaining") or 0)})
+                                         "aciklama": attr.get("description") or "Satış Faturası",
+                                         "tutar": tutar, "durum": attr.get("payment_status", "-"),
+                                         "kalan": float(attr.get("remaining") or 0)})
                 for pid in [d["id"] for d in f.get("relationships", {}).get("payments", {}).get("data", [])]:
                     if pid in eklenen_tahsilat_ids:
                         continue
@@ -563,7 +575,7 @@ def islem_gecmisi_getir(cari_id: str, baslangic: str = None, bitis: str = None) 
                     if not p:
                         continue
                     eklenen_tahsilat_ids.add(pid)
-                    pattr  = p.get("attributes", {})
+                    pattr = p.get("attributes", {})
                     ptarih = pattr.get("date", "-")
                     if baslangic and ptarih < baslangic:
                         continue
@@ -574,8 +586,8 @@ def islem_gecmisi_getir(cari_id: str, baslangic: str = None, bitis: str = None) 
                     except (ValueError, TypeError):
                         ptutar = 0.0
                     islemler.append({"id": pid, "tarih": ptarih, "tur": "payment",
-                                      "aciklama": pattr.get("notes") or pattr.get("description") or "Tahsilat",
-                                      "tutar": -ptutar, "durum": "paid", "kalan": 0})
+                                     "aciklama": pattr.get("notes") or pattr.get("description") or "Tahsilat",
+                                     "tutar": -ptutar, "durum": "paid", "kalan": 0})
             if len(faturalar) < 25:
                 break
             page += 1
@@ -592,13 +604,13 @@ def cari_olustur(firma_adi: str, email: str = None, telefon: str = None,
                  vergi_no: str = None, vergi_dairesi: str = None, adres: str = None) -> dict:
     try:
         attributes = {"name": firma_adi, "contact_type": "company", "account_type": "customer"}
-        if email:         attributes["email"]      = email
-        if telefon:       attributes["phone"]       = telefon
-        if vergi_no:      attributes["tax_number"]  = vergi_no
-        if vergi_dairesi: attributes["tax_office"]  = vergi_dairesi
-        if adres:         attributes["address"]     = adres
-        istek   = {"data": {"type": "contacts", "attributes": attributes}}
-        sonuc   = parasut_post(f"/{PARASUT_COMPANY_ID}/contacts", istek)
+        if email:         attributes["email"] = email
+        if telefon:       attributes["phone"] = telefon
+        if vergi_no:      attributes["tax_number"] = vergi_no
+        if vergi_dairesi: attributes["tax_office"] = vergi_dairesi
+        if adres:         attributes["address"] = adres
+        istek = {"data": {"type": "contacts", "attributes": attributes}}
+        sonuc = parasut_post(f"/{PARASUT_COMPANY_ID}/contacts", istek)
         cari_id = sonuc["data"]["id"]
         logger.info(f"Yeni cari oluşturuldu: {firma_adi} (ID: {cari_id})")
         cari_cache_yenile()
@@ -610,6 +622,7 @@ def cari_olustur(firma_adi: str, email: str = None, telefon: str = None,
 
 # ── KASA HESABI ───────────────────────────────────────────────────────
 _kasa_hesabi_id = None
+
 
 def _kasa_hesabi_bul() -> str | None:
     global _kasa_hesabi_id
@@ -633,7 +646,7 @@ def _kasa_hesabi_bul() -> str | None:
 def fatura_tahsilat_ekle(fatura_id: str, tutar: float, aciklama: str = None, tarih: str = None) -> dict:
     try:
         from datetime import datetime
-        bugun    = tarih or datetime.now().strftime("%Y-%m-%d")
+        bugun = tarih or datetime.now().strftime("%Y-%m-%d")
         hesap_id = _kasa_hesabi_bul()
         if not hesap_id:
             return {"basarili": False, "hata": "Kasa/banka hesabı bulunamadı."}
@@ -660,10 +673,6 @@ def fatura_tahsilat_ekle(fatura_id: str, tutar: float, aciklama: str = None, tar
 
 
 def tahsilat_ekle(cari_adi: str, tutar: float, aciklama: str = None, tarih: str = None) -> dict:
-    """
-    Carinin açık faturalarına tahsilat ekler. Birden fazla faturaya böler.
-    Kısmi başarı durumunda basarisiz_fatura sayısı döner — frontend uyarmalı.
-    """
     try:
         cari_id = cari_id_bul(cari_adi)
         if not cari_id:
@@ -675,17 +684,17 @@ def tahsilat_ekle(cari_adi: str, tutar: float, aciklama: str = None, tarih: str 
         )
         faturalar = []
         for f in sonuc.get("data", []):
-            attr  = f.get("attributes", {})
+            attr = f.get("attributes", {})
             kalan = float(attr.get("remaining") or attr.get("gross_total") or 0)
             if kalan > 0:
                 faturalar.append({"id": f["id"], "tarih": attr.get("issue_date", "-"),
-                                   "tutar": float(attr.get("gross_total", 0)), "kalan": kalan})
+                                  "tutar": float(attr.get("gross_total", 0)), "kalan": kalan})
         if not faturalar:
             return {"basarili": False, "hata": f"{cari_adi} için açık fatura bulunamadı."}
 
-        kalan_tutar      = float(tutar)
+        kalan_tutar = float(tutar)
         odenen_faturalar = []
-        toplam_odenen    = 0.0
+        toplam_odenen = 0.0
         basarisiz_sayisi = 0
 
         for fatura in faturalar:
@@ -701,7 +710,7 @@ def tahsilat_ekle(cari_adi: str, tutar: float, aciklama: str = None, tarih: str 
             if odeme_sonuc.get("basarili"):
                 odenen_faturalar.append({"fatura_id": fatura["id"], "odenen": odeme_miktari})
                 toplam_odenen += odeme_miktari
-                kalan_tutar   -= odeme_miktari
+                kalan_tutar -= odeme_miktari
                 logger.info(f"Tahsilat: {cari_adi} — {odeme_miktari:,.0f} TL → fatura {fatura['id']}")
             else:
                 basarisiz_sayisi += 1
@@ -720,65 +729,56 @@ def tahsilat_ekle(cari_adi: str, tutar: float, aciklama: str = None, tarih: str 
 
 
 def tum_bekleyen_irsaliyeleri_getir(
-    baslangic: str = None,
-    bitis: str = None,
-    sayfa: int = 1,
-    sayfa_basi: int = 25,
+        baslangic: str = None,
+        bitis: str = None,
+        sayfa: int = 1,
+        sayfa_basi: int = 25,
 ) -> dict:
-    """
-    Bekleyen irsaliyeleri sayfalı getirir.
-    NOT: Paraşüt issue_date_gte/lte filtrelerini desteklemiyor.
-    Tarih filtresi API'dan tüm veri çekildikten sonra client-side uygulanıyor.
-    """
     try:
-        # Paraşüt sadece issue_date (tam eşleşme) destekliyor,
-        # aralık filtresi yok — tüm irsaliyeleri çekip filtrele
         tum_irsaliyeler = []
         page = 1
         while page <= 50:
             params = {
-                "page[size]":   25,
+                "page[size]": 25,
                 "page[number]": page,
-                "sort":         "-issue_date",
-                "include":      "stock_movements,contact"
+                "sort": "-issue_date",
+                "include": "stock_movements,contact"
             }
-            sonuc    = parasut_get(f"/{PARASUT_COMPANY_ID}/shipment_documents", params=params)
-            data     = sonuc.get("data", [])
+            sonuc = parasut_get(f"/{PARASUT_COMPANY_ID}/shipment_documents", params=params)
+            data = sonuc.get("data", [])
             if not data:
                 break
-            included    = sonuc.get("included", [])
-            sm_map      = {inc["id"]: inc.get("attributes", {}) for inc in included if inc.get("type") == "stock_movements"}
-            contact_map = {inc["id"]: inc.get("attributes", {}).get("name", "-") for inc in included if inc.get("type") == "contacts"}
+            included = sonuc.get("included", [])
+            sm_map = {inc["id"]: inc.get("attributes", {}) for inc in included if inc.get("type") == "stock_movements"}
+            contact_map = {inc["id"]: inc.get("attributes", {}).get("name", "-") for inc in included if
+                           inc.get("type") == "contacts"}
 
             for i in data:
-                attr         = i.get("attributes", {})
-                rels         = i.get("relationships", {})
+                attr = i.get("attributes", {})
+                rels = i.get("relationships", {})
                 contact_data = rels.get("contact", {}).get("data", {})
-                contact_id   = contact_data.get("id") if contact_data else None
+                contact_id = contact_data.get("id") if contact_data else None
                 if not contact_id:
                     continue
                 tarih = attr.get("issue_date", "")
 
-                # Client-side tarih filtresi
                 if baslangic and tarih < baslangic:
-                    # issue_date azalan sırada geliyor, başlangıçtan küçükse artık geri kalanlar da küçük
-                    # ama sayfa sınırlarını aşmamak için continue kullan, while'da kontrol et
                     continue
                 if bitis and tarih > bitis:
                     continue
 
-                sm_rels  = rels.get("stock_movements", {}).get("data", [])
+                sm_rels = rels.get("stock_movements", {}).get("data", [])
                 kalemler = []
                 for sm_ref in sm_rels:
                     sm_attr = sm_map.get(sm_ref["id"], {})
-                    miktar  = float(sm_attr.get("quantity", 0))
+                    miktar = float(sm_attr.get("quantity", 0))
                     if miktar > 0:
-                        desc        = sm_attr.get("description") or ""
-                        detail_no   = sm_attr.get("detail_no", len(kalemler) + 1)
+                        desc = sm_attr.get("description") or ""
+                        detail_no = sm_attr.get("detail_no", len(kalemler) + 1)
                         malzeme_adi = f"Malzeme {detail_no}"
                         if desc:
                             try:
-                                norm     = desc.replace(' - ', '—').replace('–', '—')
+                                norm = desc.replace(' - ', '—').replace('–', '—')
                                 parcalar = [p.strip() for p in norm.split("—")]
                                 if len(parcalar) >= 3 and "kg" in parcalar[-1].lower():
                                     malzeme_adi = parcalar[1].strip()
@@ -791,16 +791,15 @@ def tum_bekleyen_irsaliyeleri_getir(
                         kalemler.append({"aciklama": malzeme_adi, "miktar_kg": miktar})
 
                 tum_irsaliyeler.append({
-                    "id":         i["id"],
+                    "id": i["id"],
                     "contact_id": contact_id,
-                    "cari_adi":   contact_map.get(contact_id, "-"),
-                    "tarih":      tarih,
-                    "aciklama":   attr.get("description", "-"),
-                    "kalemler":   kalemler,
-                    "toplam_kg":  sum(k["miktar_kg"] for k in kalemler),
+                    "cari_adi": contact_map.get(contact_id, "-"),
+                    "tarih": tarih,
+                    "aciklama": attr.get("description", "-"),
+                    "kalemler": kalemler,
+                    "toplam_kg": sum(k["miktar_kg"] for k in kalemler),
                 })
 
-            # Erken çıkış: sıralı geliyor, başlangıçtan küçük tarihler artık gelmez
             if baslangic and data:
                 en_eski_tarih = data[-1].get("attributes", {}).get("issue_date", "")
                 if en_eski_tarih and en_eski_tarih < baslangic:
@@ -810,14 +809,12 @@ def tum_bekleyen_irsaliyeleri_getir(
                 break
             page += 1
 
-        # Sayfalama (client-side)
-        toplam            = len(tum_irsaliyeler)
-        baslangic_idx     = (sayfa - 1) * sayfa_basi
-        bitis_idx         = baslangic_idx + sayfa_basi
+        toplam = len(tum_irsaliyeler)
+        baslangic_idx = (sayfa - 1) * sayfa_basi
+        bitis_idx = baslangic_idx + sayfa_basi
         sayfa_irsaliyeler = tum_irsaliyeler[baslangic_idx:bitis_idx]
         sonraki_sayfa_var = toplam > bitis_idx
 
-        # contact_id'ye göre grupla
         gruplu = {}
         for irs in sayfa_irsaliyeler:
             cid = irs["contact_id"]
@@ -827,10 +824,10 @@ def tum_bekleyen_irsaliyeleri_getir(
 
         logger.info(f"Bekleyen irsaliyeler: {toplam} toplam, sayfa={sayfa}, bu sayfada={len(sayfa_irsaliyeler)}")
         return {
-            "irsaliyeler":      gruplu,
+            "irsaliyeler": gruplu,
             "sonraki_sayfa_var": sonraki_sayfa_var,
-            "sayfa":            sayfa,
-            "toplam":           toplam,
+            "sayfa": sayfa,
+            "toplam": toplam,
         }
     except Exception as e:
         logger.error(f"Tüm bekleyen irsaliye hatası: {e}")
@@ -842,28 +839,29 @@ def cari_bekleyen_irsaliyeleri_getir(cari_adi: str) -> list:
         cari_id = cari_id_bul(cari_adi)
         if not cari_id:
             return []
-        sonuc    = parasut_get(
+        sonuc = parasut_get(
             f"/{PARASUT_COMPANY_ID}/shipment_documents",
-            params={"filter[contact_id]": cari_id, "page[size]": 25, "sort": "-issue_date", "include": "stock_movements"}
+            params={"filter[contact_id]": cari_id, "page[size]": 25, "sort": "-issue_date",
+                    "include": "stock_movements"}
         )
         included = sonuc.get("included", [])
-        sm_map   = {inc["id"]: inc.get("attributes", {}) for inc in included if inc.get("type") == "stock_movements"}
+        sm_map = {inc["id"]: inc.get("attributes", {}) for inc in included if inc.get("type") == "stock_movements"}
         irsaliyeler = []
         for i in sonuc.get("data", []):
-            attr     = i.get("attributes", {})
-            rels     = i.get("relationships", {})
-            sm_rels  = rels.get("stock_movements", {}).get("data", [])
+            attr = i.get("attributes", {})
+            rels = i.get("relationships", {})
+            sm_rels = rels.get("stock_movements", {}).get("data", [])
             kalemler = []
             for sm_ref in sm_rels:
                 sm_attr = sm_map.get(sm_ref["id"], {})
-                miktar  = float(sm_attr.get("quantity", 0))
+                miktar = float(sm_attr.get("quantity", 0))
                 if miktar > 0:
-                    desc        = sm_attr.get("description") or ""
-                    detail_no   = sm_attr.get("detail_no", len(kalemler) + 1)
+                    desc = sm_attr.get("description") or ""
+                    detail_no = sm_attr.get("detail_no", len(kalemler) + 1)
                     malzeme_adi = f"Malzeme {detail_no}"
                     if desc:
                         try:
-                            norm     = desc.replace(' - ', '—').replace('–', '—')
+                            norm = desc.replace(' - ', '—').replace('–', '—')
                             parcalar = [p.strip() for p in norm.split("—")]
                             if len(parcalar) >= 3 and "kg" in parcalar[-1].lower():
                                 malzeme_adi = parcalar[1].strip()
@@ -875,8 +873,8 @@ def cari_bekleyen_irsaliyeleri_getir(cari_adi: str) -> list:
                             pass
                     kalemler.append({"aciklama": malzeme_adi, "miktar_kg": miktar})
             irsaliyeler.append({"id": i["id"], "tarih": attr.get("issue_date", "-"),
-                                  "aciklama": attr.get("description", "-"), "kalemler": kalemler,
-                                  "toplam_kg": sum(k["miktar_kg"] for k in kalemler)})
+                                "aciklama": attr.get("description", "-"), "kalemler": kalemler,
+                                "toplam_kg": sum(k["miktar_kg"] for k in kalemler)})
         logger.info(f"{cari_adi} için {len(irsaliyeler)} irsaliye bulundu")
         return irsaliyeler
     except Exception as e:
@@ -886,20 +884,20 @@ def cari_bekleyen_irsaliyeleri_getir(cari_adi: str) -> list:
 
 def irsaliye_detay_getir(irsaliye_id: str) -> dict:
     try:
-        sonuc    = parasut_get(
+        sonuc = parasut_get(
             f"/{PARASUT_COMPANY_ID}/shipment_documents/{irsaliye_id}",
             params={"include": "stock_movements,stock_movements.product"}
         )
-        data     = sonuc.get("data", {})
-        attr     = data.get("attributes", {})
+        data = sonuc.get("data", {})
+        attr = data.get("attributes", {})
         included = sonuc.get("included", [])
-        sm_rels  = data.get("relationships", {}).get("stock_movements", {}).get("data", [])
-        sm_ids   = {sm["id"] for sm in sm_rels}
+        sm_rels = data.get("relationships", {}).get("stock_movements", {}).get("data", [])
+        sm_ids = {sm["id"] for sm in sm_rels}
         kalemler = []
         for inc in included:
             if inc.get("type") == "stock_movements" and inc["id"] in sm_ids:
                 sm_attr = inc.get("attributes", {})
-                miktar  = float(sm_attr.get("quantity", 0))
+                miktar = float(sm_attr.get("quantity", 0))
                 if miktar > 0:
                     kalemler.append({"aciklama": sm_attr.get("description") or "Hurda", "miktar_kg": miktar})
         return {"id": irsaliye_id, "tarih": attr.get("issue_date", "-"),
@@ -911,51 +909,56 @@ def irsaliye_detay_getir(irsaliye_id: str) -> dict:
 
 
 # ── ASYNC WRAPPER'LAR ─────────────────────────────────────────────────
-# FastAPI async endpoint'lerinden senkron Paraşüt fonksiyonlarını
-# event loop'u bloklamadan çağırmak için kullan.
-#
-# Örnek main.py'de:
-#   cariler = await async_cari_listesi_getir()
-#   sonuc   = await async_parasut_post(endpoint, veri)
 
 async def async_cari_listesi_getir(force_refresh: bool = False) -> list:
     return await asyncio.to_thread(cari_listesi_getir, force_refresh)
 
+
 async def async_cari_cache_yenile() -> list:
     return await asyncio.to_thread(cari_cache_yenile)
+
 
 async def async_cari_id_bul(firma_adi: str) -> str | None:
     return await asyncio.to_thread(cari_id_bul, firma_adi)
 
+
 async def async_parasut_post(endpoint: str, veri: dict) -> dict:
     return await asyncio.to_thread(parasut_post, endpoint, veri)
+
 
 async def async_parasut_delete(endpoint: str) -> bool:
     return await asyncio.to_thread(parasut_delete, endpoint)
 
+
 async def async_tum_bekleyen_irsaliyeleri_getir(
-    baslangic: str = None, bitis: str = None, sayfa: int = 1, sayfa_basi: int = 25
+        baslangic: str = None, bitis: str = None, sayfa: int = 1, sayfa_basi: int = 25
 ) -> dict:
     return await asyncio.to_thread(tum_bekleyen_irsaliyeleri_getir, baslangic, bitis, sayfa, sayfa_basi)
+
 
 async def async_hesap_ozeti_getir() -> dict:
     return await asyncio.to_thread(hesap_ozeti_getir)
 
+
 async def async_cari_detay_getir(cari_id: str) -> dict:
     return await asyncio.to_thread(cari_detay_getir, cari_id)
+
 
 async def async_islem_gecmisi_getir(cari_id: str, baslangic: str = None, bitis: str = None) -> dict:
     return await asyncio.to_thread(islem_gecmisi_getir, cari_id, baslangic, bitis)
 
+
 async def async_tahsilat_ekle(cari_adi: str, tutar: float,
-                               aciklama: str = None, tarih: str = None) -> dict:
+                              aciklama: str = None, tarih: str = None) -> dict:
     return await asyncio.to_thread(tahsilat_ekle, cari_adi, tutar, aciklama, tarih)
 
+
 async def async_cari_faturalari_getir(
-    cari_id: str, limit: int = 25, sayfa: int = 1,
-    baslangic: str = None, bitis: str = None, durum: str = None
+        cari_id: str, limit: int = 25, sayfa: int = 1,
+        baslangic: str = None, bitis: str = None, durum: str = None
 ) -> dict:
     return await asyncio.to_thread(cari_faturalari_getir, cari_id, limit, sayfa, baslangic, bitis, durum)
+
 
 async def async_fatura_detay_getir(fatura_id: str) -> dict:
     return await asyncio.to_thread(fatura_detay_getir, fatura_id)
