@@ -28,6 +28,19 @@ INTENTLER = {
 
 INTENT_ENUM = list(INTENTLER.keys())
 
+# /api/chat sonrası DB'ye yazılacak ve chat.html INTENT_MAP ile geri yüklenebilen paneller
+SESSION_UI_RESTORE_INTENTS = frozenset({
+    "bekleyen_irsaliyeler",
+    "toplu_fatura",
+    "fatura_sorgula",
+    "tahsilat_ekle",
+    "yeni_cari",
+    "musteri_bakiyeleri",
+    "hesap_ozeti",
+    "gunluk_ozet",
+    "son_fisler",
+})
+
 INTENT_TOOL = [
     {
         "name": "intent_tespit",
@@ -193,10 +206,23 @@ def session_satirlari_ekle_bg(session_id: str, satirlar: list):
 
         for s in satirlar:
             role = s.get("role")
+            if role == "ui":
+                ui = s.get("ui") or {}
+                if not ui.get("kind"):
+                    continue
+                tam_gecmis.append({
+                    "role": "ui",
+                    "content": s.get("content", "") or "",
+                    "ui": {"kind": str(ui["kind"]), "params": ui.get("params") or {}},
+                    "ts": bugun,
+                })
+                continue
             if role not in ("user", "assistant"):
                 continue
-            content = s.get("content", "")
-            tam_gecmis.append({"role": role, "content": content, "ts": bugun})
+            row = {"role": role, "content": s.get("content", ""), "ts": bugun}
+            if s.get("ui"):
+                row["ui"] = s["ui"]
+            tam_gecmis.append(row)
 
         if len(tam_gecmis) > 100:
             tam_gecmis = tam_gecmis[-100:]
@@ -222,9 +248,17 @@ def session_satirlari_ekle_bg(session_id: str, satirlar: list):
         db.close()
 
 
-def session_kaydet_bg(session_id: str, user_mesaj: str, bot_mesaj: str):
-    """BackgroundTask olarak çalışır — kullanıcıyı bekletmez."""
-    session_satirlari_ekle_bg(session_id, [
+def session_kaydet_bg(session_id: str, user_mesaj: str, bot_mesaj: str,
+                      ui_kind: str = None, ui_params: dict = None):
+    """BackgroundTask — kullanıcı + asistan + (opsiyonel) panel durumu."""
+    rows = [
         {"role": "user", "content": user_mesaj},
         {"role": "assistant", "content": bot_mesaj},
-    ])
+    ]
+    if ui_kind and str(ui_kind) != "none":
+        rows.append({
+            "role": "ui",
+            "content": "",
+            "ui": {"kind": str(ui_kind), "params": ui_params or {}},
+        })
+    session_satirlari_ekle_bg(session_id, rows)

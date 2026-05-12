@@ -748,6 +748,10 @@
         removeWelcome();
 
         for (const msg of data.gecmis) {
+          if (msg.role === 'ui' && msg.ui && msg.ui.kind) {
+            await restoreUiPanel(msg.ui.kind, msg.ui.params || {});
+            continue;
+          }
           const c = msg.content != null ? String(msg.content) : '';
           if (msg.role === 'user') {
             if (c.indexOf('data:image') === 0) addImageMessage(c);
@@ -800,6 +804,32 @@
     if (userText != null && String(userText).trim() !== '') body.user = String(userText);
     if (assistantText != null && String(assistantText).trim() !== '') body.assistant = String(assistantText);
     if (!body.user && !body.assistant) return;
+    fetch('/api/session/append', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }).catch(function() {});
+  }
+
+  function sohbetPanelKaydet(kind, params) {
+    if (!SESSION_ID || !_sessionReady || !kind) return;
+    fetch('/api/session/append', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        session_id: SESSION_ID,
+        ui_panel: { kind: kind, params: params || {} }
+      })
+    }).catch(function() {});
+  }
+
+  function sohbetKeywordVePanelKaydet(userText, kind, params) {
+    if (!SESSION_ID || !_sessionReady || !kind) return;
+    const body = {
+      session_id: SESSION_ID,
+      ui_panel: { kind: kind, params: params || {} }
+    };
+    if (userText != null && String(userText).trim() !== '') body.user = String(userText);
     fetch('/api/session/append', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1120,6 +1150,7 @@
 
   const YONLENDIRME = [
     {
+      kind: 'bekleyen_irsaliyeler',
       fn: () => bekleyenIrsaliyeleriGoster(),
       kelimeler: [
         ['bekleyen', 'irsaliy'], ['bekleyen', 'fatura'], ['faturalanmamis'],
@@ -1129,6 +1160,7 @@
       ]
     },
     {
+      kind: 'musteri_bakiyeleri',
       fn: () => bakiyeleriGoster(),
       kelimeler: [
         ['müşteri bakiy'], ['musteri bakiy'], ['tüm bakiy'], ['tum bakiy'],
@@ -1138,6 +1170,7 @@
       ]
     },
     {
+      kind: 'hesap_ozeti',
       fn: () => hesapOzetiGoster(),
       kelimeler: [
         ['hesap özeti'], ['hesap ozeti'], ['genel özet'], ['genel ozet'],
@@ -1147,6 +1180,7 @@
       ]
     },
     {
+      kind: 'tahsilat_ekle',
       fn: () => tahsilatFormGoster(),
       kelimeler: [
         ['tahsilat ekle'], ['ödeme aldım'], ['odeme aldim'], ['para aldım'], ['para aldim'],
@@ -1158,6 +1192,7 @@
       ]
     },
     {
+      kind: 'toplu_fatura',
       fn: () => topluFaturaGoster(),
       kelimeler: [
         ['toplu fatura'], ['toplu satış'], ['toplu satis'],
@@ -1167,6 +1202,7 @@
       ]
     },
     {
+      kind: 'fatura_sorgula',
       fn: () => faturaListesiGoster(),
       kelimeler: [
         ['fatura sorgula'], ['fatura listesi'], ['fatura sorgulamak'],
@@ -1174,6 +1210,7 @@
       ]
     },
     {
+      kind: 'yeni_cari',
       fn: () => cariFormGoster(),
       kelimeler: [
         ['yeni cari'], ['cari ekle'], ['cari olustur'], ['cari oluştur'],
@@ -1211,6 +1248,16 @@
     'son_fisler':           (p) => sonFisleriGoster(),
   };
 
+  async function restoreUiPanel(kind, params) {
+    const fn = INTENT_MAP[kind];
+    if (typeof fn !== 'function') return;
+    try {
+      await fn(params || {});
+    } catch (e) {
+      console.log('restoreUiPanel', kind, e);
+    }
+  }
+
   // ── CHAT ─────────────────────────────────────────────────────────
 
   async function sendMessage() {
@@ -1225,6 +1272,7 @@
       inputEl.value = '';
       inputEl.style.height = 'auto';
       await eslesen.fn();
+      if (eslesen.kind) sohbetKeywordVePanelKaydet(text, eslesen.kind, {});
       return;
     }
 

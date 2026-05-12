@@ -291,11 +291,19 @@ async def session_gecmis_oku(request: Request, session_id: str):
             arr = _json.loads(row.tam_gecmis)
         except Exception:
             arr = []
-        gecmis = [
-            {"role": x.get("role"), "content": x.get("content", "")}
-            for x in arr
-            if x.get("role") in ("user", "assistant") and "content" in x
-        ]
+        gecmis = []
+        for x in arr:
+            role = x.get("role")
+            if role == "ui" and x.get("ui") and (x.get("ui") or {}).get("kind"):
+                item = {"role": "ui", "content": x.get("content", "")}
+                item["ui"] = x["ui"]
+                gecmis.append(item)
+                continue
+            if role in ("user", "assistant") and "content" in x:
+                item = {"role": role, "content": x.get("content", "")}
+                if x.get("ui"):
+                    item["ui"] = x["ui"]
+                gecmis.append(item)
         return JSONResponse({"gecmis": gecmis})
     finally:
         db.close()
@@ -321,6 +329,13 @@ async def session_gecmis_append(request: Request, background_tasks: BackgroundTa
         satirlar.append({"role": "user", "content": str(u)})
     if a is not None and str(a).strip() != "":
         satirlar.append({"role": "assistant", "content": str(a)})
+    panel = data.get("ui_panel")
+    if isinstance(panel, dict) and panel.get("kind"):
+        satirlar.append({
+            "role": "ui",
+            "content": "",
+            "ui": {"kind": str(panel["kind"]), "params": panel.get("params") or {}},
+        })
     if not satirlar:
         return JSONResponse({"ok": True})
     from app.chatbox.llm_handler import session_satirlari_ekle_bg
@@ -342,9 +357,15 @@ async def chat_api(request: Request, background_tasks: BackgroundTasks):
     if not mesaj:
         return JSONResponse({"cevap": "Mesaj boş olamaz.", "intent": "none"})
     try:
-        from app.chatbox.llm_handler import soru_cevapla, session_kaydet_bg
+        from app.chatbox.llm_handler import soru_cevapla, session_kaydet_bg, SESSION_UI_RESTORE_INTENTS
         sonuc = soru_cevapla(mesaj, session_id)
-        background_tasks.add_task(session_kaydet_bg, session_id, mesaj, sonuc.get("mesaj", ""))
+        intent = sonuc.get("intent") or "none"
+        params = sonuc.get("params") or {}
+        ui_kind = intent if intent != "none" and intent in SESSION_UI_RESTORE_INTENTS else None
+        background_tasks.add_task(
+            session_kaydet_bg, session_id, mesaj, sonuc.get("mesaj", ""),
+            ui_kind, params if ui_kind else None,
+        )
         if aktif_user and sonuc.get("intent") != "none":
             background_tasks.add_task(audit_kaydet, aktif_user["id"], aktif_user["username"],
                                        sonuc.get("intent", ""), sonuc.get("params", {}),
