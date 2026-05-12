@@ -9,24 +9,24 @@
   @import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600&family=Inter:wght@300;400;500;600&display=swap');
 
   :root {
-    --bg: #0d1117;
-    --surface: #161b22;
-    --surface2: #1c2333;
-    --border: #30363d;
-    --border2: #3d444d;
-    --accent: #4f8ef7;
-    --accent2: #79a8f9;
-    --accent-lt: rgba(79,142,247,0.12);
-    --accent-dim: rgba(79,142,247,0.08);
-    --text: #e6edf3;
-    --text2: #8b949e;
-    --muted: #6e7681;
-    --muted2: #484f58;
-    --user-bg: #1f6feb;
-    --alacak: #58a6ff;
-    --s1: 0 1px 3px rgba(0,0,0,0.3);
-    --s2: 0 4px 16px rgba(0,0,0,0.4), 0 1px 4px rgba(0,0,0,0.2);
-    --s3: 0 8px 32px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.3);
+    --bg: #ffffff;
+    --surface: #f8f9fa;
+    --surface2: #f1f3f4;
+    --border: #e1e4e8;
+    --border2: #d0d7de;
+    --accent: #0969da;
+    --accent2: #1d4ed8;
+    --accent-lt: rgba(9,105,218,0.12);
+    --accent-dim: rgba(9,105,218,0.08);
+    --text: #1a1a1a;
+    --text2: #6b7280;
+    --muted: #6c757d;
+    --muted2: #868e96;
+    --user-bg: #0969da;
+    --alacak: #0969da;
+    --s1: 0 1px 3px rgba(0,0,0,0.1);
+    --s2: 0 4px 16px rgba(0,0,0,0.15), 0 1px 4px rgba(0,0,0,0.1);
+    --s3: 0 8px 32px rgba(0,0,0,0.2), 0 2px 8px rgba(0,0,0,0.1);
     --r: 12px;
     --r2: 18px;
   }
@@ -222,14 +222,14 @@
     background: var(--user-bg);
     color: #fff;
     border-radius: 18px 18px 4px 18px;
-    box-shadow: 0 3px 14px rgba(191,91,42,0.28);
+    box-shadow: 0 3px 14px rgba(9,105,218,0.15);
   }
   .message.bot .bubble {
     background: var(--surface);
     color: var(--text);
     border-radius: 4px 18px 18px 18px;
     border: 1px solid var(--border);
-    box-shadow: var(--s2);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.15), 0 1px 4px rgba(0,0,0,0.1);
   }
 
   /* ── BUTONLAR ── */
@@ -541,7 +541,7 @@
   /* ── QUICK PANEL ── */
   .panel-overlay {
     position: fixed; inset: 0;
-    background: rgba(30,20,16,0.35);
+    background: rgba(0,0,0,0.25);
     backdrop-filter: blur(2px);
     z-index: 200;
     opacity: 0;
@@ -641,7 +641,7 @@
     box-shadow: 3px 0 12px rgba(191,91,42,0.28);
     transition: all 0.2s;
   }
-  .panel-toggle:hover { width: 32px; background: #a84b22; }
+  .panel-toggle:hover { width: 32px; background: #1d4ed8; }
   .panel-toggle svg { width: 13px; height: 13px; stroke: #fff; fill: none; stroke-width: 2.5; stroke-linecap: round; }
 
   @media(max-width:600px) {
@@ -862,7 +862,7 @@
     btn.innerHTML = '<span class="btn-icon">⏳</span> Yenileniyor…';
     btn.disabled = true;
     try {
-      await carileriGetir(true);  // Cache'i zorla yenile
+      await carileriGetir(true, false);  // Cache'i zorla yenile
       btn.innerHTML = '<span class="btn-icon">✅</span> Yenilendi!';
       setTimeout(function() {
         btn.innerHTML = orijinal;
@@ -1475,7 +1475,7 @@
   async function bakiyeleriGoster(onMusteriFiltreParam) {
     showTyping();
     try {
-      const carilerData = await carileriGetir(false, SESSION_ID);
+      const carilerData = await carileriGetir(false, SESSION_ID, true);
       removeTyping();
       if (!carilerData || carilerData.length === 0) {
         addMessage('Kayıtlı cari bulunamadı.', 'bot');
@@ -1541,7 +1541,7 @@
     showTyping();
     let cariler = [];
     try {
-      cariler = await carileriGetir(false, SESSION_ID);
+      cariler = await carileriGetir(false, SESSION_ID, true);
     } catch {}
     removeTyping();
 
@@ -1792,7 +1792,7 @@
     showTyping();
     let cariler = [];
     try {
-      cariler = await carileriGetir(false, SESSION_ID);
+      cariler = await carileriGetir(false, SESSION_ID, true);
     } catch {}
     removeTyping();
 
@@ -2079,7 +2079,7 @@
     showTyping();
     let cariler = [];
     try {
-      cariler = await carileriGetir(false, SESSION_ID);
+      cariler = await carileriGetir(false, SESSION_ID, true);
     } catch {}
     removeTyping();
 
@@ -2960,13 +2960,13 @@
   let _cariCacheZamani = 0;
   const CARI_CACHE_SURE = 15 * 60 * 1000; // 15 dakika
 
-  async function carileriGetir(forceRefresh) {
+  async function carileriGetir(forceRefresh, autoLoad = false) {
     const simdi = Date.now();
     if (!forceRefresh && _cariCache && (simdi - _cariCacheZamani) < CARI_CACHE_SURE) {
       return _cariCache;
     }
     try {
-      const res = await fetch('/api/cariler' + (forceRefresh ? '?refresh=1&session_id=' + SESSION_ID : '?session_id=' + SESSION_ID));
+      const res = await fetch('/api/cariler' + (forceRefresh ? '?refresh=1&session_id=' + SESSION_ID : '?auto_load=' + autoLoad + '&session_id=' + SESSION_ID));
       const data = await res.json();
       _cariCache = data.cariler || [];
       _cariCacheZamani = Date.now();

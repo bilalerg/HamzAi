@@ -450,16 +450,17 @@ async def firma_sec(request: Request, background_tasks: BackgroundTasks):
 # ── CARİLER ───────────────────────────────────────────────────────────
 
 @app.get("/api/cariler")
-async def cariler_getir(request: Request, background_tasks: BackgroundTasks, refresh: bool = False):
+async def cariler_getir(request: Request, background_tasks: BackgroundTasks, refresh: bool = False, auto_load: bool = False):
     aktif_user = mevcut_kullanici(request)
     if aktif_user:
         background_tasks.add_task(_usage_kaydet, aktif_user["id"], aktif_user["username"],
                                   "SORGU", "cari_listesi" + ("_refresh" if refresh else ""),
                                   1, aktif_user.get("profaix_user_id"))
 
-        # Session'a kaydet
-        _session_kaydet(request, "Cari Listesi",
-                        f"Cari listesi görüntülendi{' (yenilendi)' if refresh else ''}")
+        # Session'a kaydet (sadece kullanıcı isteğiyle değilse)
+        if not auto_load:
+            _session_kaydet(request, "Cari Listesi",
+                            f"Cari listesi görüntülendi{' (yenilendi)' if refresh else ''}")
     try:
         from app.parasut.client import async_cari_listesi_getir, async_cari_cache_yenile
         cariler = await async_cari_cache_yenile() if refresh else await async_cari_listesi_getir()
