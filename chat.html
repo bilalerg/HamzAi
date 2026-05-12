@@ -9,24 +9,24 @@
   @import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600&family=Inter:wght@300;400;500;600&display=swap');
 
   :root {
-    --bg: #0d1117;
-    --surface: #161b22;
-    --surface2: #1c2333;
-    --border: #30363d;
-    --border2: #3d444d;
-    --accent: #4f8ef7;
-    --accent2: #79a8f9;
-    --accent-lt: rgba(79,142,247,0.12);
-    --accent-dim: rgba(79,142,247,0.08);
-    --text: #e6edf3;
-    --text2: #8b949e;
-    --muted: #6e7681;
-    --muted2: #484f58;
-    --user-bg: #1f6feb;
-    --alacak: #58a6ff;
-    --s1: 0 1px 3px rgba(0,0,0,0.3);
-    --s2: 0 4px 16px rgba(0,0,0,0.4), 0 1px 4px rgba(0,0,0,0.2);
-    --s3: 0 8px 32px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.3);
+    --bg: #f5f7fa;
+    --surface: #ffffff;
+    --surface2: #eef1f6;
+    --border: #dde1e9;
+    --border2: #c8cdd8;
+    --accent: #2563eb;
+    --accent2: #3b82f6;
+    --accent-lt: rgba(37,99,235,0.08);
+    --accent-dim: rgba(37,99,235,0.12);
+    --text: #111827;
+    --text2: #4b5563;
+    --muted: #6b7280;
+    --muted2: #9ca3af;
+    --user-bg: #2563eb;
+    --alacak: #1d4ed8;
+    --s1: 0 1px 3px rgba(0,0,0,0.07);
+    --s2: 0 4px 16px rgba(0,0,0,0.08), 0 1px 4px rgba(0,0,0,0.05);
+    --s3: 0 8px 32px rgba(0,0,0,0.10), 0 2px 8px rgba(0,0,0,0.06);
     --r: 12px;
     --r2: 18px;
   }
@@ -81,7 +81,7 @@
     align-items: center;
     gap: 7px;
     background: var(--accent-lt);
-    border: 1px solid rgba(191,91,42,0.2);
+    border: 1px solid rgba(37,99,235,0.15);
     padding: 5px 13px;
     border-radius: 100px;
   }
@@ -187,13 +187,13 @@
   }
   .quick-btn:hover {
     background: var(--accent-lt);
-    border-color: rgba(191,91,42,0.3);
+    border-color: rgba(37,99,235,0.22);
     color: var(--accent);
     transform: translateY(-2px);
     box-shadow: var(--s2);
   }
   .quick-btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
-  .quick-btn.primary:hover { background: #a84b22; transform: translateY(-2px); box-shadow: 0 4px 16px rgba(191,91,42,0.35); }
+  .quick-btn.primary:hover { background: #1d4ed8; transform: translateY(-2px); box-shadow: 0 4px 16px rgba(37,99,235,0.25); }
 
   /* ── MESSAGES ── */
   .message {
@@ -222,7 +222,7 @@
     background: var(--user-bg);
     color: #fff;
     border-radius: 18px 18px 4px 18px;
-    box-shadow: 0 3px 14px rgba(191,91,42,0.28);
+    box-shadow: 0 3px 14px rgba(37,99,235,0.20);
   }
   .message.bot .bubble {
     background: var(--surface);
@@ -238,7 +238,7 @@
     padding: 10px 16px;
     background: var(--surface);
     color: var(--accent);
-    border: 1.5px solid rgba(191,91,42,0.25);
+    border: 1.5px solid rgba(37,99,235,0.18);
     border-radius: 10px;
     font-family: 'Inter', sans-serif;
     font-size: 13px;
@@ -267,7 +267,7 @@
     justify-content: space-between;
     align-items: center;
   }
-  .irsaliye-btn:hover { background: var(--accent-lt); border-color: rgba(191,91,42,0.3); color: var(--accent); transform: translateX(2px); }
+  .irsaliye-btn:hover { background: var(--accent-lt); border-color: rgba(37,99,235,0.22); color: var(--accent); transform: translateX(2px); }
   .irsaliye-btn .kg { font-size: 11px; color: var(--muted); font-weight: 400; }
   .cari-btn {
     margin-top: 7px;
@@ -287,7 +287,7 @@
     justify-content: space-between;
     align-items: center;
   }
-  .cari-btn:hover { background: var(--accent-lt); border-color: rgba(191,91,42,0.3); color: var(--accent); }
+  .cari-btn:hover { background: var(--accent-lt); border-color: rgba(37,99,235,0.22); color: var(--accent); }
   .cari-btn .bakiye { font-size: 12px; font-weight: 600; }
   .cari-btn .bakiye.alacak { color: var(--alacak); }
   .cari-btn .bakiye.sifir { color: var(--muted2); }
@@ -303,7 +303,7 @@
     font-size: 13px;
     transition: all 0.15s;
   }
-  .cari-row:hover { border-color: rgba(191,91,42,0.25); box-shadow: var(--s1); }
+  .cari-row:hover { border-color: rgba(37,99,235,0.18); box-shadow: var(--s1); }
   .cari-row .cari-ad { font-weight: 500; color: var(--text); }
   .cari-row .cari-bakiye { font-weight: 600; font-size: 13px; }
   .cari-row .cari-bakiye.alacak { color: var(--alacak); }
@@ -324,7 +324,7 @@
     color: var(--text);
   }
   .form-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
-  .form-input.required { border-color: rgba(191,91,42,0.35); }
+  .form-input.required { border-color: rgba(37,99,235,0.25); }
   .fiyat-input-wrap { margin-top: 10px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .fiyat-input {
     flex: 1;
@@ -352,7 +352,7 @@
     cursor: pointer;
     transition: all 0.18s;
   }
-  .btn-primary:hover { background: #a84b22; transform: translateY(-1px); box-shadow: 0 4px 14px rgba(191,91,42,0.32); }
+  .btn-primary:hover { background: #1d4ed8; transform: translateY(-1px); box-shadow: 0 4px 14px rgba(37,99,235,0.22); }
   .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; transform: none; box-shadow: none; }
   .btn-secondary {
     padding: 10px 20px;
@@ -369,7 +369,7 @@
   .btn-cancel {
     padding: 10px 15px;
     background: transparent;
-    color: #c0392b;
+    color: #dc2626;
     border: 1.5px solid rgba(192,57,43,0.25);
     border-radius: 10px;
     font-family: 'Inter', sans-serif;
@@ -377,13 +377,13 @@
     cursor: pointer;
     transition: all 0.18s;
   }
-  .btn-cancel:hover { background: #fff5f5; border-color: #c0392b; }
+  .btn-cancel:hover { background: #eff6ff; border-color: #dc2626; }
   .btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
   .img-bubble {
     background: var(--user-bg);
     padding: 6px;
     border-radius: 18px 18px 4px 18px;
-    box-shadow: 0 3px 14px rgba(191,91,42,0.28);
+    box-shadow: 0 3px 14px rgba(37,99,235,0.20);
     display: inline-block;
   }
   .img-bubble img { max-width: 220px; max-height: 180px; border-radius: 10px; display: block; }
@@ -541,7 +541,7 @@
   /* ── QUICK PANEL ── */
   .panel-overlay {
     position: fixed; inset: 0;
-    background: rgba(30,20,16,0.35);
+    background: rgba(17,24,39,0.25);
     backdrop-filter: blur(2px);
     z-index: 200;
     opacity: 0;
@@ -620,7 +620,7 @@
   }
   .panel-btn:hover {
     background: var(--accent-lt);
-    border-color: rgba(191,91,42,0.18);
+    border-color: rgba(37,99,235,0.15);
     color: var(--accent);
     transform: translateX(3px);
   }
@@ -638,10 +638,10 @@
     align-items: center;
     justify-content: center;
     z-index: 199;
-    box-shadow: 3px 0 12px rgba(191,91,42,0.28);
+    box-shadow: 3px 0 12px rgba(37,99,235,0.20);
     transition: all 0.2s;
   }
-  .panel-toggle:hover { width: 32px; background: #a84b22; }
+  .panel-toggle:hover { width: 32px; background: #1d4ed8; }
   .panel-toggle svg { width: 13px; height: 13px; stroke: #fff; fill: none; stroke-width: 2.5; stroke-linecap: round; }
 
   @media(max-width:600px) {
@@ -2857,7 +2857,7 @@
 
       const hepsiBtn = document.createElement('button');
       hepsiBtn.className = 'btn-primary';
-      hepsiBtn.style.background = '#1a3d28';
+      hepsiBtn.style.background = '#1e3a5f';
       hepsiBtn.textContent = '⚡ Hepsini kes (' + kalan.length + ')';
       hepsiBtn.onclick = function() {
         Array.from(btnRow.querySelectorAll('button')).forEach(function(b) { b.disabled = true; });
