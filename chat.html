@@ -794,6 +794,30 @@
       });
       _aktifPanel.style.opacity = '0.5';
       _aktifPanel = null;
+      
+      // Panel kapandığında session geçmişini temizle ve sadece kullanıcı mesajlarını geri yükle
+      setTimeout(async function() {
+        try {
+          const res = await fetch(`/api/session/${SESSION_ID}`);
+          const data = await res.json();
+          
+          if (data.gecmis && data.gecmis.length > 0) {
+            // Sadece kullanıcı mesajlarını yükle, otomatik bot mesajlarını atla
+            const userMessages = data.gecmis.filter(msg => msg.role === 'user');
+            const botMessages = data.gecmis.filter(msg => msg.role === 'assistant' && !msg.content.includes('işlemi tamamlandı') && !msg.content.includes('✅'));
+            
+            // Önce mevcut mesajları temizle
+            const messagesDiv = document.getElementById('messages');
+            messagesDiv.innerHTML = '';
+            
+            // Sadece kullanıcı ve temiz bot mesajlarını ekle
+            userMessages.forEach(msg => addMessage(msg.content, 'user'));
+            botMessages.forEach(msg => addMessage(msg.content, 'bot'));
+          }
+        } catch (e) {
+          console.log('Session temizlenemedi:', e);
+        }
+      }, 100);
     }
   }
 
