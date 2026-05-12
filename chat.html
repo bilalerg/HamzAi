@@ -720,23 +720,9 @@
 </div>
 
 <script>
-  const SESSION_ID = 'web_' + Math.random().toString(36).substr(2, 9);
-
-  // ── KULLANICI BİLGİSİ ──────────────────────────────────────────────
-  // Sayfa açılınca /api/me'den kim olduğunu öğren, header'a yaz
-  (async function() {
-    try {
-      const res = await fetch('/api/me');
-      const user = await res.json();
-      if (user.giris_yapildi) {
-        const ad = user.ad_soyad || user.username || '';
-        document.getElementById('userAdSoyad').textContent = ad;
-
-        const wadEl = document.getElementById('welcomeAd');
-        if (wadEl) wadEl.textContent = ad.split(' ')[0] || ad;
-      }
-    } catch {}
-  })();
+  let SESSION_ID = null;
+  let _sessionReady = false;
+  let _sessionBoot = null;
 
   async function cikisYap() {
     try {
@@ -752,24 +738,73 @@
 
   // ── SESSION GEÇMİŞİ YÜKLEME ───────────────────────────────────────
   async function loadSessionHistory() {
+    if (!SESSION_ID) return;
     try {
-      const res = await fetch(`/api/session/${SESSION_ID}`);
+      const res = await fetch('/api/session/' + encodeURIComponent(SESSION_ID));
+      if (!res.ok) return;
       const data = await res.json();
-      
+
       if (data.gecmis && data.gecmis.length > 0) {
         removeWelcome();
-        
+
         for (const msg of data.gecmis) {
+          const c = msg.content != null ? String(msg.content) : '';
           if (msg.role === 'user') {
-            addMessage(msg.content, 'user');
+            if (c.indexOf('data:image') === 0) addImageMessage(c);
+            else addMessage(c, 'user');
           } else if (msg.role === 'assistant') {
-            addMessage(msg.content, 'bot');
+            addMessage(c, 'bot');
           }
         }
       }
     } catch (e) {
       console.log('Session geçmişi yüklenemedi:', e);
     }
+  }
+
+  async function initChatSession() {
+    try {
+      const res = await fetch('/api/me');
+      const user = await res.json();
+      if (user.giris_yapildi) {
+        const ad = user.ad_soyad || user.username || '';
+        document.getElementById('userAdSoyad').textContent = ad;
+        const wadEl = document.getElementById('welcomeAd');
+        if (wadEl) wadEl.textContent = ad.split(' ')[0] || ad;
+        if (user.chat_session_id) SESSION_ID = user.chat_session_id;
+        else if (user.profaix_user_id) SESSION_ID = 'pfa_' + user.profaix_user_id;
+        else if (user.id != null && user.id !== '') SESSION_ID = 'loc_' + user.id;
+        else SESSION_ID = 'web_' + Math.random().toString(36).substr(2, 9);
+      } else {
+        SESSION_ID = 'web_' + Math.random().toString(36).substr(2, 9);
+      }
+      await loadSessionHistory();
+    } catch (e) {
+      console.log('initChatSession', e);
+      if (!SESSION_ID) SESSION_ID = 'web_' + Math.random().toString(36).substr(2, 9);
+    }
+    _sessionReady = true;
+  }
+
+  async function ensureSessionReady() {
+    if (_sessionReady) return;
+    if (!_sessionBoot) {
+      _sessionBoot = initChatSession().finally(function() { _sessionBoot = null; });
+    }
+    await _sessionBoot;
+  }
+
+  function sohbetParcaKaydet(userText, assistantText) {
+    if (!SESSION_ID || !_sessionReady) return;
+    const body = { session_id: SESSION_ID };
+    if (userText != null && String(userText).trim() !== '') body.user = String(userText);
+    if (assistantText != null && String(assistantText).trim() !== '') body.assistant = String(assistantText);
+    if (!body.user && !body.assistant) return;
+    fetch('/api/session/append', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }).catch(function() {});
   }
 
   function _panelKapat() {
@@ -1181,6 +1216,7 @@
   async function sendMessage() {
     const text = inputEl.value.trim();
     if (!text || sendBtn.disabled) return;
+    await ensureSessionReady();
 
     // 1. Önce frontend keyword eşleştirmesi — hızlı, API isteği yok
     const eslesen = mesajYonlendir(text);
@@ -1240,6 +1276,7 @@
   async function uploadFis(input) {
     const file = input.files[0];
     if (!file) return;
+    await ensureSessionReady();
     const reader = new FileReader();
     reader.onload = (e) => addImageMessage(e.target.result);
     reader.readAsDataURL(file);
@@ -1282,9 +1319,11 @@
         wrap.appendChild(iptalBtn);
 
         addMessage(data.cevap, 'bot', wrap);
+        sohbetParcaKaydet('📎 Fiş fotoğrafı', data.cevap);
         setTimeout(function() { ddInp.focus(); }, 100);
       } else {
         addMessage(data.cevap, 'bot');
+        sohbetParcaKaydet('📎 Fiş fotoğrafı', data.cevap);
       }
       inputEl.focus();
     } catch {
@@ -1311,6 +1350,7 @@
       const data = await res.json();
       removeTyping();
       addMessage(data.cevap, 'bot');
+      sohbetParcaKaydet('🏭 ' + firma, data.cevap);
     } catch {
       removeTyping();
       addMessage('❌ Hata oluştu, tekrar deneyin.', 'bot');
@@ -2981,6 +3021,10 @@
       }
     });
   });
+
+  (async function() {
+    await ensureSessionReady();
+  })();
 
   window.onload = function() { inputEl.focus(); };
 </script>

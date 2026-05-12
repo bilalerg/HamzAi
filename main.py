@@ -18,6 +18,20 @@ from app.auth import (
     giris_zorunlu, audit_kaydet, ilk_admin_olustur,
     profaix_kullanici_dogrula
 )
+from typing import Optional
+
+
+def canonical_chat_session_id(user: Optional[dict]) -> Optional[str]:
+    """Giriş yapmış kullanıcı için kalıcı sohbet oturum anahtarı (iframe yenilense aynı kalır)."""
+    if not user:
+        return None
+    pid = user.get("profaix_user_id")
+    if pid:
+        return "pfa_" + str(pid)
+    uid = user.get("id")
+    if uid is not None:
+        return "loc_" + str(uid)
+    return None
 
 
 def tr_para(sayi: float, ondalik: int = 2) -> str:
@@ -251,7 +265,67 @@ async def me(request: Request):
     user = mevcut_kullanici(request)
     if not user:
         return JSONResponse({"giris_yapildi": False})
-    return JSONResponse({"giris_yapildi": True, **user})
+    out = {"giris_yapildi": True, **user}
+    sid = canonical_chat_session_id(user)
+    if sid:
+        out["chat_session_id"] = sid
+    return JSONResponse(out)
+
+
+@app.get("/api/session/{session_id}")
+async def session_gecmis_oku(request: Request, session_id: str):
+    """Kayıtlı sohbet geçmişi (tam_gecmis). Sadece oturum sahibi kendi session_id'sini okuyabilir."""
+    user = mevcut_kullanici(request)
+    beklenen = canonical_chat_session_id(user)
+    if not user or not beklenen:
+        return JSONResponse({"gecmis": []}, status_code=401)
+    if session_id != beklenen:
+        return JSONResponse({"gecmis": []}, status_code=403)
+    db = SessionLocal()
+    try:
+        from app.core.database import ChatSession
+        row = db.query(ChatSession).filter(ChatSession.session_id == session_id).first()
+        if not row or not row.tam_gecmis:
+            return JSONResponse({"gecmis": []})
+        try:
+            arr = _json.loads(row.tam_gecmis)
+        except Exception:
+            arr = []
+        gecmis = [
+            {"role": x.get("role"), "content": x.get("content", "")}
+            for x in arr
+            if x.get("role") in ("user", "assistant") and "content" in x
+        ]
+        return JSONResponse({"gecmis": gecmis})
+    finally:
+        db.close()
+
+
+@app.post("/api/session/append")
+async def session_gecmis_append(request: Request, background_tasks: BackgroundTasks):
+    """Sohbete ek kullanıcı/asistan satırları (ör. fiş yükleme) — arka planda DB'ye yazılır."""
+    user = mevcut_kullanici(request)
+    beklenen = canonical_chat_session_id(user)
+    if not user or not beklenen:
+        return JSONResponse({"ok": False}, status_code=401)
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False}, status_code=400)
+    if data.get("session_id") != beklenen:
+        return JSONResponse({"ok": False}, status_code=403)
+    satirlar = []
+    u = data.get("user")
+    a = data.get("assistant")
+    if u is not None and str(u).strip() != "":
+        satirlar.append({"role": "user", "content": str(u)})
+    if a is not None and str(a).strip() != "":
+        satirlar.append({"role": "assistant", "content": str(a)})
+    if not satirlar:
+        return JSONResponse({"ok": True})
+    from app.chatbox.llm_handler import session_satirlari_ekle_bg
+    background_tasks.add_task(session_satirlari_ekle_bg, beklenen, satirlar)
+    return JSONResponse({"ok": True})
 
 
 # ── CHAT ──────────────────────────────────────────────────────────────
@@ -261,9 +335,12 @@ async def chat_api(request: Request, background_tasks: BackgroundTasks):
     data       = await request.json()
     mesaj      = data.get("mesaj", "").strip()
     session_id = data.get("session_id", "web_user")
+    aktif_user = mevcut_kullanici(request)
+    beklenen   = canonical_chat_session_id(aktif_user)
+    if aktif_user and beklenen:
+        session_id = beklenen
     if not mesaj:
         return JSONResponse({"cevap": "Mesaj boş olamaz.", "intent": "none"})
-    aktif_user = mevcut_kullanici(request)
     try:
         from app.chatbox.llm_handler import soru_cevapla, session_kaydet_bg
         sonuc = soru_cevapla(mesaj, session_id)

@@ -174,8 +174,10 @@ def soru_cevapla(mesaj: str, session_id: str = "") -> dict:
 
 # ── BACKGROUND TASK UYUMLU SESSION KAYIT ──────────────────────────────
 
-def session_kaydet_bg(session_id: str, user_mesaj: str, bot_mesaj: str):
-    """BackgroundTask olarak çalışır — kullanıcıyı bekletmez."""
+def session_satirlari_ekle_bg(session_id: str, satirlar: list):
+    """tam_gecmis'e bir veya daha fazla satır ekler. satirlar: [{role, content}, ...]"""
+    if not session_id or not satirlar:
+        return
     from app.core.database import SessionLocal, ChatSession
     db = SessionLocal()
     try:
@@ -189,10 +191,13 @@ def session_kaydet_bg(session_id: str, user_mesaj: str, bot_mesaj: str):
             except Exception:
                 tam_gecmis = []
 
-        tam_gecmis.append({"role": "user",      "content": user_mesaj, "ts": bugun})
-        tam_gecmis.append({"role": "assistant",  "content": bot_mesaj,  "ts": bugun})
+        for s in satirlar:
+            role = s.get("role")
+            if role not in ("user", "assistant"):
+                continue
+            content = s.get("content", "")
+            tam_gecmis.append({"role": role, "content": content, "ts": bugun})
 
-        # Son 100 mesajı tut
         if len(tam_gecmis) > 100:
             tam_gecmis = tam_gecmis[-100:]
 
@@ -209,9 +214,17 @@ def session_kaydet_bg(session_id: str, user_mesaj: str, bot_mesaj: str):
             db.add(session)
 
         db.commit()
-        logger.info(f"Session kaydedildi (bg): {session_id}")
+        logger.info(f"Session satırları kaydedildi (bg): {session_id} (+{len(satirlar)})")
     except Exception as e:
-        logger.error(f"Session kaydedilemedi (bg): {e}")
+        logger.error(f"Session satırları kaydedilemedi (bg): {e}")
         db.rollback()
     finally:
         db.close()
+
+
+def session_kaydet_bg(session_id: str, user_mesaj: str, bot_mesaj: str):
+    """BackgroundTask olarak çalışır — kullanıcıyı bekletmez."""
+    session_satirlari_ekle_bg(session_id, [
+        {"role": "user", "content": user_mesaj},
+        {"role": "assistant", "content": bot_mesaj},
+    ])
