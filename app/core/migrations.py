@@ -28,6 +28,16 @@ def calistir(engine, db):
             "ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS tam_gecmis TEXT"
         ), "tam_gecmis (chat_sessions)")
 
+        for kolon, sql_tip in [
+            ("username", "VARCHAR(100)"),
+            ("profaix_user_id", "VARCHAR(100)"),
+            ("auth_session_id", "VARCHAR(100)"),
+            ("ip_adresi", "VARCHAR(50)"),
+        ]:
+            _kolon_ekle(conn, text(
+                f"ALTER TABLE islem_logs ADD COLUMN IF NOT EXISTS {kolon} {sql_tip}"
+            ), f"{kolon} (islem_logs)")
+
         # ── TABLO MİGRATIONLARI ───────────────────────────────────────
         _tablo_olustur(conn, text("""
             CREATE TABLE IF NOT EXISTS islem_logs (
@@ -56,6 +66,23 @@ def calistir(engine, db):
                 updated_at TIMESTAMP DEFAULT NOW()
             )
         """), "active_logins")
+
+        _tablo_olustur(conn, text("""
+            CREATE TABLE IF NOT EXISTS billable_events (
+                id SERIAL PRIMARY KEY,
+                event_id VARCHAR(100) UNIQUE NOT NULL,
+                event_key VARCHAR(200) UNIQUE,
+                user_id INTEGER,
+                username VARCHAR(100),
+                profaix_user_id VARCHAR(100),
+                event_type VARCHAR(50) NOT NULL,
+                amount INTEGER NOT NULL DEFAULT 1,
+                source VARCHAR(50),
+                description TEXT,
+                metadata_json TEXT,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        """), "billable_events")
 
     # ── YARIMA KALMIŞ İŞLEM TESPİTİ ──────────────────────────────────
     from app.core.database import WeighTicket, TicketStatus

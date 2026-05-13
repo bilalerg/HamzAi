@@ -824,9 +824,13 @@
       if (data.gecmis && data.gecmis.length > 0) {
         removeWelcome();
         _isRestoring = true;
+        const restoredUiKeys = new Set();
         try {
           for (const msg of data.gecmis) {
             if (msg.role === 'ui' && msg.ui && msg.ui.kind) {
+              const uiKey = JSON.stringify({ kind: String(msg.ui.kind), params: msg.ui.params || {} });
+              if (restoredUiKeys.has(uiKey)) continue;
+              restoredUiKeys.add(uiKey);
               await restoreUiPanel(msg.ui.kind, msg.ui.params || {});
               continue;
             }
@@ -918,6 +922,18 @@
     }).catch(function() {});
   }
 
+  /** Panel / yazdığı kelime ile aynı araç açıldığında ücretlendirme (restore sırasında çağrılmaz). */
+  function billablePanelTikla(kind, detail) {
+    if (_isRestoring || _sessionReplaced) return;
+    const body = { panel: kind };
+    if (detail && typeof detail === 'object') body.detail = detail;
+    fetch('/api/billing/panel-click', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }).catch(function() {});
+  }
+
   function _panelKapat() {
     if (_aktifPanel) {
       // Tüm buton ve inputları devre dışı bırak
@@ -934,6 +950,7 @@
   // ── GÜNLÜK ÖZET ──────────────────────────────────────────────────
 
   async function gunlukOzetGoster() {
+    billablePanelTikla('gunluk_ozet');
     showTyping();
     try {
       const res = await fetch('/api/gunluk-ozet');
@@ -962,6 +979,7 @@
   // ── SON FİŞLER ───────────────────────────────────────────────────
 
   async function sonFisleriGoster() {
+    billablePanelTikla('son_fisler');
     showTyping();
     try {
       const res = await fetch('/api/son-fisler');
@@ -1004,6 +1022,7 @@
     try {
       await carileriGetir(true);  // Cache'i zorla yenile
       btn.innerHTML = '<span class="btn-icon">✅</span> Yenilendi!';
+      billablePanelTikla('cari_cache_yenile');
       setTimeout(function() {
         btn.innerHTML = orijinal;
         btn.disabled = false;
@@ -1517,6 +1536,7 @@
   // ── BEKLEYENİRSALİYELER ──────────────────────────────────────────
 
   async function bekleyenIrsaliyeleriGoster() {
+    billablePanelTikla('bekleyen_irsaliyeler');
     // Tarih filtresi seçim formu göster
     const wrap = document.createElement('div');
 
@@ -1662,6 +1682,7 @@
   // ── BAKİYELER ────────────────────────────────────────────────────
 
   async function bakiyeleriGoster(onMusteriFiltreParam) {
+    billablePanelTikla('musteri_bakiyeleri', onMusteriFiltreParam ? { musteri: onMusteriFiltreParam } : {});
     showTyping();
     try {
       const carilerData = await carileriGetir(false, true);
@@ -1728,6 +1749,7 @@
   // ── HESAP ÖZETİ ──────────────────────────────────────────────────
 
   async function hesapOzetiGoster(restoreMusteri, restoreBaslangic, restoreBitis) {
+    billablePanelTikla('hesap_ozeti', restoreMusteri ? { musteri: restoreMusteri } : {});
     showTyping();
     let cariler = [];
     try {
@@ -2026,6 +2048,7 @@
   // ── TAHSİLAT FORMU ───────────────────────────────────────────────
 
   async function tahsilatFormGoster(onMusteri, onTutar) {
+    billablePanelTikla('tahsilat_ekle', onMusteri ? { musteri: onMusteri } : {});
     showTyping();
     let cariler = [];
     try {
@@ -2314,6 +2337,7 @@
   // ── FATURA LİSTESİ & DETAY ───────────────────────────────────────
 
   async function faturaListesiGoster(onMusteri) {
+    billablePanelTikla('fatura_sorgula', onMusteri ? { musteri: onMusteri } : {});
     showTyping();
     let cariler = [];
     try {
@@ -2537,6 +2561,8 @@
       const f = await res.json();
       removeTyping();
 
+      billablePanelTikla('fatura_detay', { fatura_id: String(faturaId), musteri: cariCtx || '' });
+
       const detayWrap = document.createElement('div');
 
       // Özet
@@ -2609,6 +2635,7 @@
   // ── TOPLU FATURA ─────────────────────────────────────────────────
 
   async function topluFaturaGoster() {
+    billablePanelTikla('toplu_fatura');
     showTyping();
     try {
       const res = await fetch('/api/bekleyen-irsaliyeler');
@@ -2872,6 +2899,7 @@
   // ── YENİ CARİ FORMU ──────────────────────────────────────────────
 
   function cariFormGoster() {
+    billablePanelTikla('yeni_cari');
     const wrap = document.createElement('div');
     const baslik = document.createElement('div');
     baslik.style.cssText = 'font-size:13px;font-weight:500;color:var(--text);margin-bottom:10px;';

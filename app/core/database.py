@@ -153,6 +153,8 @@ class IslemLog(Base):
     __tablename__ = "islem_logs"
     id          = Column(Integer, primary_key=True, autoincrement=True)
     islem_tipi  = Column(String(50), nullable=False, index=True)
+    username    = Column(String(100), nullable=True, index=True)
+    profaix_user_id = Column(String(100), nullable=True, index=True)
     cari_adi    = Column(String(200), nullable=True, index=True)
     tutar       = Column(BigInteger, nullable=True)
     fatura_id   = Column(String(100), nullable=True)
@@ -160,6 +162,8 @@ class IslemLog(Base):
     plaka       = Column(String(20), nullable=True)
     aciklama    = Column(Text, nullable=True)
     session_id  = Column(String(100), nullable=True)
+    auth_session_id = Column(String(100), nullable=True)
+    ip_adresi   = Column(String(50), nullable=True)
     created_at  = Column(DateTime, server_default=func.now(), index=True)
     def __repr__(self): return f"<IslemLog tip={self.islem_tipi} cari={self.cari_adi}>"
 
@@ -200,6 +204,23 @@ class UsageLog(Base):
     ucretli         = Column(Integer, default=1)
     created_at      = Column(DateTime, server_default=func.now(), index=True)
     def __repr__(self): return f"<UsageLog user={self.username} islem={self.islem_turu}>"
+
+
+class BillableEvent(Base):
+    __tablename__ = "billable_events"
+    id              = Column(Integer, primary_key=True, autoincrement=True)
+    event_id        = Column(String(100), unique=True, nullable=False, index=True)
+    event_key       = Column(String(200), unique=True, nullable=True, index=True)
+    user_id         = Column(Integer, ForeignKey("users.id"), nullable=True)
+    username        = Column(String(100), nullable=True, index=True)
+    profaix_user_id = Column(String(100), nullable=True, index=True)
+    event_type      = Column(String(50), nullable=False, index=True)
+    amount          = Column(Integer, default=1, nullable=False)
+    source          = Column(String(50), nullable=True)
+    description     = Column(Text, nullable=True)
+    metadata_json   = Column(Text, nullable=True)
+    created_at      = Column(DateTime, server_default=func.now(), index=True)
+    def __repr__(self): return f"<BillableEvent user={self.username} event={self.event_type}>"
 
 
 class HataLog(Base):

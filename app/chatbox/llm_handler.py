@@ -9,6 +9,17 @@ from app.core.logger import logger
 MODEL = "claude-haiku-4-5-20251001"
 _client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
+
+def _ui_key(ui: dict) -> str:
+    try:
+        return json.dumps(
+            {"kind": str(ui.get("kind", "")), "params": ui.get("params") or {}},
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+    except Exception:
+        return str(ui)
+
 # ── INTENT TANIMI ─────────────────────────────────────────────────────
 INTENTLER = {
     "bekleyen_irsaliyeler":  "Bekleyen (faturalanmamış) irsaliyeleri listeler",
@@ -211,10 +222,15 @@ def session_satirlari_ekle_bg(session_id: str, satirlar: list):
                 ui = s.get("ui") or {}
                 if not ui.get("kind"):
                     continue
+                yeni_ui = {"kind": str(ui["kind"]), "params": ui.get("params") or {}}
+                if tam_gecmis:
+                    son = tam_gecmis[-1]
+                    if son.get("role") == "ui" and _ui_key(son.get("ui") or {}) == _ui_key(yeni_ui):
+                        continue
                 tam_gecmis.append({
                     "role": "ui",
                     "content": s.get("content", "") or "",
-                    "ui": {"kind": str(ui["kind"]), "params": ui.get("params") or {}},
+                    "ui": yeni_ui,
                     "ts": bugun,
                 })
                 continue

@@ -3,6 +3,7 @@
 import os
 import tempfile
 import json as _json
+import uuid
 from pathlib import Path
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, UploadFile, File, BackgroundTasks
@@ -156,6 +157,8 @@ _ACIK_API_YOLLARI = {"/api/login", "/api/logout", "/api/me"}
 @app.middleware("http")
 async def api_auth_middleware(request: Request, call_next):
     path = request.url.path
+    if path.startswith("/api/billing/") and _admin_kontrol(request):
+        return await call_next(request)
     if path.startswith("/api/") and path not in _ACIK_API_YOLLARI:
         user, auth_reason = token_durumu(request)
         if not user:
@@ -176,13 +179,21 @@ async def api_auth_middleware(request: Request, call_next):
 
 def _islem_log(db, islem_tipi: str, cari_adi: str = None, tutar: int = None,
                fatura_id: str = None, irsaliye_id: str = None, plaka: str = None,
-               aciklama: str = None, session_id: str = None):
+               aciklama: str = None, session_id: str = None,
+               request: Request = None, user: dict = None):
     try:
         from app.core.database import IslemLog
+        aktif_user = user or (mevcut_kullanici(request) if request else None)
+        if aktif_user and not session_id:
+            session_id = canonical_chat_session_id(aktif_user)
         log = IslemLog(
             islem_tipi=islem_tipi, cari_adi=cari_adi,
             tutar=int(tutar) if tutar else None, fatura_id=fatura_id,
-            irsaliye_id=irsaliye_id, plaka=plaka, aciklama=aciklama, session_id=session_id
+            irsaliye_id=irsaliye_id, plaka=plaka, aciklama=aciklama, session_id=session_id,
+            username=aktif_user.get("username") if aktif_user else None,
+            profaix_user_id=aktif_user.get("profaix_user_id") if aktif_user else None,
+            auth_session_id=aktif_user.get("auth_session_id") if aktif_user else None,
+            ip_adresi=request.client.host if request and request.client else None,
         )
         db.add(log)
         db.commit()
@@ -202,6 +213,57 @@ def _usage_kaydet(user_id, username: str, islem_turu: str,
         logger.warning(f"Usage log yazılamadı: {e}")
     finally:
         db.close()
+
+
+def _billable_kaydet(user: dict, event_type: str, description: str = None,
+                     amount: int = 1, source: str = None, metadata: dict = None,
+                     event_key: str = None):
+    """Fiyatlandırmaya esas temiz kullanım olayı. Duplicate için event_key opsiyoneldir."""
+    if not user or not event_type:
+        return
+    db = SessionLocal()
+    try:
+        from app.core.database import BillableEvent
+        if event_key:
+            mevcut = db.query(BillableEvent).filter(BillableEvent.event_key == event_key).first()
+            if mevcut:
+                return
+        event = BillableEvent(
+            event_id=uuid.uuid4().hex,
+            event_key=event_key,
+            user_id=user.get("id"),
+            username=user.get("username") or user.get("full_name"),
+            profaix_user_id=user.get("profaix_user_id"),
+            event_type=str(event_type),
+            amount=int(amount or 1),
+            source=source,
+            description=description,
+            metadata_json=_json.dumps(metadata or {}, ensure_ascii=False),
+        )
+        db.add(event)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.warning(f"Billable event yazılamadı: {e}")
+    finally:
+        db.close()
+
+
+# Panel / hızlı menü tıklaması → billable_events (sadece kullanıcı sözlüğündeki türler).
+# Ayırt için metadata.panel_acildi=True; gerçek Paraşüt işlemlerinde bu bayrak yoktur.
+_PANEL_TIKLAMA_EVENT = {
+    "bekleyen_irsaliyeler": "IRSALIYE_OLUSTURULDU",
+    "toplu_fatura": "TOPLU_FATURA_KESILDI",
+    "fatura_sorgula": "FATURA_KESILDI",
+    "tahsilat_ekle": "TAHSILAT_EKLENDI",
+    "yeni_cari": "CARI_OLUSTURULDU",
+    "musteri_bakiyeleri": "AI_CHAT",
+    "hesap_ozeti": "AI_CHAT",
+    "gunluk_ozet": "AI_CHAT",
+    "son_fisler": "AI_CHAT",
+    "fatura_detay": "FATURA_KESILDI",
+    "cari_cache_yenile": "AI_CHAT",
+}
 
 
 def _admin_kontrol(request: Request) -> bool:
@@ -543,6 +605,9 @@ async def chat_api(request: Request, background_tasks: BackgroundTasks):
             background_tasks.add_task(_usage_kaydet, aktif_user["id"], aktif_user["username"],
                                        "CHAT", f"intent={sonuc.get('intent','none')} | {mesaj[:80]}",
                                        1, aktif_user.get("profaix_user_id"))
+            background_tasks.add_task(_billable_kaydet, aktif_user, "AI_CHAT",
+                                      f"intent={sonuc.get('intent','none')}", 1, "chat",
+                                      {"intent": sonuc.get("intent", "none"), "mesaj": mesaj[:120]})
         return JSONResponse({"cevap": sonuc.get("mesaj", ""), "intent": sonuc.get("intent", "none"),
                               "params": sonuc.get("params", {})})
     except Exception as e:
@@ -557,6 +622,9 @@ async def upload_fis(request: Request, background_tasks: BackgroundTasks,
                      file: UploadFile = File(...), session_id: str = "web_user"):
     db       = SessionLocal()
     tmp_path = None
+    aktif_user = mevcut_kullanici(request)
+    if aktif_user:
+        session_id = canonical_chat_session_id(aktif_user) or session_id
     try:
         uzanti = os.path.splitext(file.filename)[1] if file.filename else ".jpg"
         with tempfile.NamedTemporaryFile(delete=False, suffix=uzanti) as tmp:
@@ -571,18 +639,21 @@ async def upload_fis(request: Request, background_tasks: BackgroundTasks,
         fis = await fis_oku_async(tmp_path)
 
         if fis.hata:
-            _islem_log(db, "OCR_HATA", plaka=None, aciklama=fis.hata, session_id=session_id)
+            _islem_log(db, "OCR_HATA", plaka=None, aciklama=fis.hata, session_id=session_id,
+                       request=request, user=aktif_user)
             return JSONResponse({"cevap": f"❌ Fiş okunamadı: {fis.hata}\n\nFotoğrafı daha net çekip tekrar deneyin."})
 
         ticket     = fis_db_kaydet(fis, tmp_path, db)
-        aktif_user = mevcut_kullanici(request)
         if aktif_user:
             background_tasks.add_task(_usage_kaydet, aktif_user["id"], aktif_user["username"],
                                        "FIS_OCR", f"plaka={fis.plaka} | {fis.firma or '?'}",
                                        1, aktif_user.get("profaix_user_id"))
+            background_tasks.add_task(_billable_kaydet, aktif_user, "FIS_OCR",
+                                      f"plaka={fis.plaka} | {fis.firma or '?'}", 1, "ocr",
+                                      {"ticket_id": ticket.id, "fis_no": fis.fis_no})
         _islem_log(db, "FIS_YUKLENDI", plaka=fis.plaka,
                    aciklama=f"Fiş No: {fis.fis_no} | {fis.net_agirlik_kg} kg | {fis.firma}",
-                   session_id=session_id)
+                   session_id=session_id, request=request, user=aktif_user)
 
         from app.ocr.plaka_kontrol import plaka_kontrol_et, PlakaSonuc
         plaka_sonuc = plaka_kontrol_et(fis.plaka, ticket.id, db, fis_no=fis.fis_no)
@@ -637,6 +708,7 @@ async def firma_sec(request: Request, background_tasks: BackgroundTasks):
     secilen_firma = data.get("firma")
     malzemeler    = data.get("malzemeler", {})
     db            = SessionLocal()
+    aktif_user = mevcut_kullanici(request)
     try:
         from app.core.database import WeighTicket, Waybill
         ticket = db.query(WeighTicket).filter(WeighTicket.id == ticket_id).first()
@@ -652,18 +724,23 @@ async def firma_sec(request: Request, background_tasks: BackgroundTasks):
         sonuc = await asyncio.to_thread(irsaliye_olustur, ticket_id, True)
 
         if not sonuc.get("basarili"):
-            _islem_log(db, "IRSALIYE_HATA", cari_adi=secilen_firma, aciklama="İrsaliye oluşturulamadı")
+            _islem_log(db, "IRSALIYE_HATA", cari_adi=secilen_firma, aciklama="İrsaliye oluşturulamadı",
+                       request=request, user=aktif_user)
             return JSONResponse({"cevap": "❌ İrsaliye oluşturulamadı, tekrar deneyin."})
 
         waybill_id = sonuc["waybill_id"]
         parasut_id = sonuc.get("parasut_id", "-")
-        aktif_user = mevcut_kullanici(request)
         if aktif_user:
             background_tasks.add_task(_usage_kaydet, aktif_user["id"], aktif_user["username"],
                                        "IRSALIYE", f"cari={secilen_firma}", 1,
                                        aktif_user.get("profaix_user_id"))
+            background_tasks.add_task(_billable_kaydet, aktif_user, "IRSALIYE_OLUSTURULDU",
+                                      f"cari={secilen_firma}", 1, "parasut",
+                                      {"waybill_id": waybill_id, "parasut_id": parasut_id},
+                                      f"irsaliye:{parasut_id}")
         _islem_log(db, "IRSALIYE_OLUSTURULDU", cari_adi=secilen_firma,
-                   irsaliye_id=str(parasut_id), plaka=ticket.plaka, aciklama=f"{ticket.agirlik_kg} kg")
+                   irsaliye_id=str(parasut_id), plaka=ticket.plaka, aciklama=f"{ticket.agirlik_kg} kg",
+                   request=request, user=aktif_user)
 
         waybill_obj = db.query(Waybill).filter(Waybill.id == waybill_id).first()
         if waybill_obj:
@@ -817,6 +894,7 @@ async def tahsilat_ekle_endpoint(request: Request, background_tasks: BackgroundT
     if not cari_adi or not tutar:
         return JSONResponse({"basarili": False, "cevap": "Cari adı ve tutar gerekli."})
 
+    aktif_user = mevcut_kullanici(request)
     try:
         from app.parasut.client import async_tahsilat_ekle, async_cari_id_bul, async_cari_detay_getir
         from datetime import datetime
@@ -853,15 +931,18 @@ async def tahsilat_ekle_endpoint(request: Request, background_tasks: BackgroundT
         sonuc = await async_tahsilat_ekle(cari_adi, float(tutar), aciklama or f"{cari_adi} tahsilat", tarih_str)
 
         if sonuc.get("basarili"):
-            aktif_user = mevcut_kullanici(request)
             if aktif_user:
                 background_tasks.add_task(_usage_kaydet, aktif_user["id"], aktif_user["username"],
                                            "TAHSILAT", f"cari={cari_adi} | {tutar} TL",
                                            1, aktif_user.get("profaix_user_id"))
+                background_tasks.add_task(_billable_kaydet, aktif_user, "TAHSILAT_EKLENDI",
+                                          f"cari={cari_adi} | {tutar} TL", 1, "parasut",
+                                          {"cari_adi": cari_adi, "tutar": tutar, "tarih": tarih_str})
             db = SessionLocal()
             try:
                 _islem_log(db, "TAHSILAT_EKLENDI", cari_adi=cari_adi, tutar=int(float(tutar)),
-                           aciklama=f"Tarih: {tarih or 'Bugün'} | {aciklama or ''}")
+                           aciklama=f"Tarih: {tarih or 'Bugün'} | {aciklama or ''}",
+                           request=request, user=aktif_user)
             finally:
                 db.close()
 
@@ -903,18 +984,23 @@ async def cari_olustur_endpoint(request: Request, background_tasks: BackgroundTa
     if not firma_adi:
         return JSONResponse({"basarili": False, "cevap": "❌ Firma adı gerekli."})
 
+    aktif_user = mevcut_kullanici(request)
     try:
         from app.parasut.client import cari_olustur
         sonuc = await asyncio.to_thread(cari_olustur, firma_adi, email, telefon, vergi_no, vergi_dairesi, adres)
         if sonuc.get("basarili"):
-            aktif_user = mevcut_kullanici(request)
             if aktif_user:
                 background_tasks.add_task(_usage_kaydet, aktif_user["id"], aktif_user["username"],
                                            "CARI", f"firma={firma_adi}", 1, aktif_user.get("profaix_user_id"))
+                background_tasks.add_task(_billable_kaydet, aktif_user, "CARI_OLUSTURULDU",
+                                          f"firma={firma_adi}", 1, "parasut",
+                                          {"firma_adi": firma_adi, "cari_id": sonuc.get("id")},
+                                          f"cari:{sonuc.get('id')}")
             db = SessionLocal()
             try:
                 _islem_log(db, "CARI_OLUSTURULDU", cari_adi=firma_adi,
-                           aciklama=f"Vergi No: {vergi_no or '-'} | Tel: {telefon or '-'}")
+                           aciklama=f"Vergi No: {vergi_no or '-'} | Tel: {telefon or '-'}",
+                           request=request, user=aktif_user)
             finally:
                 db.close()
             return JSONResponse({"basarili": True, "cevap": (
@@ -1141,6 +1227,7 @@ async def toplu_fatura_kes_endpoint(request: Request, background_tasks: Backgrou
     if not cari_adi or not irsaliyeler_data:
         return JSONResponse({"cevap": "❌ Eksik bilgi.", "basarili": False})
 
+    aktif_user = mevcut_kullanici(request)
     db = SessionLocal()
     try:
         from app.parasut.client import async_cari_id_bul, async_parasut_post, async_parasut_delete, async_cari_cache_yenile
@@ -1212,13 +1299,18 @@ async def toplu_fatura_kes_endpoint(request: Request, background_tasks: Backgrou
         fatura_id = sonuc["data"]["id"]
         logger.info(f"✅ Toplu fatura kesildi: {fatura_id} ← {len(irsaliye_ids)} irsaliye")
 
-        aktif_user = mevcut_kullanici(request)
         if aktif_user:
             background_tasks.add_task(_usage_kaydet, aktif_user["id"], aktif_user["username"],
                                        "TOPLU_FATURA", f"cari={cari_adi} | {int(toplam_tutar)} TL",
                                        1, aktif_user.get("profaix_user_id"))
+            background_tasks.add_task(_billable_kaydet, aktif_user, "TOPLU_FATURA_KESILDI",
+                                      f"cari={cari_adi} | {int(toplam_tutar)} TL", 1, "parasut",
+                                      {"fatura_id": fatura_id, "irsaliye_sayisi": len(irsaliye_ids),
+                                       "toplam_tutar": int(toplam_tutar)},
+                                      f"toplu_fatura:{fatura_id}")
         _islem_log(db, "TOPLU_FATURA_KESILDI", cari_adi=cari_adi, tutar=int(toplam_tutar),
-                   fatura_id=fatura_id, aciklama=f"{len(irsaliye_ids)} irsaliye birleştirildi")
+                   fatura_id=fatura_id, aciklama=f"{len(irsaliye_ids)} irsaliye birleştirildi",
+                   request=request, user=aktif_user)
 
         for pid in irsaliye_ids:
             try:
@@ -1274,6 +1366,7 @@ async def fatura_kes_endpoint(request: Request, background_tasks: BackgroundTask
     if not parasut_irsaliye_id or not cari_adi or not toplanan_fiyatlar:
         return JSONResponse({"cevap": "❌ Eksik bilgi: irsaliye ID, cari adı ve fiyat gerekli."})
 
+    aktif_user = mevcut_kullanici(request)
     db = SessionLocal()
     try:
         from app.parasut.client import async_cari_id_bul, async_parasut_post, async_parasut_delete, async_cari_cache_yenile
@@ -1331,13 +1424,18 @@ async def fatura_kes_endpoint(request: Request, background_tasks: BackgroundTask
         fatura_id = sonuc["data"]["id"]
         logger.info(f"✅ Fatura kesildi: {fatura_id} ← irsaliye {parasut_irsaliye_id}")
 
-        aktif_user = mevcut_kullanici(request)
         if aktif_user:
             background_tasks.add_task(_usage_kaydet, aktif_user["id"], aktif_user["username"],
                                        "FATURA", f"cari={cari_adi} | {int(toplam_tutar)} TL",
                                        1, aktif_user.get("profaix_user_id"))
+            background_tasks.add_task(_billable_kaydet, aktif_user, "FATURA_KESILDI",
+                                      f"cari={cari_adi} | {int(toplam_tutar)} TL", 1, "parasut",
+                                      {"fatura_id": fatura_id, "irsaliye_id": str(parasut_irsaliye_id),
+                                       "toplam_tutar": int(toplam_tutar)},
+                                      f"fatura:{fatura_id}")
         _islem_log(db, "FATURA_KESILDI", cari_adi=cari_adi, tutar=int(toplam_tutar),
-                   fatura_id=fatura_id, irsaliye_id=str(parasut_irsaliye_id))
+                   fatura_id=fatura_id, irsaliye_id=str(parasut_irsaliye_id),
+                   request=request, user=aktif_user)
 
         try:
             waybill = db.query(Waybill).filter(Waybill.parasut_irsaliye_id == str(parasut_irsaliye_id)).first()
@@ -1370,13 +1468,108 @@ async def fatura_kes_endpoint(request: Request, background_tasks: BackgroundTask
 
     except Exception as e:
         logger.error(f"Fatura kes hatası: {e}")
-        _islem_log(db, "FATURA_HATA", cari_adi=cari_adi, irsaliye_id=str(parasut_irsaliye_id), aciklama=str(e))
+        _islem_log(db, "FATURA_HATA", cari_adi=cari_adi, irsaliye_id=str(parasut_irsaliye_id),
+                   aciklama=str(e), request=request, user=aktif_user)
         return JSONResponse({"cevap": f"❌ Fatura kesilemedi: {_guvenli_hata(e)}", "basarili": False})
     finally:
         db.close()
 
 
 # ── KULLANIM ÖZETİ ────────────────────────────────────────────────────
+
+@app.get("/api/billing/usage/{user_id}")
+def billing_usage_endpoint(user_id: str, request: Request, baslangic: str = None,
+                           bitis: str = None, limit: int = 100):
+    """Profaix.com ücretlendirme sistemi için temiz faturalandırılabilir olay özeti."""
+    if not _admin_kontrol(request):
+        return JSONResponse({"hata": "Yetkisiz erişim"}, status_code=401)
+
+    from app.core.database import SessionLocal, BillableEvent
+    from sqlalchemy import func as sqlfunc, or_
+    from datetime import datetime, time as _time
+
+    db = SessionLocal()
+    try:
+        q = db.query(BillableEvent).filter(
+            or_(BillableEvent.profaix_user_id == user_id, BillableEvent.username == user_id)
+        )
+        if baslangic:
+            start_dt = datetime.combine(datetime.strptime(baslangic, "%Y-%m-%d").date(), _time.min)
+            q = q.filter(BillableEvent.created_at >= start_dt)
+        if bitis:
+            end_dt = datetime.combine(datetime.strptime(bitis, "%Y-%m-%d").date(), _time.max)
+            q = q.filter(BillableEvent.created_at <= end_dt)
+
+        toplam_adet = q.count()
+        toplam_amount = q.with_entities(sqlfunc.coalesce(sqlfunc.sum(BillableEvent.amount), 0)).scalar() or 0
+        dagilim = q.with_entities(
+            BillableEvent.event_type,
+            sqlfunc.count(BillableEvent.id).label("adet"),
+            sqlfunc.coalesce(sqlfunc.sum(BillableEvent.amount), 0).label("amount"),
+        ).group_by(BillableEvent.event_type).all()
+        olaylar = q.order_by(BillableEvent.created_at.desc()).limit(min(max(limit, 1), 500)).all()
+
+        return JSONResponse({
+            "user_id": user_id,
+            "baslangic": baslangic,
+            "bitis": bitis,
+            "toplam_olay": toplam_adet,
+            "toplam_birim": int(toplam_amount),
+            "dagilim": [
+                {"event_type": row.event_type, "adet": row.adet, "birim": int(row.amount)}
+                for row in dagilim
+            ],
+            "olaylar": [
+                {
+                    "event_id": e.event_id,
+                    "event_type": e.event_type,
+                    "amount": e.amount,
+                    "username": e.username,
+                    "profaix_user_id": e.profaix_user_id,
+                    "source": e.source,
+                    "description": e.description,
+                    "metadata": _json.loads(e.metadata_json) if e.metadata_json else {},
+                    "created_at": e.created_at.isoformat() if e.created_at else None,
+                }
+                for e in olaylar
+            ],
+        })
+    except Exception as e:
+        logger.error(f"Billing usage endpoint hatası: {e}")
+        return JSONResponse({"hata": _guvenli_hata(e, "Billing özeti alınamadı")}, status_code=500)
+    finally:
+        db.close()
+
+
+@app.post("/api/billing/panel-click")
+async def billing_panel_click(request: Request, background_tasks: BackgroundTasks):
+    """Sol menü / panelden açılan araçlar için ücretlendirme kaydı (her tıklama bir olay)."""
+    aktif_user = mevcut_kullanici(request)
+    if not aktif_user:
+        return JSONResponse({"hata": "Bu işlem için giriş yapmanız gerekiyor.", "code": "AUTH_REQUIRED"}, status_code=401)
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    panel = (data.get("panel") or "").strip()
+    event_type = _PANEL_TIKLAMA_EVENT.get(panel)
+    if not event_type:
+        return JSONResponse({"hata": "Geçersiz panel.", "code": "UNKNOWN_PANEL"}, status_code=400)
+    detail = data.get("detail")
+    meta = detail if isinstance(detail, dict) else {}
+    meta = {"panel": panel, "panel_acildi": True, **meta}
+    background_tasks.add_task(
+        _billable_kaydet,
+        aktif_user,
+        event_type,
+        f"panel={panel}",
+        1,
+        "panel",
+        meta,
+        None,
+    )
+    return JSONResponse({"ok": True})
+
 
 @app.get("/api/kullanim-ozeti/{user_id}")
 def kullanim_ozeti_endpoint(user_id: str, request: Request):
