@@ -735,6 +735,19 @@
   } catch {}
 
   const _nativeFetch = window.fetch.bind(window);
+  let _sessionReplacedShown = false;
+  function oturumDegistiUyarisi() {
+    if (_sessionReplacedShown) return;
+    _sessionReplacedShown = true;
+    AUTH_TOKEN = '';
+    try { localStorage.removeItem('profaix_auth_token'); } catch {}
+    if (typeof addMessage === 'function') {
+      addMessage('❌ Bu hesap başka bir cihazda açıldığı için bu oturum kapatıldı.', 'bot');
+    } else {
+      alert('Bu hesap başka bir cihazda açıldığı için bu oturum kapatıldı.');
+    }
+  }
+
   window.fetch = function(input, init) {
     init = init || {};
     const url = typeof input === 'string' ? input : ((input && input.url) || '');
@@ -744,7 +757,14 @@
       if (!headers.has('Authorization')) headers.set('Authorization', 'Bearer ' + AUTH_TOKEN);
       init = Object.assign({}, init, { headers: headers });
     }
-    return _nativeFetch(input, init);
+    return _nativeFetch(input, init).then(function(res) {
+      if (res.status === 401 && sameOriginApi) {
+        res.clone().json().then(function(data) {
+          if (data && data.code === 'SESSION_REPLACED') oturumDegistiUyarisi();
+        }).catch(function() {});
+      }
+      return res;
+    });
   };
 
   async function cikisYap() {

@@ -17,9 +17,10 @@ from app.core.logger import logger
 from app.core.database import UsageLog
 
 from app.auth import (
-    token_uret, mevcut_kullanici,
+    token_uret, mevcut_kullanici, token_durumu,
     giris_zorunlu, audit_kaydet, ilk_admin_olustur,
-    profaix_kullanici_dogrula, embed_token_coz
+    profaix_kullanici_dogrula, embed_token_coz,
+    aktif_oturum_baslat, aktif_oturum_kapat
 )
 from typing import Optional
 
@@ -77,6 +78,18 @@ def _tokenli_chat_response(token: str) -> HTMLResponse:
         samesite="none",
     )
     return response
+
+
+def _profaix_token_uret(profaix_user_id: str, full_name: str, email: str,
+                        request: Request, beni_hatirla: bool = True) -> str:
+    sid = aktif_oturum_baslat("pfa:" + str(profaix_user_id), full_name, request)
+    return token_uret(
+        profaix_user_id=profaix_user_id,
+        full_name=full_name,
+        email=email,
+        beni_hatirla=beni_hatirla,
+        auth_session_id=sid,
+    )
 
 
 async def _keep_alive():
@@ -144,8 +157,16 @@ _ACIK_API_YOLLARI = {"/api/login", "/api/logout", "/api/me"}
 async def api_auth_middleware(request: Request, call_next):
     path = request.url.path
     if path.startswith("/api/") and path not in _ACIK_API_YOLLARI:
-        user = mevcut_kullanici(request)
+        user, auth_reason = token_durumu(request)
         if not user:
+            if auth_reason == "replaced":
+                return JSONResponse(
+                    {
+                        "hata": "Bu hesap başka bir cihazda açıldığı için bu oturum kapatıldı.",
+                        "code": "SESSION_REPLACED",
+                    },
+                    status_code=401,
+                )
             return JSONResponse(
                 {"hata": "Bu işlem için giriş yapmanız gerekiyor.", "code": "AUTH_REQUIRED"},
                 status_code=401,
@@ -243,12 +264,7 @@ async def chat_sayfasi(request: Request):
             full_name = payload.get("full_name") or payload.get("name") or payload.get("username") or profaix_user_id
             email = payload.get("email", "")
             if profaix_user_id:
-                token = token_uret(
-                    profaix_user_id=profaix_user_id,
-                    full_name=full_name,
-                    email=email,
-                    beni_hatirla=True,
-                )
+                token = _profaix_token_uret(profaix_user_id, full_name, email, request, True)
                 logger.info(f"✅ İmzalı embed giriş: {full_name} ({profaix_user_id})")
                 return _tokenli_chat_response(token)
         logger.warning("Geçersiz embed_token ile /chat isteği alındı")
@@ -257,9 +273,13 @@ async def chat_sayfasi(request: Request):
     if user_id_param and not REQUIRE_SIGNED_EMBED_AUTH:
         kullanici = await profaix_kullanici_dogrula(user_id_param)
         if kullanici:
-            token = token_uret(profaix_user_id=kullanici["id"],
-                               full_name=kullanici.get("full_name", ""),
-                               email=kullanici.get("email", ""), beni_hatirla=True)
+            token = _profaix_token_uret(
+                kullanici["id"],
+                kullanici.get("full_name", ""),
+                kullanici.get("email", ""),
+                request,
+                True,
+            )
             logger.info(f"✅ Otomatik giriş: {kullanici.get('full_name')} ({user_id_param})")
             return _tokenli_chat_response(token)
     elif user_id_param:
@@ -300,8 +320,7 @@ async def login(request: Request, background_tasks: BackgroundTasks):
         email = payload.get("email", "")
         if not profaix_user_id:
             return JSONResponse({"basarili": False, "hata": "Güvenli giriş tokenı eksik"})
-        token = token_uret(profaix_user_id=profaix_user_id, full_name=full_name,
-                           email=email, beni_hatirla=beni_hatirla)
+        token = _profaix_token_uret(profaix_user_id, full_name, email, request, beni_hatirla)
         response = JSONResponse({"basarili": True, "username": full_name,
                                   "ad_soyad": full_name, "rol": "user",
                                   "auth_token": token})
@@ -315,8 +334,13 @@ async def login(request: Request, background_tasks: BackgroundTasks):
         kullanici = await profaix_kullanici_dogrula(user_id)
         if not kullanici:
             return JSONResponse({"basarili": False, "hata": "Kullanıcı doğrulanamadı"})
-        token = token_uret(profaix_user_id=kullanici["id"], full_name=kullanici.get("full_name", ""),
-                           email=kullanici.get("email", ""), beni_hatirla=beni_hatirla)
+        token = _profaix_token_uret(
+            kullanici["id"],
+            kullanici.get("full_name", ""),
+            kullanici.get("email", ""),
+            request,
+            beni_hatirla,
+        )
         logger.info(f"✅ Profaix girişi: {kullanici.get('full_name')} ({user_id})")
         background_tasks.add_task(_usage_kaydet, None, kullanici.get("full_name", user_id),
                                   "GIRIS", f"profaix_id={user_id}", 0, user_id)
@@ -350,8 +374,10 @@ async def login(request: Request, background_tasks: BackgroundTasks):
     from datetime import datetime as _dt, timedelta as _td
     from app.core.config import JWT_SECRET_KEY
     _expire = _dt.utcnow() + (_td(days=7) if beni_hatirla else _td(hours=8))
+    _sid = aktif_oturum_baslat("loc:" + str(user_id_local), user_username, request)
     _token  = _jwt.encode({"sub": str(user_id_local), "username": user_username,
-                            "rol": user_rol, "exp": _expire}, JWT_SECRET_KEY, algorithm="HS256")
+                            "rol": user_rol, "sid": _sid, "typ": "local",
+                            "exp": _expire}, JWT_SECRET_KEY, algorithm="HS256")
     logger.info(f"✅ Local giriş: {user_username}")
     background_tasks.add_task(_usage_kaydet, user_id_local, user_username, "GIRIS",
                                f"ip={request.client.host if request.client else '?'}", 0, None)
@@ -368,7 +394,11 @@ async def login(request: Request, background_tasks: BackgroundTasks):
 
 
 @app.post("/api/logout")
-async def logout():
+async def logout(request: Request):
+    user = mevcut_kullanici(request)
+    if user:
+        principal = "pfa:" + str(user["profaix_user_id"]) if user.get("profaix_user_id") else "loc:" + str(user.get("id"))
+        aktif_oturum_kapat(principal, user.get("auth_session_id"))
     response = JSONResponse({"basarili": True})
     response.delete_cookie("profaix_token", secure=True, samesite="none")
     return response
@@ -376,9 +406,10 @@ async def logout():
 
 @app.get("/api/me")
 async def me(request: Request):
-    user = mevcut_kullanici(request)
+    user, auth_reason = token_durumu(request)
     if not user:
-        return JSONResponse({"giris_yapildi": False})
+        code = "SESSION_REPLACED" if auth_reason == "replaced" else "AUTH_REQUIRED"
+        return JSONResponse({"giris_yapildi": False, "code": code})
     out = {"giris_yapildi": True, **user}
     sid = canonical_chat_session_id(user)
     if sid:

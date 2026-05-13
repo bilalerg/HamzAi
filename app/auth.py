@@ -7,6 +7,7 @@ from fastapi import Request, HTTPException, status
 from fastapi.responses import JSONResponse
 import httpx
 import os
+import uuid
 from app.core.logger import logger
 from app.core.config import JWT_SECRET_KEY, PROFAIX_EMBED_SECRET
 
@@ -42,7 +43,7 @@ async def profaix_kullanici_dogrula(user_id: str) -> Optional[dict]:
 
 # ── JWT TOKEN ────────────────────────────────────────────────────────
 def token_uret(profaix_user_id: str, full_name: str, email: str,
-               beni_hatirla: bool = False) -> str:
+               beni_hatirla: bool = False, auth_session_id: str = None) -> str:
     sure    = TOKEN_SURE_HATIRLA if beni_hatirla else TOKEN_SURE
     expire  = datetime.utcnow() + sure
     payload = {
@@ -52,6 +53,8 @@ def token_uret(profaix_user_id: str, full_name: str, email: str,
         "typ":       "profaix",
         "exp":       expire,
     }
+    if auth_session_id:
+        payload["sid"] = auth_session_id
     return jwt.encode(payload, JWT_SECRET_KEY, algorithm=ALGORITHM)
 
 
@@ -83,18 +86,76 @@ def _request_token_al(request: Request) -> Optional[str]:
     return None
 
 
-# ── MEVCUT KULLANICI ──────────────────────────────────────────────────
-def mevcut_kullanici(request: Request) -> Optional[dict]:
-    """Cookie veya Authorization header'dan token alır, kullanıcıyı döndürür.
-    Hem eski (username/rol) hem yeni (profaix user_id) formatı destekler."""
-    token = _request_token_al(request)
-    if not token:
+def _principal_key(payload: dict) -> Optional[str]:
+    sub = payload.get("sub")
+    if not sub:
         return None
-    payload = token_coz(token)
-    if not payload:
-        return None
+    if payload.get("typ") == "profaix" or payload.get("full_name"):
+        return "pfa:" + str(sub)
+    return "loc:" + str(sub)
 
-    # Yeni format: profaix.com user_id
+
+def aktif_oturum_baslat(principal_key: str, username: str = "", request: Request = None) -> str:
+    """Kullanıcı için tek aktif oturumu günceller; eski cihazlar bu anda düşer."""
+    from app.core.database import SessionLocal, ActiveLogin
+    sid = uuid.uuid4().hex
+    db = SessionLocal()
+    try:
+        row = db.query(ActiveLogin).filter(ActiveLogin.principal_key == principal_key).first()
+        if not row:
+            row = ActiveLogin(principal_key=principal_key, session_id=sid)
+            db.add(row)
+        else:
+            row.session_id = sid
+        row.username = username or row.username
+        row.user_agent = request.headers.get("user-agent", "")[:1000] if request else None
+        row.ip_adresi = request.client.host if request and request.client else None
+        row.updated_at = datetime.utcnow()
+        db.commit()
+        return sid
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Aktif oturum başlatılamadı: {e}")
+        raise
+    finally:
+        db.close()
+
+
+def aktif_oturum_gecerli(principal_key: str, session_id: str) -> bool:
+    if not principal_key or not session_id:
+        return False
+    from app.core.database import SessionLocal, ActiveLogin
+    db = SessionLocal()
+    try:
+        row = db.query(ActiveLogin).filter(ActiveLogin.principal_key == principal_key).first()
+        if not row or row.session_id != session_id:
+            return False
+        row.updated_at = datetime.utcnow()
+        db.commit()
+        return True
+    except Exception as e:
+        logger.error(f"Aktif oturum kontrol hatası: {e}")
+        return False
+    finally:
+        db.close()
+
+
+def aktif_oturum_kapat(principal_key: str, session_id: str = None):
+    from app.core.database import SessionLocal, ActiveLogin
+    db = SessionLocal()
+    try:
+        row = db.query(ActiveLogin).filter(ActiveLogin.principal_key == principal_key).first()
+        if row and (session_id is None or row.session_id == session_id):
+            db.delete(row)
+            db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.warning(f"Aktif oturum kapatılamadı: {e}")
+    finally:
+        db.close()
+
+
+def _payload_kullanici(payload: dict) -> Optional[dict]:
     if payload.get("typ") == "profaix" or payload.get("full_name"):
         return {
             "id": None,
@@ -102,10 +163,10 @@ def mevcut_kullanici(request: Request) -> Optional[dict]:
             "profaix_user_id": payload.get("sub", ""),
             "email": payload.get("email", ""),
             "full_name": payload.get("full_name", ""),
-            "rol": "user"
+            "rol": "user",
+            "auth_session_id": payload.get("sid", ""),
         }
 
-    # Eski format: local admin
     try:
         local_id = int(payload.get("sub", 0))
     except (TypeError, ValueError):
@@ -117,8 +178,33 @@ def mevcut_kullanici(request: Request) -> Optional[dict]:
         "profaix_user_id": None,
         "email": "",
         "full_name": payload.get("username", ""),
-        "rol": payload.get("rol", "user")
+        "rol": payload.get("rol", "user"),
+        "auth_session_id": payload.get("sid", ""),
     }
+
+
+def token_durumu(request: Request) -> tuple[Optional[dict], str]:
+    token = _request_token_al(request)
+    if not token:
+        return None, "missing"
+    payload = token_coz(token)
+    if not payload:
+        return None, "invalid"
+    principal_key = _principal_key(payload)
+    session_id = payload.get("sid")
+    if not aktif_oturum_gecerli(principal_key, session_id):
+        return None, "replaced"
+    user = _payload_kullanici(payload)
+    if not user:
+        return None, "invalid"
+    return user, ""
+
+
+# ── MEVCUT KULLANICI ──────────────────────────────────────────────────
+def mevcut_kullanici(request: Request) -> Optional[dict]:
+    """Cookie veya Authorization header'dan token alır, kullanıcıyı döndürür.
+    Hem eski (username/rol) hem yeni (profaix user_id) formatı destekler."""
+    return token_durumu(request)[0]
 
 
 def giris_zorunlu(request: Request) -> dict:

@@ -136,6 +136,19 @@ class ChatSession(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
+class ActiveLogin(Base):
+    __tablename__ = "active_logins"
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    principal_key = Column(String(150), unique=True, nullable=False, index=True)
+    session_id    = Column(String(100), nullable=False, index=True)
+    username      = Column(String(100), nullable=True)
+    user_agent    = Column(Text, nullable=True)
+    ip_adresi     = Column(String(50), nullable=True)
+    created_at    = Column(DateTime, server_default=func.now())
+    updated_at    = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    def __repr__(self): return f"<ActiveLogin principal={self.principal_key}>"
+
+
 class IslemLog(Base):
     __tablename__ = "islem_logs"
     id          = Column(Integer, primary_key=True, autoincrement=True)

@@ -44,6 +44,19 @@ def calistir(engine, db):
             )
         """), "islem_logs")
 
+        _tablo_olustur(conn, text("""
+            CREATE TABLE IF NOT EXISTS active_logins (
+                id SERIAL PRIMARY KEY,
+                principal_key VARCHAR(150) UNIQUE NOT NULL,
+                session_id VARCHAR(100) NOT NULL,
+                username VARCHAR(100),
+                user_agent TEXT,
+                ip_adresi VARCHAR(50),
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        """), "active_logins")
+
     # ── YARIMA KALMIŞ İŞLEM TESPİTİ ──────────────────────────────────
     from app.core.database import WeighTicket, TicketStatus
     bekleyenler = db.query(WeighTicket).filter(
