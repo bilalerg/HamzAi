@@ -735,16 +735,30 @@
   } catch {}
 
   const _nativeFetch = window.fetch.bind(window);
+  let _sessionReplaced = false;
   let _sessionReplacedShown = false;
+  const SESSION_REPLACED_MESSAGE = '❌ Bu hesap başka bir cihazda açıldığı için bu oturum kapatıldı.';
+
   function oturumDegistiUyarisi() {
-    if (_sessionReplacedShown) return;
-    _sessionReplacedShown = true;
+    _sessionReplaced = true;
     AUTH_TOKEN = '';
     try { localStorage.removeItem('profaix_auth_token'); } catch {}
+    if (typeof inputEl !== 'undefined' && inputEl) {
+      inputEl.value = '';
+      inputEl.disabled = true;
+      inputEl.placeholder = 'Bu oturum başka cihazda açıldığı için kapatıldı.';
+    }
+    if (typeof sendBtn !== 'undefined' && sendBtn) {
+      sendBtn.disabled = true;
+      sendBtn.style.opacity = '0.45';
+      sendBtn.style.cursor = 'not-allowed';
+    }
+    if (_sessionReplacedShown) return;
+    _sessionReplacedShown = true;
     if (typeof addMessage === 'function') {
-      addMessage('❌ Bu hesap başka bir cihazda açıldığı için bu oturum kapatıldı.', 'bot');
+      addMessage(SESSION_REPLACED_MESSAGE, 'bot');
     } else {
-      alert('Bu hesap başka bir cihazda açıldığı için bu oturum kapatıldı.');
+      alert(SESSION_REPLACED_MESSAGE);
     }
   }
 
@@ -1342,6 +1356,11 @@
     const text = inputEl.value.trim();
     if (!text || sendBtn.disabled) return;
     await ensureSessionReady();
+    if (_sessionReplaced) {
+      addMessage(SESSION_REPLACED_MESSAGE, 'bot');
+      inputEl.value = '';
+      return;
+    }
 
     // 1. Önce frontend keyword eşleştirmesi — hızlı, API isteği yok
     const eslesen = mesajYonlendir(text);
@@ -1370,6 +1389,15 @@
       const data = await res.json();
       removeTyping();
 
+      if (data && data.code === 'SESSION_REPLACED') {
+        oturumDegistiUyarisi();
+        return;
+      }
+      if (!res.ok) {
+        addMessage(data.hata || '❌ İşlem yapılamadı, lütfen tekrar deneyin.', 'bot');
+        return;
+      }
+
       const intent = data.intent || 'none';
       const mesaj  = data.cevap  || '';
       const params = data.params || {};
@@ -1380,15 +1408,17 @@
         await INTENT_MAP[intent](params);
       } else {
         // intent = "none" → sadece mesajı göster
-        addMessage(mesaj, 'bot');
+        if (mesaj) addMessage(mesaj, 'bot');
       }
 
     } catch {
       removeTyping();
       addMessage('❌ Bağlantı hatası, lütfen tekrar deneyin.', 'bot');
     } finally {
-      sendBtn.disabled = false;
-      inputEl.focus();
+      if (!_sessionReplaced) {
+        sendBtn.disabled = false;
+        inputEl.focus();
+      }
     }
   }
 
