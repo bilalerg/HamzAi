@@ -8,7 +8,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, UploadFile, File, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
-from app.core.config import validate_config, ENV, ADMIN_TOKEN, ALLOWED_ORIGINS
+from app.core.config import (
+    validate_config, ENV, ADMIN_TOKEN, ALLOWED_ORIGINS,
+    REQUIRE_SIGNED_EMBED_AUTH
+)
 from app.core.database import init_db, SessionLocal, engine
 from app.core.logger import logger
 from app.core.database import UsageLog
@@ -16,7 +19,7 @@ from app.core.database import UsageLog
 from app.auth import (
     token_uret, mevcut_kullanici,
     giris_zorunlu, audit_kaydet, ilk_admin_olustur,
-    profaix_kullanici_dogrula
+    profaix_kullanici_dogrula, embed_token_coz
 )
 from typing import Optional
 
@@ -51,8 +54,29 @@ def tr_kg(sayi: float) -> str:
 
 _HTML_PATH = Path(__file__).parent / "chat.html"
 
-def _chat_html() -> str:
-    return _HTML_PATH.read_text(encoding="utf-8")
+def _chat_html(auth_token: str = "") -> str:
+    html = _HTML_PATH.read_text(encoding="utf-8")
+    if not auth_token:
+        return html
+    bootstrap = (
+        "<script>"
+        "window.PROFAIX_BOOTSTRAP_TOKEN = " + _json.dumps(auth_token) + ";"
+        "</script>\n"
+    )
+    return html.replace("<script>", bootstrap + "<script>", 1)
+
+
+def _tokenli_chat_response(token: str) -> HTMLResponse:
+    response = HTMLResponse(content=_chat_html(token))
+    response.set_cookie(
+        key="profaix_token",
+        value=token,
+        max_age=60 * 60 * 24 * 7,
+        httponly=True,
+        secure=True,
+        samesite="none",
+    )
+    return response
 
 
 async def _keep_alive():
@@ -211,23 +235,42 @@ async def status():
 
 @app.get("/chat", response_class=HTMLResponse)
 async def chat_sayfasi(request: Request):
+    embed_token = request.query_params.get("embed_token") or request.query_params.get("token")
+    if embed_token:
+        payload = embed_token_coz(embed_token)
+        if payload:
+            profaix_user_id = str(payload.get("sub") or payload.get("user_id") or "")
+            full_name = payload.get("full_name") or payload.get("name") or payload.get("username") or profaix_user_id
+            email = payload.get("email", "")
+            if profaix_user_id:
+                token = token_uret(
+                    profaix_user_id=profaix_user_id,
+                    full_name=full_name,
+                    email=email,
+                    beni_hatirla=True,
+                )
+                logger.info(f"✅ İmzalı embed giriş: {full_name} ({profaix_user_id})")
+                return _tokenli_chat_response(token)
+        logger.warning("Geçersiz embed_token ile /chat isteği alındı")
+
     user_id_param = request.query_params.get("user_id")
-    if user_id_param:
+    if user_id_param and not REQUIRE_SIGNED_EMBED_AUTH:
         kullanici = await profaix_kullanici_dogrula(user_id_param)
         if kullanici:
             token = token_uret(profaix_user_id=kullanici["id"],
                                full_name=kullanici.get("full_name", ""),
                                email=kullanici.get("email", ""), beni_hatirla=True)
-            response = HTMLResponse(content=_chat_html())
-            response.set_cookie(key="profaix_token", value=token, max_age=60*60*24*7,
-                                httponly=True, secure=True, samesite="none")
             logger.info(f"✅ Otomatik giriş: {kullanici.get('full_name')} ({user_id_param})")
-            return response
+            return _tokenli_chat_response(token)
+    elif user_id_param:
+        logger.warning("user_id ile /chat girişi reddedildi; embed_token gerekli")
+
     user = mevcut_kullanici(request)
     if not user:
         from fastapi.responses import RedirectResponse
         return RedirectResponse(url="https://profaix.com/login")
-    return HTMLResponse(content=_chat_html())
+    token = request.cookies.get("profaix_token", "")
+    return HTMLResponse(content=_chat_html(token))
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -241,13 +284,34 @@ async def login(request: Request, background_tasks: BackgroundTasks):
     from passlib.context import CryptContext
     from app.core.database import SessionLocal, User
     data         = await request.json()
+    embed_token  = data.get("embed_token", "").strip()
     user_id      = data.get("user_id", "").strip()
     username     = data.get("username", "").strip()
     sifre        = data.get("password", "").strip()
     beni_hatirla = data.get("beni_hatirla", False)
     max_age      = 60 * 60 * 24 * 7 if beni_hatirla else 60 * 60 * 8
 
+    if embed_token:
+        payload = embed_token_coz(embed_token)
+        if not payload:
+            return JSONResponse({"basarili": False, "hata": "Güvenli giriş tokenı geçersiz"})
+        profaix_user_id = str(payload.get("sub") or payload.get("user_id") or "")
+        full_name = payload.get("full_name") or payload.get("name") or payload.get("username") or profaix_user_id
+        email = payload.get("email", "")
+        if not profaix_user_id:
+            return JSONResponse({"basarili": False, "hata": "Güvenli giriş tokenı eksik"})
+        token = token_uret(profaix_user_id=profaix_user_id, full_name=full_name,
+                           email=email, beni_hatirla=beni_hatirla)
+        response = JSONResponse({"basarili": True, "username": full_name,
+                                  "ad_soyad": full_name, "rol": "user",
+                                  "auth_token": token})
+        response.set_cookie(key="profaix_token", value=token, max_age=max_age,
+                            httponly=True, secure=True, samesite="none")
+        return response
+
     if user_id:
+        if REQUIRE_SIGNED_EMBED_AUTH:
+            return JSONResponse({"basarili": False, "hata": "Güvenli giriş tokenı gerekli"}, status_code=401)
         kullanici = await profaix_kullanici_dogrula(user_id)
         if not kullanici:
             return JSONResponse({"basarili": False, "hata": "Kullanıcı doğrulanamadı"})
@@ -257,7 +321,8 @@ async def login(request: Request, background_tasks: BackgroundTasks):
         background_tasks.add_task(_usage_kaydet, None, kullanici.get("full_name", user_id),
                                   "GIRIS", f"profaix_id={user_id}", 0, user_id)
         response = JSONResponse({"basarili": True, "username": kullanici.get("full_name", ""),
-                                  "ad_soyad": kullanici.get("full_name", ""), "rol": "user"})
+                                  "ad_soyad": kullanici.get("full_name", ""), "rol": "user",
+                                  "auth_token": token})
         response.set_cookie(key="profaix_token", value=token, max_age=max_age,
                             httponly=True, secure=True, samesite="none")
         return response
@@ -290,7 +355,13 @@ async def login(request: Request, background_tasks: BackgroundTasks):
     logger.info(f"✅ Local giriş: {user_username}")
     background_tasks.add_task(_usage_kaydet, user_id_local, user_username, "GIRIS",
                                f"ip={request.client.host if request.client else '?'}", 0, None)
-    response = JSONResponse({"basarili": True, "username": user_username, "ad_soyad": user_ad, "rol": user_rol})
+    response = JSONResponse({
+        "basarili": True,
+        "username": user_username,
+        "ad_soyad": user_ad,
+        "rol": user_rol,
+        "auth_token": _token,
+    })
     response.set_cookie(key="profaix_token", value=_token, max_age=max_age,
                         httponly=True, secure=True, samesite="none")
     return response
@@ -299,7 +370,7 @@ async def login(request: Request, background_tasks: BackgroundTasks):
 @app.post("/api/logout")
 async def logout():
     response = JSONResponse({"basarili": True})
-    response.delete_cookie("profaix_token")
+    response.delete_cookie("profaix_token", secure=True, samesite="none")
     return response
 
 

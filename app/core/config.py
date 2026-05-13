@@ -59,6 +59,15 @@ PATRON_WHATSAPP     = os.getenv("PATRON_WHATSAPP")
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "")
 ADMIN_TOKEN    = os.getenv("ADMIN_TOKEN", "")
 
+# Profaix iframe girişinde uzun vadeli güvenli akış:
+# Profaix.com, PROFAIX_EMBED_SECRET ile kısa ömürlü JWT üretir ve /chat?embed_token=... gönderir.
+# Mobil Safari üçüncü taraf cookie'yi engellese bile chat.html API isteklerinde Authorization header kullanır.
+PROFAIX_EMBED_SECRET = os.getenv("PROFAIX_EMBED_SECRET", "")
+REQUIRE_SIGNED_EMBED_AUTH = os.getenv(
+    "REQUIRE_SIGNED_EMBED_AUTH",
+    "0"
+).lower() in ("1", "true", "yes")
+
 # ── CORS ───────────────────────────────────────────────────────────
 # Üretimde izin verilen origin'leri .env'de virgülle ayırarak tanımlayın.
 # Örnek: ALLOWED_ORIGINS=https://profaix.com,https://chat.profaix.com
@@ -86,6 +95,8 @@ def validate_config():
         "JWT_SECRET_KEY":        JWT_SECRET_KEY,
         "ADMIN_TOKEN":           ADMIN_TOKEN,
     }
+    if REQUIRE_SIGNED_EMBED_AUTH:
+        kritik_alanlar["PROFAIX_EMBED_SECRET"] = PROFAIX_EMBED_SECRET
 
     eksikler = [isim for isim, deger in kritik_alanlar.items() if not deger]
     if eksikler:

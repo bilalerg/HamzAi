@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 import httpx
 import os
 from app.core.logger import logger
-from app.core.config import JWT_SECRET_KEY
+from app.core.config import JWT_SECRET_KEY, PROFAIX_EMBED_SECRET
 
 # ── YAPILANDIRMA ──────────────────────────────────────────────────────
 # SECRET_KEY artık config.py'den geliyor — validate_config() boş geçmesine izin vermez.
@@ -49,6 +49,7 @@ def token_uret(profaix_user_id: str, full_name: str, email: str,
         "sub":       profaix_user_id,
         "full_name": full_name,
         "email":     email,
+        "typ":       "profaix",
         "exp":       expire,
     }
     return jwt.encode(payload, JWT_SECRET_KEY, algorithm=ALGORITHM)
@@ -61,11 +62,32 @@ def token_coz(token: str) -> Optional[dict]:
         return None
 
 
+def embed_token_coz(token: str) -> Optional[dict]:
+    """Profaix.com tarafından imzalanan kısa ömürlü iframe token'ını çözer."""
+    if not PROFAIX_EMBED_SECRET:
+        return None
+    try:
+        return jwt.decode(token, PROFAIX_EMBED_SECRET, algorithms=[ALGORITHM])
+    except JWTError:
+        return None
+
+
+def _request_token_al(request: Request) -> Optional[str]:
+    """Önce cookie, yoksa Authorization: Bearer token okur."""
+    token = request.cookies.get("profaix_token")
+    if token:
+        return token
+    auth = request.headers.get("Authorization", "")
+    if auth.lower().startswith("bearer "):
+        return auth.split(" ", 1)[1].strip()
+    return None
+
+
 # ── MEVCUT KULLANICI ──────────────────────────────────────────────────
 def mevcut_kullanici(request: Request) -> Optional[dict]:
-    """Cookie'den token alır, kullanıcıyı döndürür.
+    """Cookie veya Authorization header'dan token alır, kullanıcıyı döndürür.
     Hem eski (username/rol) hem yeni (profaix user_id) formatı destekler."""
-    token = request.cookies.get("profaix_token")
+    token = _request_token_al(request)
     if not token:
         return None
     payload = token_coz(token)
@@ -73,7 +95,7 @@ def mevcut_kullanici(request: Request) -> Optional[dict]:
         return None
 
     # Yeni format: profaix.com user_id
-    if payload.get("full_name"):
+    if payload.get("typ") == "profaix" or payload.get("full_name"):
         return {
             "id": None,
             "username": payload.get("full_name", ""),
@@ -84,8 +106,13 @@ def mevcut_kullanici(request: Request) -> Optional[dict]:
         }
 
     # Eski format: local admin
+    try:
+        local_id = int(payload.get("sub", 0))
+    except (TypeError, ValueError):
+        return None
+
     return {
-        "id": int(payload.get("sub", 0)),
+        "id": local_id,
         "username": payload.get("username", ""),
         "profaix_user_id": None,
         "email": "",

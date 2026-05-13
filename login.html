@@ -269,6 +269,9 @@
         const data = await res.json();
 
         if (data.basarili) {
+          if (data.auth_token) {
+            try { localStorage.setItem('profaix_auth_token', data.auth_token); } catch {}
+          }
           btn.textContent = '✓ Yönlendiriliyor…';
           window.location.href = '/chat';
         } else {
