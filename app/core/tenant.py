@@ -67,7 +67,7 @@ def get_tenant_credentials(tenant_id: str) -> dict:
         return _default
     tenant = get_tenant(tenant_id)
     if not tenant:
-        logger.warning(f"Tenant bulunamadı: {tenant_id}, varsayılan tenant kullanılıyor")
+        logger.debug(f"Tenant kaydı yok: {tenant_id}, varsayılan credentials kullanılıyor")
         return _default
     return {
         "client_id":        tenant.parasut_client_id,
