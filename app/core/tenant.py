@@ -28,50 +28,47 @@ def get_default_tenant_id() -> str:
     return DEFAULT_TENANT_ID
 
 
-def get_tenant(tenant_id: str, db) -> Optional[object]:
-    """DB'den tenant çeker, 5 dakika TTL ile cache'ler."""
-    from app.core.database import Tenant
+def get_tenant(tenant_id: str) -> Optional[object]:
+    """DB'den tenant çeker, 5 dakika TTL ile cache'ler. Kendi session'ını açar."""
+    from app.core.database import Tenant, SessionLocal
     now = time.time()
     if tenant_id in _tenant_cache and now - _tenant_cache_time.get(tenant_id, 0) < _TENANT_CACHE_TTL:
         return _tenant_cache[tenant_id]
+    db = SessionLocal()
     try:
         tenant = db.query(Tenant).filter(Tenant.id == tenant_id, Tenant.aktif == 1).first()
     except Exception as e:
         logger.error(f"Tenant DB sorgusu hatası ({tenant_id}): {e}")
         return _tenant_cache.get(tenant_id)
+    finally:
+        db.close()
     _tenant_cache[tenant_id] = tenant
     _tenant_cache_time[tenant_id] = now
     return tenant
 
 
-def get_tenant_credentials(tenant_id: str, db) -> dict:
+def get_tenant_credentials(tenant_id: str) -> dict:
     """Paraşüt credentials dict döner. tenant_id=None → default tenant."""
     from app.core.config import (
         PARASUT_CLIENT_ID, PARASUT_CLIENT_SECRET,
         PARASUT_USERNAME, PARASUT_PASSWORD,
         PARASUT_COMPANY_ID, PARASUT_HURDA_PRODUCT_ID,
     )
+    _default = {
+        "client_id":        PARASUT_CLIENT_ID,
+        "client_secret":    PARASUT_CLIENT_SECRET,
+        "username":         PARASUT_USERNAME,
+        "password":         PARASUT_PASSWORD,
+        "company_id":       PARASUT_COMPANY_ID,
+        "hurda_product_id": PARASUT_HURDA_PRODUCT_ID or "",
+    }
     default = get_default_tenant_id()
     if not tenant_id or tenant_id == default:
-        return {
-            "client_id":        PARASUT_CLIENT_ID,
-            "client_secret":    PARASUT_CLIENT_SECRET,
-            "username":         PARASUT_USERNAME,
-            "password":         PARASUT_PASSWORD,
-            "company_id":       PARASUT_COMPANY_ID,
-            "hurda_product_id": PARASUT_HURDA_PRODUCT_ID or "",
-        }
-    tenant = get_tenant(tenant_id, db)
+        return _default
+    tenant = get_tenant(tenant_id)
     if not tenant:
         logger.warning(f"Tenant bulunamadı: {tenant_id}, varsayılan tenant kullanılıyor")
-        return {
-            "client_id":        PARASUT_CLIENT_ID,
-            "client_secret":    PARASUT_CLIENT_SECRET,
-            "username":         PARASUT_USERNAME,
-            "password":         PARASUT_PASSWORD,
-            "company_id":       PARASUT_COMPANY_ID,
-            "hurda_product_id": PARASUT_HURDA_PRODUCT_ID or "",
-        }
+        return _default
     return {
         "client_id":        tenant.parasut_client_id,
         "client_secret":    tenant.parasut_client_secret,

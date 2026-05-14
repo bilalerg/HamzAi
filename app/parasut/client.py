@@ -86,31 +86,8 @@ def _tenant_credentials(tid: str) -> dict:
             "hurda_product_id": PARASUT_HURDA_PRODUCT_ID or "",
         }
     try:
-        from app.core.database import SessionLocal
-        from app.core.tenant import get_tenant
-        db = SessionLocal()
-        try:
-            tenant = get_tenant(tid, db)
-            if not tenant:
-                logger.warning(f"Tenant bulunamadı: {tid}, varsayılan credentials kullanılıyor")
-                return {
-                    "client_id":        PARASUT_CLIENT_ID,
-                    "client_secret":    PARASUT_CLIENT_SECRET,
-                    "username":         PARASUT_USERNAME,
-                    "password":         PARASUT_PASSWORD,
-                    "company_id":       PARASUT_COMPANY_ID,
-                    "hurda_product_id": PARASUT_HURDA_PRODUCT_ID or "",
-                }
-            return {
-                "client_id":        tenant.parasut_client_id,
-                "client_secret":    tenant.parasut_client_secret,
-                "username":         tenant.parasut_username,
-                "password":         tenant.parasut_password,
-                "company_id":       tenant.parasut_company_id,
-                "hurda_product_id": tenant.parasut_hurda_product_id or "",
-            }
-        finally:
-            db.close()
+        from app.core.tenant import get_tenant_credentials
+        return get_tenant_credentials(tid)
     except Exception as e:
         logger.error(f"Tenant credentials alınamadı ({tid}): {e}")
         return {
