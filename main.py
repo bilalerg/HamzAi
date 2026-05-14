@@ -1777,7 +1777,7 @@ async def tenant_ekle(request: Request):
     db = SessionLocal()
     try:
         from app.core.database import Tenant
-        from app.core.tenant import invalidate_tenant_cache
+        from app.core.tenant import invalidate_tenant_cache, _encrypt_cred
         mevcut = db.query(Tenant).filter(Tenant.id == tenant_id).first()
         if mevcut:
             return JSONResponse({"hata": f"Tenant zaten mevcut: {tenant_id}"}, status_code=409)
@@ -1785,9 +1785,9 @@ async def tenant_ekle(request: Request):
             id=tenant_id,
             ad=ad,
             parasut_client_id=parasut_client_id,
-            parasut_client_secret=parasut_client_secret,
+            parasut_client_secret=_encrypt_cred(parasut_client_secret),
             parasut_username=parasut_username,
-            parasut_password=parasut_password,
+            parasut_password=_encrypt_cred(parasut_password),
             parasut_company_id=parasut_company_id,
             parasut_hurda_product_id=parasut_hurda_product_id,
             aktif=1,

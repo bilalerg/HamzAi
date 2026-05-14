@@ -6,6 +6,29 @@ from typing import Optional
 
 from app.core.logger import logger
 
+
+def _encrypt_cred(value: str) -> str:
+    """Credential'ı Fernet ile şifreler. CREDENTIAL_ENCRYPTION_KEY yoksa düz metin döner."""
+    from app.core.config import CREDENTIAL_ENCRYPTION_KEY
+    if not CREDENTIAL_ENCRYPTION_KEY or not value:
+        return value
+    from cryptography.fernet import Fernet
+    return Fernet(CREDENTIAL_ENCRYPTION_KEY.encode()).encrypt(value.encode()).decode()
+
+
+def _decrypt_cred(value: str) -> str:
+    """Şifreli credential'ı çözer. Düz metin gelirse olduğu gibi döner."""
+    from app.core.config import CREDENTIAL_ENCRYPTION_KEY
+    if not CREDENTIAL_ENCRYPTION_KEY or not value:
+        return value
+    if not value.startswith("gAAAAA"):
+        return value  # Zaten düz metin, şifreleme key'i henüz uygulanmamış
+    try:
+        from cryptography.fernet import Fernet
+        return Fernet(CREDENTIAL_ENCRYPTION_KEY.encode()).decrypt(value.encode()).decode()
+    except Exception:
+        return value  # Çözülemezse düz metin kabul et
+
 _TENANT_CACHE_TTL = 300  # 5 dakika
 
 _tenant_cache: dict = {}
@@ -70,10 +93,10 @@ def get_tenant_credentials(tenant_id: str) -> dict:
         logger.debug(f"Tenant kaydı yok: {tenant_id}, varsayılan credentials kullanılıyor")
         return _default
     return {
-        "client_id":        tenant.parasut_client_id,
-        "client_secret":    tenant.parasut_client_secret,
-        "username":         tenant.parasut_username,
-        "password":         tenant.parasut_password,
+        "client_id":        _decrypt_cred(tenant.parasut_client_id),
+        "client_secret":    _decrypt_cred(tenant.parasut_client_secret),
+        "username":         _decrypt_cred(tenant.parasut_username),
+        "password":         _decrypt_cred(tenant.parasut_password),
         "company_id":       tenant.parasut_company_id,
         "hurda_product_id": tenant.parasut_hurda_product_id or "",
     }

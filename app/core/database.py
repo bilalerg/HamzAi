@@ -12,17 +12,18 @@ from app.core.logger import logger
 
 # ── BAĞLANTI HAVUZU ────────────────────────────────────────────────────
 # Supabase ücretsiz plan ~20 bağlantı limiti var.
-# pool_size=5     → kalıcı açık bağlantı sayısı
-# max_overflow=10 → yoğunlukta ek açılabilecek bağlantı (toplam max=15)
-# pool_timeout=30 → bağlantı beklerken max süre (saniye)
+# pool_size=2     → kalıcı açık bağlantı sayısı (worker başına)
+# max_overflow=3  → yoğunlukta ek bağlantı → worker başına max 5
+# Render'da 4 worker × 5 = 20 bağlantı → Supabase limitine tam sığar
+# pool_timeout=20 → bağlantı beklerken max süre (saniye)
 # pool_recycle=300 → 5dk'da bir bağlantıyı yenile (Supabase idle timeout koruması)
 # pool_pre_ping   → süresi dolmuş bağlantıyı kullanmadan önce test et
 
 engine = create_engine(
     DATABASE_URL,
-    pool_size=5,
-    max_overflow=10,
-    pool_timeout=30,
+    pool_size=2,
+    max_overflow=3,
+    pool_timeout=20,
     pool_recycle=300,
     pool_pre_ping=True,
     echo=False

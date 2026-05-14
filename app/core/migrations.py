@@ -117,6 +117,27 @@ def calistir(engine, db):
                 f"ALTER TABLE {tablo} ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(100)"
             ), f"tenant_id ({tablo})")
 
+        # ── INDEX MİGRATIONLARI ───────────────────────────────────────
+        _index_olustur(conn, text(
+            "CREATE INDEX IF NOT EXISTS idx_weigh_tickets_tenant_status "
+            "ON weigh_tickets(tenant_id, status)"
+        ), "idx_weigh_tickets_tenant_status")
+
+        _index_olustur(conn, text(
+            "CREATE INDEX IF NOT EXISTS idx_waybills_tenant_status "
+            "ON waybills(tenant_id, status)"
+        ), "idx_waybills_tenant_status")
+
+        _index_olustur(conn, text(
+            "CREATE INDEX IF NOT EXISTS idx_invoices_tenant_status "
+            "ON invoices(tenant_id, status)"
+        ), "idx_invoices_tenant_status")
+
+        _index_olustur(conn, text(
+            "CREATE INDEX IF NOT EXISTS idx_billable_events_user_date "
+            "ON billable_events(profaix_user_id, created_at)"
+        ), "idx_billable_events_user_date")
+
     # ── YARIMA KALMIŞ İŞLEM TESPİTİ ──────────────────────────────────
     from app.core.database import WeighTicket, TicketStatus
     bekleyenler = db.query(WeighTicket).filter(
@@ -129,6 +150,9 @@ def calistir(engine, db):
 
     # ── İLK TENANT OLUŞTUR ────────────────────────────────────────────
     _ilk_tenant_olustur(db, engine)
+
+    # ── CREDENTIAL ŞİFRELEME ─────────────────────────────────────────
+    _credential_sifreleme_migrasyonu(db)
 
 
 def _ilk_tenant_olustur(db, engine):
@@ -191,6 +215,51 @@ def _ilk_tenant_olustur(db, engine):
             db.rollback()
         except Exception:
             pass
+
+
+def _credential_sifreleme_migrasyonu(db):
+    """
+    CREDENTIAL_ENCRYPTION_KEY varsa mevcut düz metin credential'ları şifreler.
+    Zaten şifreli olanları (gAAAAA ile başlayan) atlar. Idempotent.
+    """
+    from app.core.config import CREDENTIAL_ENCRYPTION_KEY
+    if not CREDENTIAL_ENCRYPTION_KEY:
+        return
+    from app.core.database import Tenant
+    from app.core.tenant import _encrypt_cred
+    try:
+        tenantlar = db.query(Tenant).all()
+        guncellenen = 0
+        for tenant in tenantlar:
+            degisti = False
+            if tenant.parasut_client_secret and not tenant.parasut_client_secret.startswith("gAAAAA"):
+                tenant.parasut_client_secret = _encrypt_cred(tenant.parasut_client_secret)
+                degisti = True
+            if tenant.parasut_password and not tenant.parasut_password.startswith("gAAAAA"):
+                tenant.parasut_password = _encrypt_cred(tenant.parasut_password)
+                degisti = True
+            if degisti:
+                guncellenen += 1
+        if guncellenen:
+            db.commit()
+            logger.info(f"✅ {guncellenen} tenant credential şifrelendi")
+        else:
+            logger.info("✅ Credential şifreleme: tüm kayıtlar güncel")
+    except Exception as e:
+        logger.error(f"Credential şifreleme migrasyonu hatası: {e}")
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
+
+def _index_olustur(conn, stmt, isim: str):
+    try:
+        conn.execute(stmt)
+        conn.commit()
+        logger.info(f"✅ Migration: {isim} index hazır")
+    except Exception as e:
+        logger.warning(f"Migration atlandı ({isim}): {e}")
 
 
 def _kolon_ekle(conn, stmt, isim: str):

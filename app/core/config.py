@@ -59,6 +59,11 @@ PATRON_WHATSAPP     = os.getenv("PATRON_WHATSAPP")
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "")
 ADMIN_TOKEN    = os.getenv("ADMIN_TOKEN", "")
 
+# Tenant credential şifreleme — Fernet simetrik şifreleme
+# Üretmek için: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+# Boş bırakılırsa credential'lar düz metin saklanır (geriye uyumlu)
+CREDENTIAL_ENCRYPTION_KEY = os.getenv("CREDENTIAL_ENCRYPTION_KEY", "")
+
 # Profaix iframe girişinde uzun vadeli güvenli akış:
 # Profaix.com, PROFAIX_EMBED_SECRET ile kısa ömürlü JWT üretir ve /chat?embed_token=... gönderir.
 # Mobil Safari üçüncü taraf cookie'yi engellese bile chat.html API isteklerinde Authorization header kullanır.

@@ -33,6 +33,9 @@ JWT_SECRET_KEY
 ADMIN_TOKEN
 ADMIN_USERNAME
 ADMIN_PASSWORD
+CREDENTIAL_ENCRYPTION_KEY       # Tenant Paraşüt credential şifreleme (Fernet key)
+                                 # Üretmek: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+                                 # Boş bırakılırsa credential'lar düz metin saklanır
 # Opsiyonel:
 PROFAIX_EMBED_SECRET            # iframe embed akışı için
 REQUIRE_SIGNED_EMBED_AUTH=1
