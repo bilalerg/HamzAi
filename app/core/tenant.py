@@ -63,7 +63,15 @@ def get_tenant_credentials(tenant_id: str, db) -> dict:
         }
     tenant = get_tenant(tenant_id, db)
     if not tenant:
-        raise Exception(f"Tenant bulunamadı: {tenant_id}")
+        logger.warning(f"Tenant bulunamadı: {tenant_id}, varsayılan tenant kullanılıyor")
+        return {
+            "client_id":        PARASUT_CLIENT_ID,
+            "client_secret":    PARASUT_CLIENT_SECRET,
+            "username":         PARASUT_USERNAME,
+            "password":         PARASUT_PASSWORD,
+            "company_id":       PARASUT_COMPANY_ID,
+            "hurda_product_id": PARASUT_HURDA_PRODUCT_ID or "",
+        }
     return {
         "client_id":        tenant.parasut_client_id,
         "client_secret":    tenant.parasut_client_secret,
