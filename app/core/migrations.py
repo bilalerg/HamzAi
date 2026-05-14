@@ -12,6 +12,7 @@ def calistir(engine, db):
     1. Eksik kolonları ekler (ADD COLUMN IF NOT EXISTS)
     2. Eksik tabloları oluşturur
     3. Yarım kalan işlemleri tespit eder
+    4. İlk tenant kaydını oluşturur
 
     Senkron fonksiyon — main.py'de asyncio.to_thread ile çağrılır.
     """
@@ -19,26 +20,23 @@ def calistir(engine, db):
 
     with engine.connect() as conn:
 
-        # ── KOLON MİGRATIONLARI ───────────────────────────────────────
-        _kolon_ekle(conn, text(
-            "ALTER TABLE waybills ADD COLUMN IF NOT EXISTS malzemeler_json TEXT"
-        ), "malzemeler_json (waybills)")
-
-        _kolon_ekle(conn, text(
-            "ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS tam_gecmis TEXT"
-        ), "tam_gecmis (chat_sessions)")
-
-        for kolon, sql_tip in [
-            ("username", "VARCHAR(100)"),
-            ("profaix_user_id", "VARCHAR(100)"),
-            ("auth_session_id", "VARCHAR(100)"),
-            ("ip_adresi", "VARCHAR(50)"),
-        ]:
-            _kolon_ekle(conn, text(
-                f"ALTER TABLE islem_logs ADD COLUMN IF NOT EXISTS {kolon} {sql_tip}"
-            ), f"{kolon} (islem_logs)")
-
         # ── TABLO MİGRATIONLARI ───────────────────────────────────────
+        _tablo_olustur(conn, text("""
+            CREATE TABLE IF NOT EXISTS tenants (
+                id VARCHAR(100) PRIMARY KEY,
+                ad VARCHAR(200) NOT NULL,
+                parasut_client_id VARCHAR(200) NOT NULL,
+                parasut_client_secret VARCHAR(200) NOT NULL,
+                parasut_username VARCHAR(200) NOT NULL,
+                parasut_password VARCHAR(200) NOT NULL,
+                parasut_company_id VARCHAR(50) NOT NULL,
+                parasut_hurda_product_id VARCHAR(50),
+                aktif INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        """), "tenants")
+
         _tablo_olustur(conn, text("""
             CREATE TABLE IF NOT EXISTS islem_logs (
                 id SERIAL PRIMARY KEY,
@@ -84,6 +82,41 @@ def calistir(engine, db):
             )
         """), "billable_events")
 
+        # ── KOLON MİGRATIONLARI ───────────────────────────────────────
+        _kolon_ekle(conn, text(
+            "ALTER TABLE waybills ADD COLUMN IF NOT EXISTS malzemeler_json TEXT"
+        ), "malzemeler_json (waybills)")
+
+        _kolon_ekle(conn, text(
+            "ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS tam_gecmis TEXT"
+        ), "tam_gecmis (chat_sessions)")
+
+        for kolon, sql_tip in [
+            ("username", "VARCHAR(100)"),
+            ("profaix_user_id", "VARCHAR(100)"),
+            ("auth_session_id", "VARCHAR(100)"),
+            ("ip_adresi", "VARCHAR(50)"),
+        ]:
+            _kolon_ekle(conn, text(
+                f"ALTER TABLE islem_logs ADD COLUMN IF NOT EXISTS {kolon} {sql_tip}"
+            ), f"{kolon} (islem_logs)")
+
+        # ── TENANT_ID KOLON MİGRATIONLARI ────────────────────────────
+        tenant_kolonlu_tablolar = [
+            "weigh_tickets",
+            "waybills",
+            "invoices",
+            "islem_logs",
+            "usage_logs",
+            "chat_sessions",
+            "vehicles",
+            "audit_logs",
+        ]
+        for tablo in tenant_kolonlu_tablolar:
+            _kolon_ekle(conn, text(
+                f"ALTER TABLE {tablo} ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(100)"
+            ), f"tenant_id ({tablo})")
+
     # ── YARIMA KALMIŞ İŞLEM TESPİTİ ──────────────────────────────────
     from app.core.database import WeighTicket, TicketStatus
     bekleyenler = db.query(WeighTicket).filter(
@@ -93,6 +126,71 @@ def calistir(engine, db):
         logger.warning(f"⚠️ {len(bekleyenler)} yarım kalan işlem tespit edildi (IRSALIYE_OLUSTURULUYOR)")
     else:
         logger.info("✅ Yarım kalan işlem yok")
+
+    # ── İLK TENANT OLUŞTUR ────────────────────────────────────────────
+    _ilk_tenant_olustur(db, engine)
+
+
+def _ilk_tenant_olustur(db, engine):
+    """
+    Tenants tablosu boşsa Bilal'in tenant kaydını oluşturur.
+    Mevcut NULL tenant_id kayıtlarını bu tenant'a atar.
+    Sadece bir kez çalışır — idempotent.
+    """
+    from app.core.database import Tenant
+    from app.core.config import (
+        PARASUT_CLIENT_ID, PARASUT_CLIENT_SECRET,
+        PARASUT_USERNAME, PARASUT_PASSWORD,
+        PARASUT_COMPANY_ID, PARASUT_HURDA_PRODUCT_ID,
+    )
+    from sqlalchemy import text
+
+    if not PARASUT_USERNAME:
+        logger.warning("⚠️ PARASUT_USERNAME boş — varsayılan tenant oluşturulamadı")
+        return
+
+    try:
+        mevcut = db.query(Tenant).first()
+        if not mevcut:
+            tenant = Tenant(
+                id=PARASUT_USERNAME,
+                ad="Varsayılan Firma",
+                parasut_client_id=PARASUT_CLIENT_ID or "",
+                parasut_client_secret=PARASUT_CLIENT_SECRET or "",
+                parasut_username=PARASUT_USERNAME,
+                parasut_password=PARASUT_PASSWORD or "",
+                parasut_company_id=PARASUT_COMPANY_ID or "",
+                parasut_hurda_product_id=PARASUT_HURDA_PRODUCT_ID or None,
+                aktif=1,
+            )
+            db.add(tenant)
+            db.commit()
+            logger.info(f"✅ Varsayılan tenant oluşturuldu: id={PARASUT_USERNAME}")
+        else:
+            logger.info(f"✅ Tenant kaydı mevcut, atlandı")
+            PARASUT_USERNAME  # varsayılan tenant id'yi al
+
+        # NULL tenant_id kayıtlarını varsayılan tenanta bağla
+        default_tid = PARASUT_USERNAME
+        with engine.connect() as conn:
+            for tablo in ["weigh_tickets", "waybills", "invoices",
+                          "islem_logs", "usage_logs", "chat_sessions",
+                          "vehicles", "audit_logs"]:
+                try:
+                    result = conn.execute(text(
+                        f"UPDATE {tablo} SET tenant_id = :tid WHERE tenant_id IS NULL"
+                    ), {"tid": default_tid})
+                    conn.commit()
+                    if result.rowcount:
+                        logger.info(f"✅ {result.rowcount} {tablo} kaydı varsayılan tenanta atandı")
+                except Exception as e:
+                    logger.warning(f"NULL tenant_id güncelleme atlandı ({tablo}): {e}")
+    except Exception as e:
+        logger.error(f"İlk tenant oluşturma hatası: {e}")
+        try:
+            db.rollback()
+        except Exception:
+            pass
 
 
 def _kolon_ekle(conn, stmt, isim: str):

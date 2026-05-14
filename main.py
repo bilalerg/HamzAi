@@ -271,6 +271,16 @@ def _admin_kontrol(request: Request) -> bool:
     return bool(ADMIN_TOKEN) and token == ADMIN_TOKEN
 
 
+def _tenant_id_from_user(user: Optional[dict]) -> str:
+    from app.core.tenant import get_default_tenant_id
+    if not user:
+        return get_default_tenant_id()
+    pid = user.get("profaix_user_id")
+    if pid:
+        return str(pid)
+    return get_default_tenant_id()
+
+
 def _guvenli_hata(e: Exception, genel: str = "Bir hata oluştu, lütfen tekrar deneyin.") -> str:
     """Production'da dahili hata detaylarını client'a sızdırmaz."""
     if ENV != "production":
@@ -631,6 +641,7 @@ async def upload_fis(request: Request, background_tasks: BackgroundTasks,
     aktif_user = mevcut_kullanici(request)
     if aktif_user:
         session_id = canonical_chat_session_id(aktif_user) or session_id
+    tenant_id = _tenant_id_from_user(aktif_user)
     try:
         uzanti = os.path.splitext(file.filename)[1] if file.filename else ".jpg"
         with tempfile.NamedTemporaryFile(delete=False, suffix=uzanti) as tmp:
@@ -650,6 +661,8 @@ async def upload_fis(request: Request, background_tasks: BackgroundTasks,
             return JSONResponse({"cevap": f"❌ Fiş okunamadı: {fis.hata}\n\nFotoğrafı daha net çekip tekrar deneyin."})
 
         ticket     = fis_db_kaydet(fis, tmp_path, db)
+        ticket.tenant_id = tenant_id
+        db.commit()
         if aktif_user:
             background_tasks.add_task(_usage_kaydet, aktif_user["id"], aktif_user["username"],
                                        "FIS_OCR", f"plaka={fis.plaka} | {fis.firma or '?'}",
@@ -688,7 +701,7 @@ async def upload_fis(request: Request, background_tasks: BackgroundTasks,
 
         # Cari listesi async çekiliyor — event loop bloklanmıyor
         from app.parasut.client import async_cari_listesi_getir
-        cariler       = await async_cari_listesi_getir()
+        cariler       = await async_cari_listesi_getir(tenant_id=tenant_id)
         firma_listesi = [c["ad"] for c in cariler]
 
         return JSONResponse({"cevap": cevap, "bekliyor": "firma_sec", "ticket_id": ticket.id,
@@ -715,6 +728,7 @@ async def firma_sec(request: Request, background_tasks: BackgroundTasks):
     malzemeler    = data.get("malzemeler", {})
     db            = SessionLocal()
     aktif_user = mevcut_kullanici(request)
+    tenant_id  = _tenant_id_from_user(aktif_user)
     try:
         from app.core.database import WeighTicket, Waybill
         ticket = db.query(WeighTicket).filter(WeighTicket.id == ticket_id).first()
@@ -727,7 +741,7 @@ async def firma_sec(request: Request, background_tasks: BackgroundTasks):
         # to_thread ile sarıyoruz
         import asyncio
         from app.parasut.irsaliye import irsaliye_olustur
-        sonuc = await asyncio.to_thread(irsaliye_olustur, ticket_id, True)
+        sonuc = await asyncio.to_thread(irsaliye_olustur, ticket_id, True, tenant_id)
 
         if not sonuc.get("basarili"):
             _islem_log(db, "IRSALIYE_HATA", cari_adi=secilen_firma, aciklama="İrsaliye oluşturulamadı",
@@ -780,13 +794,14 @@ async def firma_sec(request: Request, background_tasks: BackgroundTasks):
 @app.get("/api/cariler")
 async def cariler_getir(request: Request, background_tasks: BackgroundTasks, refresh: bool = False):
     aktif_user = mevcut_kullanici(request)
+    tenant_id  = _tenant_id_from_user(aktif_user)
     if aktif_user:
         background_tasks.add_task(_usage_kaydet, aktif_user["id"], aktif_user["username"],
                                    "SORGU", "cari_listesi" + ("_refresh" if refresh else ""),
                                    1, aktif_user.get("profaix_user_id"))
     try:
         from app.parasut.client import async_cari_listesi_getir, async_cari_cache_yenile
-        cariler = await async_cari_cache_yenile() if refresh else await async_cari_listesi_getir()
+        cariler = await async_cari_cache_yenile(tenant_id=tenant_id) if refresh else await async_cari_listesi_getir(tenant_id=tenant_id)
         sonuc   = [{"id": c["id"], "ad": c["ad"], "bakiye": c.get("bakiye", 0)} for c in cariler]
         sonuc.sort(key=lambda x: x["bakiye"], reverse=True)
         return JSONResponse({"cariler": sonuc, "toplam": len(sonuc)})
@@ -805,6 +820,7 @@ async def hesap_ozeti(request: Request, background_tasks: BackgroundTasks):
     Dönem filtresi yoktur — bakiye anlık Paraşüt değeridir.
     """
     aktif_user = mevcut_kullanici(request)
+    tenant_id  = _tenant_id_from_user(aktif_user)
     if aktif_user:
         background_tasks.add_task(_usage_kaydet, aktif_user["id"], aktif_user["username"],
                                    "SORGU", "hesap_ozeti", 1, aktif_user.get("profaix_user_id"))
@@ -812,10 +828,10 @@ async def hesap_ozeti(request: Request, background_tasks: BackgroundTasks):
         from app.parasut.client import async_hesap_ozeti_getir, async_cari_id_bul, async_cari_detay_getir
         cari_adi = request.query_params.get("cari")
         if cari_adi:
-            cari_id = await async_cari_id_bul(cari_adi)
+            cari_id = await async_cari_id_bul(cari_adi, tenant_id=tenant_id)
             if not cari_id:
                 return JSONResponse({"hata": f"Cari bulunamadı: {cari_adi}"})
-            detay = await async_cari_detay_getir(cari_id)
+            detay = await async_cari_detay_getir(cari_id, tenant_id=tenant_id)
             bakiye = detay.get("bakiye", 0)
             return JSONResponse({
                 "toplam_cari":   1,
@@ -824,7 +840,7 @@ async def hesap_ozeti(request: Request, background_tasks: BackgroundTasks):
                 "cari_adi":      detay.get("ad"),
                 "bakiye":        bakiye,
             })
-        return JSONResponse(await async_hesap_ozeti_getir())
+        return JSONResponse(await async_hesap_ozeti_getir(tenant_id=tenant_id))
     except Exception as e:
         logger.error(f"Hesap özeti hatası: {e}")
         return JSONResponse({"hata": _guvenli_hata(e)})
@@ -845,6 +861,7 @@ async def islem_gecmisi(cari_adi: str, request: Request, background_tasks: Backg
         {bakiye, islemler: [...], sayfa, sonraki_sayfa_var}
     """
     aktif_user = mevcut_kullanici(request)
+    tenant_id  = _tenant_id_from_user(aktif_user)
     if aktif_user:
         background_tasks.add_task(_usage_kaydet, aktif_user["id"], aktif_user["username"],
                                    "SORGU", f"islem_gecmisi | cari={cari_adi}",
@@ -857,11 +874,11 @@ async def islem_gecmisi(cari_adi: str, request: Request, background_tasks: Backg
         bitis     = request.query_params.get("bitis")
         sayfa     = int(request.query_params.get("sayfa", 1))
         limit     = min(int(request.query_params.get("limit", 25)), 25)
-        cari_id   = await async_cari_id_bul(cari_adi)
+        cari_id   = await async_cari_id_bul(cari_adi, tenant_id=tenant_id)
         if not cari_id:
             return JSONResponse({"hata": f"Cari bulunamadı: {cari_adi}"})
 
-        sonuc    = await async_islem_gecmisi_getir(cari_id, baslangic, bitis)
+        sonuc    = await async_islem_gecmisi_getir(cari_id, baslangic, bitis, tenant_id=tenant_id)
         islemler = sonuc.get("islemler", [])
 
         # Client-side sayfalama — islem_gecmisi_getir tüm işlemleri çeker,
@@ -901,15 +918,16 @@ async def tahsilat_ekle_endpoint(request: Request, background_tasks: BackgroundT
         return JSONResponse({"basarili": False, "cevap": "Cari adı ve tutar gerekli."})
 
     aktif_user = mevcut_kullanici(request)
+    tenant_id  = _tenant_id_from_user(aktif_user)
     try:
         from app.parasut.client import async_tahsilat_ekle, async_cari_id_bul, async_cari_detay_getir
         from datetime import datetime
 
         if not onaylandi:
             try:
-                cari_id = await async_cari_id_bul(cari_adi)
+                cari_id = await async_cari_id_bul(cari_adi, tenant_id=tenant_id)
                 if cari_id:
-                    detay         = await async_cari_detay_getir(cari_id)
+                    detay         = await async_cari_detay_getir(cari_id, tenant_id=tenant_id)
                     guncel_bakiye = float(detay.get("bakiye", 0))
                     girilen_tutar = float(tutar)
                     if guncel_bakiye > 0 and girilen_tutar > guncel_bakiye:
@@ -934,7 +952,7 @@ async def tahsilat_ekle_endpoint(request: Request, background_tasks: BackgroundT
                 except Exception:
                     continue
 
-        sonuc = await async_tahsilat_ekle(cari_adi, float(tutar), aciklama or f"{cari_adi} tahsilat", tarih_str)
+        sonuc = await async_tahsilat_ekle(cari_adi, float(tutar), aciklama or f"{cari_adi} tahsilat", tarih_str, tenant_id=tenant_id)
 
         if sonuc.get("basarili"):
             if aktif_user:
@@ -991,9 +1009,10 @@ async def cari_olustur_endpoint(request: Request, background_tasks: BackgroundTa
         return JSONResponse({"basarili": False, "cevap": "❌ Firma adı gerekli."})
 
     aktif_user = mevcut_kullanici(request)
+    tenant_id  = _tenant_id_from_user(aktif_user)
     try:
         from app.parasut.client import cari_olustur
-        sonuc = await asyncio.to_thread(cari_olustur, firma_adi, email, telefon, vergi_no, vergi_dairesi, adres)
+        sonuc = await asyncio.to_thread(cari_olustur, firma_adi, email, telefon, vergi_no, vergi_dairesi, adres, tenant_id)
         if sonuc.get("basarili"):
             if aktif_user:
                 background_tasks.add_task(_usage_kaydet, aktif_user["id"], aktif_user["username"],
@@ -1039,6 +1058,7 @@ async def bekleyen_irsaliyeler(request: Request, background_tasks: BackgroundTas
         {irsaliyeler: [...], toplam, sayfa, sonraki_sayfa_var}
     """
     aktif_user = mevcut_kullanici(request)
+    tenant_id  = _tenant_id_from_user(aktif_user)
     if aktif_user:
         background_tasks.add_task(_usage_kaydet, aktif_user["id"], aktif_user["username"],
                                    "SORGU", "bekleyen_irsaliyeler", 1, aktif_user.get("profaix_user_id"))
@@ -1055,14 +1075,14 @@ async def bekleyen_irsaliyeler(request: Request, background_tasks: BackgroundTas
         sayfa     = int(request.query_params.get("sayfa", 1))
         sayfa_basi = min(int(request.query_params.get("sayfa_basi", 25)), 25)
 
-        tum_waybiller  = db.query(Waybill).all()
+        tum_waybiller  = db.query(Waybill).filter(Waybill.tenant_id == tenant_id).all()
         waybill_map    = {str(w.parasut_irsaliye_id).strip(): w for w in tum_waybiller if w.parasut_irsaliye_id}
         tamamlanan_ids = {str(w.parasut_irsaliye_id).strip() for w in tum_waybiller
                           if w.status == TicketStatus.TAMAMLANDI and w.parasut_irsaliye_id}
 
         cariler, api_sonuc = await _json_gather(
-            async_cari_listesi_getir(),
-            async_tum_bekleyen_irsaliyeleri_getir(baslangic, bitis, sayfa, sayfa_basi)
+            async_cari_listesi_getir(tenant_id=tenant_id),
+            async_tum_bekleyen_irsaliyeleri_getir(baslangic, bitis, sayfa, sayfa_basi, tenant_id=tenant_id)
         )
         cari_id_to_ad     = {c["id"]: c["ad"] for c in cariler}
         gruplu            = api_sonuc.get("irsaliyeler", {})
@@ -1121,6 +1141,7 @@ async def _json_gather(*coros):
 @app.get("/api/gunluk-ozet")
 async def gunluk_ozet(request: Request, background_tasks: BackgroundTasks):
     aktif_user = mevcut_kullanici(request)
+    tenant_id  = _tenant_id_from_user(aktif_user)
     if aktif_user:
         background_tasks.add_task(_usage_kaydet, aktif_user["id"], aktif_user["username"],
                                    "SORGU", "gunluk_ozet", 1, aktif_user.get("profaix_user_id"))
@@ -1129,7 +1150,10 @@ async def gunluk_ozet(request: Request, background_tasks: BackgroundTasks):
         from app.core.database import WeighTicket, TicketStatus
         from datetime import date, datetime, time
         bugun_baslangic = datetime.combine(date.today(), time.min)
-        bugun_fisler = db.query(WeighTicket).filter(WeighTicket.created_at >= bugun_baslangic).all()
+        bugun_fisler = db.query(WeighTicket).filter(
+            WeighTicket.created_at >= bugun_baslangic,
+            WeighTicket.tenant_id == tenant_id
+        ).all()
         toplam_kg    = sum(t.agirlik_kg or 0 for t in bugun_fisler)
         tamamlanan   = sum(1 for t in bugun_fisler if t.status == TicketStatus.TAMAMLANDI)
         bekleyen     = sum(1 for t in bugun_fisler if t.status not in [
@@ -1146,13 +1170,16 @@ async def gunluk_ozet(request: Request, background_tasks: BackgroundTasks):
 @app.get("/api/son-fisler")
 async def son_fisler(request: Request, background_tasks: BackgroundTasks):
     aktif_user = mevcut_kullanici(request)
+    tenant_id  = _tenant_id_from_user(aktif_user)
     if aktif_user:
         background_tasks.add_task(_usage_kaydet, aktif_user["id"], aktif_user["username"],
                                    "SORGU", "son_fisler", 1, aktif_user.get("profaix_user_id"))
     db = SessionLocal()
     try:
         from app.core.database import WeighTicket
-        fisler = db.query(WeighTicket).order_by(WeighTicket.created_at.desc()).limit(10).all()
+        fisler = db.query(WeighTicket).filter(
+            WeighTicket.tenant_id == tenant_id
+        ).order_by(WeighTicket.created_at.desc()).limit(10).all()
         return JSONResponse({"fisler": [
             {"id": t.id, "plaka": t.plaka or "-", "firma": t.firma or "-",
              "agirlik_kg": t.agirlik_kg or 0,
@@ -1170,13 +1197,14 @@ async def son_fisler(request: Request, background_tasks: BackgroundTasks):
 @app.get("/api/fatura-detay/{fatura_id}")
 async def fatura_detay_endpoint(fatura_id: str, request: Request, background_tasks: BackgroundTasks):
     aktif_user = mevcut_kullanici(request)
+    tenant_id  = _tenant_id_from_user(aktif_user)
     if aktif_user:
         background_tasks.add_task(_usage_kaydet, aktif_user["id"], aktif_user["username"],
                                    "SORGU", f"fatura_detay | id={fatura_id}", 1,
                                    aktif_user.get("profaix_user_id"))
     try:
         from app.parasut.client import async_fatura_detay_getir
-        return JSONResponse(await async_fatura_detay_getir(fatura_id))
+        return JSONResponse(await async_fatura_detay_getir(fatura_id, tenant_id=tenant_id))
     except Exception as e:
         return JSONResponse({"hata": _guvenli_hata(e)})
 
@@ -1197,6 +1225,7 @@ async def cari_faturalar_endpoint(cari_adi: str, request: Request, background_ta
         {faturalar, toplam, toplam_kayit, sayfa, sonraki_sayfa_var}
     """
     aktif_user = mevcut_kullanici(request)
+    tenant_id  = _tenant_id_from_user(aktif_user)
     if aktif_user:
         background_tasks.add_task(_usage_kaydet, aktif_user["id"], aktif_user["username"],
                                    "SORGU", f"fatura_listesi | cari={cari_adi}", 1,
@@ -1211,11 +1240,11 @@ async def cari_faturalar_endpoint(cari_adi: str, request: Request, background_ta
         limit     = min(int(request.query_params.get("limit", 25)), 25)
         durum     = request.query_params.get("durum")
 
-        cari_id = await async_cari_id_bul(cari_adi)
+        cari_id = await async_cari_id_bul(cari_adi, tenant_id=tenant_id)
         if not cari_id:
             return JSONResponse({"faturalar": [], "hata": "Cari bulunamadı"})
 
-        sonuc = await async_cari_faturalari_getir(cari_id, limit, sayfa, baslangic, bitis, durum)
+        sonuc = await async_cari_faturalari_getir(cari_id, limit, sayfa, baslangic, bitis, durum, tenant_id=tenant_id)
         return JSONResponse(sonuc)
     except Exception as e:
         return JSONResponse({"faturalar": [], "hata": _guvenli_hata(e)})
@@ -1234,14 +1263,15 @@ async def toplu_fatura_kes_endpoint(request: Request, background_tasks: Backgrou
         return JSONResponse({"cevap": "❌ Eksik bilgi.", "basarili": False})
 
     aktif_user = mevcut_kullanici(request)
+    tenant_id  = _tenant_id_from_user(aktif_user)
     db = SessionLocal()
     try:
-        from app.parasut.client import async_cari_id_bul, async_parasut_post, async_parasut_delete, async_cari_cache_yenile
-        from app.core.config import PARASUT_COMPANY_ID, PARASUT_HURDA_PRODUCT_ID
+        from app.parasut.client import async_cari_id_bul, async_parasut_post, async_parasut_delete, async_cari_cache_yenile, get_tenant_config
         from app.core.database import Waybill, WeighTicket, TicketStatus
         from datetime import datetime
 
-        contact_id = await async_cari_id_bul(cari_adi)
+        cfg        = get_tenant_config(tenant_id)
+        contact_id = await async_cari_id_bul(cari_adi, tenant_id=tenant_id)
         if not contact_id:
             return JSONResponse({"cevap": f"❌ '{cari_adi}' carisi bulunamadı.", "basarili": False})
 
@@ -1269,7 +1299,7 @@ async def toplu_fatura_kes_endpoint(request: Request, background_tasks: Backgrou
                     detaylar.append({"type": "sales_invoice_details",
                                       "attributes": {"quantity": kg, "unit_price": f"{float(fiyat):.4f}",
                                                      "vat_rate": 0, "description": f"{malzeme_adi} — {kg:,} kg"},
-                                      "relationships": {"product": {"data": {"type": "products", "id": str(PARASUT_HURDA_PRODUCT_ID)}}}})
+                                      "relationships": {"product": {"data": {"type": "products", "id": str(cfg["hurda_product_id"])}}}})
             else:
                 birim_fiyat   = float(list(toplanan_fiyatlar.values())[0]) if toplanan_fiyatlar else 0
                 kg            = float(agirlik_kg) if agirlik_kg else 0
@@ -1277,7 +1307,7 @@ async def toplu_fatura_kes_endpoint(request: Request, background_tasks: Backgrou
                 detaylar.append({"type": "sales_invoice_details",
                                   "attributes": {"quantity": kg, "unit_price": f"{float(birim_fiyat):.4f}",
                                                  "vat_rate": 0, "description": f"Hurda — {tr_kg(kg)} kg"},
-                                  "relationships": {"product": {"data": {"type": "products", "id": str(PARASUT_HURDA_PRODUCT_ID)}}}})
+                                  "relationships": {"product": {"data": {"type": "products", "id": str(cfg["hurda_product_id"])}}}})
 
         if not detaylar:
             return JSONResponse({"cevap": "❌ Fatura kalemi oluşturulamadı.", "basarili": False})
@@ -1296,11 +1326,11 @@ async def toplu_fatura_kes_endpoint(request: Request, background_tasks: Backgrou
         }
 
         try:
-            sonuc = await async_parasut_post(f"/{PARASUT_COMPANY_ID}/sales_invoices", istek)
+            sonuc = await async_parasut_post(f"/{cfg['company_id']}/sales_invoices", istek, tenant_id=tenant_id)
         except Exception as e:
             logger.warning(f"İrsaliye bağlantılı toplu fatura başarısız: {e}")
             istek["data"]["relationships"].pop("shipment_documents", None)
-            sonuc = await async_parasut_post(f"/{PARASUT_COMPANY_ID}/sales_invoices", istek)
+            sonuc = await async_parasut_post(f"/{cfg['company_id']}/sales_invoices", istek, tenant_id=tenant_id)
 
         fatura_id = sonuc["data"]["id"]
         logger.info(f"✅ Toplu fatura kesildi: {fatura_id} ← {len(irsaliye_ids)} irsaliye")
@@ -1337,7 +1367,7 @@ async def toplu_fatura_kes_endpoint(request: Request, background_tasks: Backgrou
 
         for pid in irsaliye_ids:
             try:
-                await async_parasut_delete(f"/{PARASUT_COMPANY_ID}/shipment_documents/{pid}")
+                await async_parasut_delete(f"/{cfg['company_id']}/shipment_documents/{pid}", tenant_id=tenant_id)
             except Exception as e:
                 logger.warning(f"İrsaliye silinemedi ({pid}): {e}")
 
@@ -1373,14 +1403,15 @@ async def fatura_kes_endpoint(request: Request, background_tasks: BackgroundTask
         return JSONResponse({"cevap": "❌ Eksik bilgi: irsaliye ID, cari adı ve fiyat gerekli."})
 
     aktif_user = mevcut_kullanici(request)
+    tenant_id  = _tenant_id_from_user(aktif_user)
     db = SessionLocal()
     try:
-        from app.parasut.client import async_cari_id_bul, async_parasut_post, async_parasut_delete, async_cari_cache_yenile
-        from app.core.config import PARASUT_COMPANY_ID, PARASUT_HURDA_PRODUCT_ID
+        from app.parasut.client import async_cari_id_bul, async_parasut_post, async_parasut_delete, async_cari_cache_yenile, get_tenant_config
         from app.core.database import Waybill, WeighTicket, TicketStatus
         from datetime import datetime
 
-        contact_id = await async_cari_id_bul(cari_adi)
+        cfg        = get_tenant_config(tenant_id)
+        contact_id = await async_cari_id_bul(cari_adi, tenant_id=tenant_id)
         if not contact_id:
             return JSONResponse({"cevap": f"❌ '{cari_adi}' carisi bulunamadı."})
 
@@ -1397,7 +1428,7 @@ async def fatura_kes_endpoint(request: Request, background_tasks: BackgroundTask
                 detaylar.append({"type": "sales_invoice_details",
                                   "attributes": {"quantity": kg, "unit_price": f"{float(fiyat):.4f}",
                                                  "vat_rate": 0, "description": f"{malzeme_adi} — {kg:,} kg"},
-                                  "relationships": {"product": {"data": {"type": "products", "id": str(PARASUT_HURDA_PRODUCT_ID)}}}})
+                                  "relationships": {"product": {"data": {"type": "products", "id": str(cfg["hurda_product_id"])}}}})
         else:
             birim_fiyat  = float(list(toplanan_fiyatlar.values())[0])
             kg           = float(agirlik_kg) if agirlik_kg else float(sum(malzemeler.values())) if malzemeler else 0
@@ -1405,7 +1436,7 @@ async def fatura_kes_endpoint(request: Request, background_tasks: BackgroundTask
             detaylar     = [{"type": "sales_invoice_details",
                               "attributes": {"quantity": kg, "unit_price": f"{float(birim_fiyat):.4f}",
                                              "vat_rate": 0, "description": f"Hurda — {tr_kg(kg)} kg"},
-                              "relationships": {"product": {"data": {"type": "products", "id": str(PARASUT_HURDA_PRODUCT_ID)}}}}]
+                              "relationships": {"product": {"data": {"type": "products", "id": str(cfg["hurda_product_id"])}}}}]
 
         istek = {
             "data": {
@@ -1421,11 +1452,11 @@ async def fatura_kes_endpoint(request: Request, background_tasks: BackgroundTask
         }
 
         try:
-            sonuc = await async_parasut_post(f"/{PARASUT_COMPANY_ID}/sales_invoices", istek)
+            sonuc = await async_parasut_post(f"/{cfg['company_id']}/sales_invoices", istek, tenant_id=tenant_id)
         except Exception as e:
             logger.warning(f"İrsaliye bağlantılı fatura başarısız: {e}")
             istek["data"]["relationships"].pop("shipment_document", None)
-            sonuc = await async_parasut_post(f"/{PARASUT_COMPANY_ID}/sales_invoices", istek)
+            sonuc = await async_parasut_post(f"/{cfg['company_id']}/sales_invoices", istek, tenant_id=tenant_id)
 
         fatura_id = sonuc["data"]["id"]
         logger.info(f"✅ Fatura kesildi: {fatura_id} ← irsaliye {parasut_irsaliye_id}")
@@ -1455,7 +1486,7 @@ async def fatura_kes_endpoint(request: Request, background_tasks: BackgroundTask
             logger.error(f"DB güncelleme hatası: {e}")
 
         try:
-            await async_parasut_delete(f"/{PARASUT_COMPANY_ID}/shipment_documents/{parasut_irsaliye_id}")
+            await async_parasut_delete(f"/{cfg['company_id']}/shipment_documents/{parasut_irsaliye_id}", tenant_id=tenant_id)
         except Exception as e:
             logger.warning(f"İrsaliye silinemedi: {e}")
 
@@ -1721,3 +1752,54 @@ def reset_db(request: Request):
         "usage_logs", "audit_logs", "islem_logs", "chat_sessions",
         "invoices", "waybills", "weigh_tickets", "vehicles"
     ]}
+
+
+@app.post("/admin/tenant-ekle")
+async def tenant_ekle(request: Request):
+    if not _admin_kontrol(request):
+        return JSONResponse({"hata": "Yetkisiz erişim"}, status_code=403)
+    data = await request.json()
+    tenant_id             = (data.get("tenant_id") or "").strip()
+    ad                    = (data.get("ad") or "").strip()
+    parasut_client_id     = (data.get("parasut_client_id") or "").strip()
+    parasut_client_secret = (data.get("parasut_client_secret") or "").strip()
+    parasut_username      = (data.get("parasut_username") or "").strip()
+    parasut_password      = (data.get("parasut_password") or "").strip()
+    parasut_company_id    = (data.get("parasut_company_id") or "").strip()
+    parasut_hurda_product_id = (data.get("parasut_hurda_product_id") or "").strip() or None
+
+    if not all([tenant_id, ad, parasut_client_id, parasut_client_secret,
+                parasut_username, parasut_password, parasut_company_id]):
+        return JSONResponse({"hata": "Eksik alan: tenant_id, ad, parasut_client_id, parasut_client_secret, "
+                                      "parasut_username, parasut_password, parasut_company_id zorunlu"},
+                            status_code=400)
+
+    db = SessionLocal()
+    try:
+        from app.core.database import Tenant
+        from app.core.tenant import invalidate_tenant_cache
+        mevcut = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+        if mevcut:
+            return JSONResponse({"hata": f"Tenant zaten mevcut: {tenant_id}"}, status_code=409)
+        tenant = Tenant(
+            id=tenant_id,
+            ad=ad,
+            parasut_client_id=parasut_client_id,
+            parasut_client_secret=parasut_client_secret,
+            parasut_username=parasut_username,
+            parasut_password=parasut_password,
+            parasut_company_id=parasut_company_id,
+            parasut_hurda_product_id=parasut_hurda_product_id,
+            aktif=1,
+        )
+        db.add(tenant)
+        db.commit()
+        invalidate_tenant_cache(tenant_id)
+        logger.info(f"✅ Yeni tenant eklendi: {tenant_id} ({ad})")
+        return JSONResponse({"ok": True, "tenant_id": tenant_id, "ad": ad})
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Tenant ekleme hatası: {e}")
+        return JSONResponse({"hata": str(e)}, status_code=500)
+    finally:
+        db.close()

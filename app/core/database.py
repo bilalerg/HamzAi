@@ -49,10 +49,28 @@ class TicketStatus(str, enum.Enum):
     HATA                      = "HATA"
 
 
+class Tenant(Base):
+    __tablename__ = "tenants"
+    id                       = Column(String(100), primary_key=True)  # profaix_user_id
+    ad                       = Column(String(200), nullable=False)
+    parasut_client_id        = Column(String(200), nullable=False)
+    parasut_client_secret    = Column(String(200), nullable=False)
+    parasut_username         = Column(String(200), nullable=False)
+    # TODO: production'da encrypt edilmeli
+    parasut_password         = Column(String(200), nullable=False)
+    parasut_company_id       = Column(String(50), nullable=False)
+    parasut_hurda_product_id = Column(String(50), nullable=True)
+    aktif                    = Column(Integer, default=1)
+    created_at               = Column(DateTime, server_default=func.now())
+    updated_at               = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    def __repr__(self): return f"<Tenant id={self.id} ad={self.ad}>"
+
+
 class Vehicle(Base):
     __tablename__ = "vehicles"
     id         = Column(Integer, primary_key=True, autoincrement=True)
     plaka      = Column(String(20), unique=True, nullable=False, index=True)
+    tenant_id  = Column(String(100), nullable=True, index=True)
     aktif      = Column(Integer, default=1)
     notlar     = Column(Text, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
@@ -64,6 +82,7 @@ class Vehicle(Base):
 class WeighTicket(Base):
     __tablename__ = "weigh_tickets"
     id                = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id         = Column(String(100), nullable=True, index=True)
     foto_path         = Column(String(500), nullable=True)
     plaka             = Column(String(20), nullable=True, index=True)
     fis_no            = Column(String(50), nullable=True, index=True)
@@ -90,6 +109,7 @@ class WeighTicket(Base):
 class Waybill(Base):
     __tablename__ = "waybills"
     id                  = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id           = Column(String(100), nullable=True, index=True)
     irsaliye_no         = Column(String(50), nullable=True, unique=True)
     ref_kodu            = Column(String(20), nullable=True, unique=True, index=True)
     fabrika_mail        = Column(String(200), nullable=True)
@@ -111,6 +131,7 @@ class Waybill(Base):
 class Invoice(Base):
     __tablename__ = "invoices"
     id                = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id         = Column(String(100), nullable=True, index=True)
     fatura_no         = Column(String(50), nullable=True, unique=True)
     tutar             = Column(BigInteger, nullable=True)
     birim_fiyat       = Column(Integer, nullable=True)
@@ -128,6 +149,7 @@ class Invoice(Base):
 class ChatSession(Base):
     __tablename__ = "chat_sessions"
     id         = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id  = Column(String(100), nullable=True, index=True)
     session_id = Column(String(100), unique=True, nullable=False, index=True)
     isim       = Column(String(100), nullable=True)
     gecmis     = Column(Text, nullable=True)
@@ -152,6 +174,7 @@ class ActiveLogin(Base):
 class IslemLog(Base):
     __tablename__ = "islem_logs"
     id          = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id   = Column(String(100), nullable=True, index=True)
     islem_tipi  = Column(String(50), nullable=False, index=True)
     username    = Column(String(100), nullable=True, index=True)
     profaix_user_id = Column(String(100), nullable=True, index=True)
@@ -184,6 +207,7 @@ class User(Base):
 class AuditLog(Base):
     __tablename__ = "audit_logs"
     id         = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id  = Column(String(100), nullable=True, index=True)
     user_id    = Column(Integer, ForeignKey("users.id"), nullable=True)
     username   = Column(String(50), nullable=True)
     intent     = Column(String(50), nullable=True)
@@ -196,6 +220,7 @@ class AuditLog(Base):
 class UsageLog(Base):
     __tablename__ = "usage_logs"
     id              = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id       = Column(String(100), nullable=True, index=True)
     user_id         = Column(Integer, ForeignKey("users.id"), nullable=True)
     username        = Column(String(50), nullable=True, index=True)
     profaix_user_id = Column(String(100), nullable=True, index=True)

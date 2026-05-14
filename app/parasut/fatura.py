@@ -1,14 +1,13 @@
 # fatura.py — Paraşüt Satış Faturası Modülü
 
 from datetime import datetime
-from app.parasut.client import parasut_post, cari_id_bul
-from app.core.config import PARASUT_COMPANY_ID, PARASUT_HURDA_PRODUCT_ID
+from app.parasut.client import parasut_post, cari_id_bul, get_tenant_config
 from app.core.database import SessionLocal, Waybill, Invoice, WeighTicket, TicketStatus
 from app.core.logger import logger
 
 
-def _contact_id_bul(firma_adi: str) -> str:
-    cid = cari_id_bul(firma_adi)
+def _contact_id_bul(firma_adi: str, tenant_id: str = None) -> str:
+    cid = cari_id_bul(firma_adi, tenant_id=tenant_id)
     if cid:
         return str(cid)
     # CARİ BULUNAMAZSA DİREKT İŞLEMİ DURDUR
@@ -17,7 +16,7 @@ def _contact_id_bul(firma_adi: str) -> str:
     raise Exception(hata_mesaji)
 
 
-def fatura_kes(waybill_id: int, birim_fiyat: float = 0) -> dict:
+def fatura_kes(waybill_id: int, birim_fiyat: float = 0, tenant_id: str = None) -> dict:
     """Tek birim fiyatla fatura keser."""
     db = SessionLocal()
     try:
@@ -50,10 +49,11 @@ def fatura_kes(waybill_id: int, birim_fiyat: float = 0) -> dict:
         ticket.status  = TicketStatus.FATURA_KESILIYOR
         db.commit()
 
+        cfg        = get_tenant_config(tenant_id)
         bugun      = datetime.now().strftime("%Y-%m-%d")
         fis_tarihi = ticket.fis_tarihi.strftime("%Y-%m-%d") if ticket.fis_tarihi else bugun
         toplam_tutar = (ticket.agirlik_kg or 0) * birim_fiyat
-        contact_id   = _contact_id_bul(ticket.firma)
+        contact_id   = _contact_id_bul(ticket.firma, tenant_id=tenant_id)
 
         istek_verisi = {
             "data": {
@@ -77,7 +77,7 @@ def fatura_kes(waybill_id: int, birim_fiyat: float = 0) -> dict:
                                 "description": f"{ticket.plaka} — {ticket.agirlik_kg} kg hurda — {birim_fiyat:,.2f} TL/kg"
                             },
                             "relationships": {
-                                "product": {"data": {"type": "products", "id": str(PARASUT_HURDA_PRODUCT_ID)}}
+                                "product": {"data": {"type": "products", "id": str(cfg["hurda_product_id"])}}
                             }
                         }]
                     }
@@ -85,7 +85,7 @@ def fatura_kes(waybill_id: int, birim_fiyat: float = 0) -> dict:
             }
         }
 
-        sonuc      = parasut_post(f"/{PARASUT_COMPANY_ID}/sales_invoices", istek_verisi)
+        sonuc      = parasut_post(f"/{cfg['company_id']}/sales_invoices", istek_verisi, tenant_id=tenant_id)
         parasut_id = sonuc["data"]["id"]
 
         invoice = Invoice(
@@ -95,7 +95,8 @@ def fatura_kes(waybill_id: int, birim_fiyat: float = 0) -> dict:
             birim_fiyat      = int(birim_fiyat),
             parasut_response = str(sonuc),
             status           = TicketStatus.TAMAMLANDI,
-            waybill_id       = waybill_id
+            waybill_id       = waybill_id,
+            tenant_id        = tenant_id
         )
         db.add(invoice)
         db.commit()
@@ -134,7 +135,7 @@ def fatura_kes(waybill_id: int, birim_fiyat: float = 0) -> dict:
         db.close()
 
 
-def fatura_kes_malzemeli(waybill_id: int, malzemeler: dict, toplanan_fiyatlar: dict) -> dict:
+def fatura_kes_malzemeli(waybill_id: int, malzemeler: dict, toplanan_fiyatlar: dict, tenant_id: str = None) -> dict:
     """Malzeme bazlı fatura keser — her malzeme Paraşüt'te ayrı satır."""
     db = SessionLocal()
     try:
@@ -167,9 +168,10 @@ def fatura_kes_malzemeli(waybill_id: int, malzemeler: dict, toplanan_fiyatlar: d
         ticket.status  = TicketStatus.FATURA_KESILIYOR
         db.commit()
 
+        cfg        = get_tenant_config(tenant_id)
         bugun      = datetime.now().strftime("%Y-%m-%d")
         fis_tarihi = ticket.fis_tarihi.strftime("%Y-%m-%d") if ticket.fis_tarihi else bugun
-        contact_id = _contact_id_bul(ticket.firma)
+        contact_id = _contact_id_bul(ticket.firma, tenant_id=tenant_id)
 
         detaylar     = []
         toplam_tutar = 0
@@ -188,7 +190,7 @@ def fatura_kes_malzemeli(waybill_id: int, malzemeler: dict, toplanan_fiyatlar: d
                     "description": f"{ticket.plaka} — {malzeme_adi} — {kg:,} kg — {fiyat:,.2f} TL/kg"
                 },
                 "relationships": {
-                    "product": {"data": {"type": "products", "id": str(PARASUT_HURDA_PRODUCT_ID)}}
+                    "product": {"data": {"type": "products", "id": str(cfg["hurda_product_id"])}}
                 }
             })
 
@@ -215,7 +217,7 @@ def fatura_kes_malzemeli(waybill_id: int, malzemeler: dict, toplanan_fiyatlar: d
             }
         }
 
-        sonuc      = parasut_post(f"/{PARASUT_COMPANY_ID}/sales_invoices", istek_verisi)
+        sonuc      = parasut_post(f"/{cfg['company_id']}/sales_invoices", istek_verisi, tenant_id=tenant_id)
         parasut_id = sonuc["data"]["id"]
         logger.info(f"✅ Malzemeli fatura oluşturuldu: parasut_id={parasut_id} tutar={toplam_tutar:,.0f} TL")
 
@@ -227,7 +229,8 @@ def fatura_kes_malzemeli(waybill_id: int, malzemeler: dict, toplanan_fiyatlar: d
             malzeme_fiyatlari = _json.dumps(toplanan_fiyatlar, ensure_ascii=False),
             parasut_response  = str(sonuc),
             status            = TicketStatus.TAMAMLANDI,
-            waybill_id        = waybill_id
+            waybill_id        = waybill_id,
+            tenant_id         = tenant_id
         )
         db.add(invoice)
         db.commit()

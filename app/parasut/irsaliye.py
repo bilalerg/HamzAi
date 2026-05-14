@@ -2,13 +2,12 @@
 
 import json
 from datetime import datetime
-from app.parasut.client import parasut_post, cari_id_bul
-from app.core.config import PARASUT_COMPANY_ID, PARASUT_HURDA_PRODUCT_ID
+from app.parasut.client import parasut_post, cari_id_bul, get_tenant_config
 from app.core.database import SessionLocal, WeighTicket, Waybill, TicketStatus
 from app.core.logger import logger
 
 
-def irsaliye_olustur(ticket_id: int, beklet: bool = False) -> dict:
+def irsaliye_olustur(ticket_id: int, beklet: bool = False, tenant_id: str = None) -> dict:
     db = SessionLocal()
     try:
         ticket = db.query(WeighTicket).filter(WeighTicket.id == ticket_id).first()
@@ -40,14 +39,15 @@ def irsaliye_olustur(ticket_id: int, beklet: bool = False) -> dict:
             logger.warning(f"⚠️ İrsaliye zaten işleniyor: ticket_id={ticket_id}")
             return {"basarili": False, "hata": "irsaliye_zaten_isleniyor"}
 
-        logger.info(f"İrsaliye oluşturuluyor: ticket_id={ticket_id} plaka={ticket.plaka} beklet={beklet}")
+        logger.info(f"İrsaliye oluşturuluyor: ticket_id={ticket_id} plaka={ticket.plaka} beklet={beklet} tenant={tenant_id}")
 
         ticket.status = TicketStatus.IRSALIYE_OLUSTURULUYOR
         db.commit()
 
+        cfg = get_tenant_config(tenant_id)
         tarih_str = _tarih_formatla(ticket.fis_tarihi)
 
-        contact_id = cari_id_bul(ticket.firma)
+        contact_id = cari_id_bul(ticket.firma, tenant_id=tenant_id)
 
         # DÜZELTME: Cari bulunamazsa işlemi sert bir şekilde durdur!
         if not contact_id:
@@ -86,7 +86,7 @@ def irsaliye_olustur(ticket_id: int, beklet: bool = False) -> dict:
                         },
                         "relationships": {
                             "product": {
-                                "data": {"type": "products", "id": str(PARASUT_HURDA_PRODUCT_ID)}
+                                "data": {"type": "products", "id": str(cfg["hurda_product_id"])}
                             }
                         }
                     })
@@ -100,7 +100,7 @@ def irsaliye_olustur(ticket_id: int, beklet: bool = False) -> dict:
                 },
                 "relationships": {
                     "product": {
-                        "data": {"type": "products", "id": str(PARASUT_HURDA_PRODUCT_ID)}
+                        "data": {"type": "products", "id": str(cfg["hurda_product_id"])}
                     }
                 }
             }]
@@ -120,7 +120,7 @@ def irsaliye_olustur(ticket_id: int, beklet: bool = False) -> dict:
             }
         }
 
-        sonuc = parasut_post(f"/{PARASUT_COMPANY_ID}/shipment_documents", istek_verisi)
+        sonuc = parasut_post(f"/{cfg['company_id']}/shipment_documents", istek_verisi, tenant_id=tenant_id)
         parasut_id = sonuc["data"]["id"]
         logger.info(f"Paraşüt irsaliye oluşturuldu: parasut_id={parasut_id}")
 
@@ -130,7 +130,8 @@ def irsaliye_olustur(ticket_id: int, beklet: bool = False) -> dict:
             irsaliye_no=str(parasut_id),
             parasut_irsaliye_id=str(parasut_id),
             status=yeni_status,
-            ticket_id=ticket_id
+            ticket_id=ticket_id,
+            tenant_id=tenant_id
         )
         db.add(waybill)
         db.commit()
