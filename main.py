@@ -350,7 +350,9 @@ async def chat_sayfasi(request: Request):
     user = mevcut_kullanici(request)
     if not user:
         from fastapi.responses import RedirectResponse
-        return RedirectResponse(url="https://profaix.com/login")
+        from app.core.config import BASE_URL as _BASE_URL
+        _login_url = f"{_BASE_URL}/login" if _BASE_URL else "https://profaix.com/login"
+        return RedirectResponse(url=_login_url)
     token = request.cookies.get("profaix_token", "")
     return HTMLResponse(content=_chat_html(token))
 
@@ -358,7 +360,9 @@ async def chat_sayfasi(request: Request):
 @app.get("/login", response_class=HTMLResponse)
 async def login_sayfasi(request: Request):
     from fastapi.responses import RedirectResponse
-    return RedirectResponse(url="https://profaix.com/login")
+    from app.core.config import BASE_URL as _BASE_URL
+    _login_url = f"{_BASE_URL}/login" if _BASE_URL else "https://profaix.com/login"
+    return RedirectResponse(url=_login_url)
 
 
 @app.post("/api/login")

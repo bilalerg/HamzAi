@@ -68,6 +68,11 @@ REQUIRE_SIGNED_EMBED_AUTH = os.getenv(
     "0"
 ).lower() in ("1", "true", "yes")
 
+# ── UYGULAMA URL ───────────────────────────────────────────────────
+# Demo ortamında https://profaix-demo.onrender.com olarak set edilmeli.
+# Production'da boş bırakılır → profaix.com/login kullanılır.
+BASE_URL = os.getenv("BASE_URL", "")
+
 # ── CORS ───────────────────────────────────────────────────────────
 # Üretimde izin verilen origin'leri .env'de virgülle ayırarak tanımlayın.
 # Örnek: ALLOWED_ORIGINS=https://profaix.com,https://chat.profaix.com
