@@ -359,10 +359,12 @@ async def chat_sayfasi(request: Request):
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_sayfasi(request: Request):
+    from pathlib import Path as _Path
+    _login_file = _Path(__file__).parent / "login.html"
+    if _login_file.exists():
+        return HTMLResponse(content=_login_file.read_text(encoding="utf-8"))
     from fastapi.responses import RedirectResponse
-    from app.core.config import BASE_URL as _BASE_URL
-    _login_url = f"{_BASE_URL}/login" if _BASE_URL else "https://profaix.com/login"
-    return RedirectResponse(url=_login_url)
+    return RedirectResponse(url="https://profaix.com/login")
 
 
 @app.post("/api/login")
