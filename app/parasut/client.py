@@ -1394,10 +1394,10 @@ def cari_tipi_bul(cari_adi: str, tenant_id=None) -> str:
     for c in cariler:
         if str(c.get("id")) == str(cari_id):
             t = c.get("account_type", "customer")
-            # Paraşüt 'both' döndürebilir — supplier öncelikli
+            # 'both' → tedarikçi akışı (kantar fişi = gelen mal = alış)
             if t in ("supplier", "both"):
                 return "supplier"
-            return t
+            return "customer"
     return "customer"
 
 
