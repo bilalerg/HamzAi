@@ -1501,7 +1501,7 @@ async def fatura_kes_endpoint(request: Request, background_tasks: BackgroundTask
                     "relationships": {
                         "contact": {"data": {"type": "contacts", "id": str(contact_id)}},
                         "details": {"data": detaylar},
-                        "shipment_document": {"data": {"type": "shipment_documents", "id": str(parasut_irsaliye_id)}}
+                        "shipment_documents": {"data": [{"type": "shipment_documents", "id": str(parasut_irsaliye_id)}]}
                     }
                 }
             }
@@ -1509,7 +1509,7 @@ async def fatura_kes_endpoint(request: Request, background_tasks: BackgroundTask
                 sonuc = await async_parasut_post(f"/{cfg['company_id']}/sales_invoices", istek, tenant_id=tenant_id)
             except Exception as e:
                 logger.warning(f"İrsaliye bağlantılı fatura başarısız: {e}")
-                istek["data"]["relationships"].pop("shipment_document", None)
+                istek["data"]["relationships"].pop("shipment_documents", None)
                 sonuc = await async_parasut_post(f"/{cfg['company_id']}/sales_invoices", istek, tenant_id=tenant_id)
 
         fatura_id = sonuc["data"]["id"]

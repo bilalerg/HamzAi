@@ -811,10 +811,10 @@ def fatura_tahsilat_ekle(
         hesap_id = _kasa_hesabi_bul(tenant_id=tid)
         if not hesap_id:
             return {"basarili": False, "hata": "Kasa/banka hesabı bulunamadı."}
-        istek = {"data": {"type": "payments", "attributes": {
-            "description": aciklama or "Tahsilat", "date": bugun,
-            "amount": tutar, "account_id": int(hesap_id),
-        }}}
+        istek = {"data": {"type": "payments",
+            "attributes": {"description": aciklama or "Tahsilat", "date": bugun, "amount": tutar},
+            "relationships": {"account": {"data": {"type": "accounts", "id": str(hesap_id)}}},
+        }}
         try:
             sonuc = parasut_post(f"/{cid}/sales_invoices/{fatura_id}/payments", istek, tenant_id=tid)
         except Exception as e:
@@ -933,6 +933,9 @@ def tum_bekleyen_irsaliyeleri_getir(
             for i in data:
                 attr         = i.get("attributes", {})
                 rels         = i.get("relationships", {})
+                # Paraşüt'te bu irsaliye zaten bir faturaya bağlıysa atla
+                if rels.get("sales_invoice", {}).get("data") or rels.get("purchase_bill", {}).get("data"):
+                    continue
                 contact_data = rels.get("contact", {}).get("data", {})
                 contact_id   = contact_data.get("id") if contact_data else None
                 if not contact_id:
@@ -1203,17 +1206,10 @@ def alıs_faturasi_odeme_ekle(
         hesap_id = kasa_id or _kasa_hesabi_bul(tenant_id=tid)
         if not hesap_id:
             return {"basarili": False, "hata": "Kasa/banka hesabı bulunamadı."}
-        istek = {
-            "data": {
-                "type": "payments",
-                "attributes": {
-                    "description": notlar or "Hurda alım ödemesi",
-                    "date":        bugun,
-                    "amount":      tutar,
-                    "account_id":  int(hesap_id),
-                }
-            }
-        }
+        istek = {"data": {"type": "payments",
+            "attributes": {"description": notlar or "Hurda alım ödemesi", "date": bugun, "amount": tutar},
+            "relationships": {"account": {"data": {"type": "accounts", "id": str(hesap_id)}}},
+        }}
         try:
             sonuc = parasut_post(f"/{cid}/purchase_bills/{fatura_id}/payments", istek, tenant_id=tid)
         except Exception as e:
