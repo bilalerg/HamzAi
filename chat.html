@@ -1714,6 +1714,11 @@
     'hesap_ozeti':          (p) => hesapOzetiGoster(p.musteri, p.baslangic, p.bitis),
     'gunluk_ozet':          (p) => gunlukOzetGoster(),
     'son_fisler':           (p) => sonFisleriGoster(),
+    'hesaplar':             (p) => hesaplarGoster(),
+    'stok_hareketleri':     (p) => stokHareketleriGoster(),
+    'gelir_gider_raporu':   (p) => gelirGiderRaporuGoster(),
+    'odeme_ekle':           (p) => odemeFormGoster(),
+    'para_transferi':       (p) => paraTransferiFormGoster(),
   };
 
   async function restoreUiPanel(kind, params) {
