@@ -117,6 +117,11 @@ def calistir(engine, db):
                 f"ALTER TABLE {tablo} ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(100)"
             ), f"tenant_id ({tablo})")
 
+        # ── TENANT ÖZELLİKLERİ KOLONU ───────────────────────────────────
+        _kolon_ekle(conn, text(
+            "ALTER TABLE tenants ADD COLUMN IF NOT EXISTS ozellikler TEXT"
+        ), "ozellikler (tenants)")
+
         # ── INDEX MİGRATIONLARI ───────────────────────────────────────
         _index_olustur(conn, text(
             "CREATE INDEX IF NOT EXISTS idx_weigh_tickets_tenant_status "

@@ -58,10 +58,13 @@ def irsaliye_olustur(ticket_id: int, beklet: bool = False, tenant_id: str = None
             db.commit()
             return {"basarili": False, "hata": hata_mesaji}
 
+        from app.core.tenant import get_tenant_ozellik
+        dogru_akis = get_tenant_ozellik(tenant_id, "dogru_parasut_akisi", varsayilan=False)
+
         attributes = {
             "description": f"Kantar Fişi — {ticket.plaka} — {ticket.agirlik_kg} kg",
             "issue_date": tarih_str,
-            "inflow": False,
+            "inflow": dogru_akis,  # True=mal girişi (satın alma), False=eski akış
             "currency": "TRL",
         }
         if ticket.plaka:

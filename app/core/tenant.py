@@ -102,6 +102,23 @@ def get_tenant_credentials(tenant_id: str) -> dict:
     }
 
 
+def get_tenant_ozellik(tenant_id: str, ozellik: str, varsayilan=False):
+    """
+    Tenant'a ait bir özelliğin açık olup olmadığını döner.
+    Örnek: get_tenant_ozellik(tid, "dogru_parasut_akisi") → True/False
+    Tenant bulunamazsa veya özellik tanımlı değilse varsayilan döner.
+    """
+    import json
+    tenant = get_tenant(tenant_id)
+    if not tenant or not tenant.ozellikler:
+        return varsayilan
+    try:
+        ozellikler = json.loads(tenant.ozellikler)
+        return ozellikler.get(ozellik, varsayilan)
+    except Exception:
+        return varsayilan
+
+
 def invalidate_tenant_cache(tenant_id: str):
     """Tenant cache'ini geçersiz kılar (yeni tenant eklendiğinde çağrılır)."""
     _tenant_cache.pop(tenant_id, None)

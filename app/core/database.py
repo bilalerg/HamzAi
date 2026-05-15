@@ -62,6 +62,7 @@ class Tenant(Base):
     parasut_company_id       = Column(String(50), nullable=False)
     parasut_hurda_product_id = Column(String(50), nullable=True)
     aktif                    = Column(Integer, default=1)
+    ozellikler               = Column(Text, nullable=True)  # JSON: {"dogru_parasut_akisi": true, ...}
     created_at               = Column(DateTime, server_default=func.now())
     updated_at               = Column(DateTime, server_default=func.now(), onupdate=func.now())
     def __repr__(self): return f"<Tenant id={self.id} ad={self.ad}>"

@@ -1312,25 +1312,45 @@ async def toplu_fatura_kes_endpoint(request: Request, background_tasks: Backgrou
         if not detaylar:
             return JSONResponse({"cevap": "❌ Fatura kalemi oluşturulamadı.", "basarili": False})
 
-        istek = {
-            "data": {
-                "type": "sales_invoices",
-                "attributes": {"item_type": "invoice", "description": f"Toplu Hurda Alım — {len(irsaliye_ids)} irsaliye",
-                               "issue_date": bugun, "due_date": bugun, "currency": "TRL"},
-                "relationships": {
-                    "contact": {"data": {"type": "contacts", "id": str(contact_id)}},
-                    "details": {"data": detaylar},
-                    "shipment_documents": {"data": shipment_docs}
+        from app.core.tenant import get_tenant_ozellik
+        dogru_akis = get_tenant_ozellik(tenant_id, "dogru_parasut_akisi", varsayilan=False)
+
+        if dogru_akis:
+            # Doğru akış: purchase_bills, purchase_bill_details, irsaliye silinmez
+            detaylar_pb = [dict(d, type="purchase_bill_details") for d in detaylar]
+            istek = {
+                "data": {
+                    "type": "purchase_bills",
+                    "attributes": {"item_type": "invoice", "description": f"Toplu Hurda Alım — {len(irsaliye_ids)} irsaliye",
+                                   "issue_date": bugun, "due_date": bugun, "currency": "TRL"},
+                    "relationships": {
+                        "contact": {"data": {"type": "contacts", "id": str(contact_id)}},
+                        "details": {"data": detaylar_pb},
+                        "shipment_documents": {"data": shipment_docs}
+                    }
                 }
             }
-        }
-
-        try:
-            sonuc = await async_parasut_post(f"/{cfg['company_id']}/sales_invoices", istek, tenant_id=tenant_id)
-        except Exception as e:
-            logger.warning(f"İrsaliye bağlantılı toplu fatura başarısız: {e}")
-            istek["data"]["relationships"].pop("shipment_documents", None)
-            sonuc = await async_parasut_post(f"/{cfg['company_id']}/sales_invoices", istek, tenant_id=tenant_id)
+            sonuc = await async_parasut_post(f"/{cfg['company_id']}/purchase_bills", istek, tenant_id=tenant_id)
+        else:
+            # Eski akış: sales_invoices (Osman)
+            istek = {
+                "data": {
+                    "type": "sales_invoices",
+                    "attributes": {"item_type": "invoice", "description": f"Toplu Hurda Alım — {len(irsaliye_ids)} irsaliye",
+                                   "issue_date": bugun, "due_date": bugun, "currency": "TRL"},
+                    "relationships": {
+                        "contact": {"data": {"type": "contacts", "id": str(contact_id)}},
+                        "details": {"data": detaylar},
+                        "shipment_documents": {"data": shipment_docs}
+                    }
+                }
+            }
+            try:
+                sonuc = await async_parasut_post(f"/{cfg['company_id']}/sales_invoices", istek, tenant_id=tenant_id)
+            except Exception as e:
+                logger.warning(f"İrsaliye bağlantılı toplu fatura başarısız: {e}")
+                istek["data"]["relationships"].pop("shipment_documents", None)
+                sonuc = await async_parasut_post(f"/{cfg['company_id']}/sales_invoices", istek, tenant_id=tenant_id)
 
         fatura_id = sonuc["data"]["id"]
         logger.info(f"✅ Toplu fatura kesildi: {fatura_id} ← {len(irsaliye_ids)} irsaliye")
@@ -1365,11 +1385,12 @@ async def toplu_fatura_kes_endpoint(request: Request, background_tasks: Backgrou
             logger.error(f"Toplu fatura DB commit hatası: {e}")
             db.rollback()
 
-        for pid in irsaliye_ids:
-            try:
-                await async_parasut_delete(f"/{cfg['company_id']}/shipment_documents/{pid}", tenant_id=tenant_id)
-            except Exception as e:
-                logger.warning(f"İrsaliye silinemedi ({pid}): {e}")
+        if not dogru_akis:
+            for pid in irsaliye_ids:
+                try:
+                    await async_parasut_delete(f"/{cfg['company_id']}/shipment_documents/{pid}", tenant_id=tenant_id)
+                except Exception as e:
+                    logger.warning(f"İrsaliye silinemedi ({pid}): {e}")
 
         try:
             await async_cari_cache_yenile()
@@ -1438,25 +1459,45 @@ async def fatura_kes_endpoint(request: Request, background_tasks: BackgroundTask
                                              "vat_rate": 0, "description": f"Hurda — {tr_kg(kg)} kg"},
                               "relationships": {"product": {"data": {"type": "products", "id": str(cfg["hurda_product_id"])}}}}]
 
-        istek = {
-            "data": {
-                "type": "sales_invoices",
-                "attributes": {"item_type": "invoice", "description": f"Hurda Alım — İrsaliye {parasut_irsaliye_id}",
-                               "issue_date": bugun, "due_date": bugun, "currency": "TRL"},
-                "relationships": {
-                    "contact": {"data": {"type": "contacts", "id": str(contact_id)}},
-                    "details": {"data": detaylar},
-                    "shipment_document": {"data": {"type": "shipment_documents", "id": str(parasut_irsaliye_id)}}
+        from app.core.tenant import get_tenant_ozellik
+        dogru_akis = get_tenant_ozellik(tenant_id, "dogru_parasut_akisi", varsayilan=False)
+
+        if dogru_akis:
+            # Doğru akış: purchase_bills, purchase_bill_details, irsaliye silinmez
+            detaylar_pb = [dict(d, type="purchase_bill_details") for d in detaylar]
+            istek = {
+                "data": {
+                    "type": "purchase_bills",
+                    "attributes": {"item_type": "invoice", "description": f"Hurda Alım — İrsaliye {parasut_irsaliye_id}",
+                                   "issue_date": bugun, "due_date": bugun, "currency": "TRL"},
+                    "relationships": {
+                        "contact": {"data": {"type": "contacts", "id": str(contact_id)}},
+                        "details": {"data": detaylar_pb},
+                        "shipment_documents": {"data": [{"type": "shipment_documents", "id": str(parasut_irsaliye_id)}]}
+                    }
                 }
             }
-        }
-
-        try:
-            sonuc = await async_parasut_post(f"/{cfg['company_id']}/sales_invoices", istek, tenant_id=tenant_id)
-        except Exception as e:
-            logger.warning(f"İrsaliye bağlantılı fatura başarısız: {e}")
-            istek["data"]["relationships"].pop("shipment_document", None)
-            sonuc = await async_parasut_post(f"/{cfg['company_id']}/sales_invoices", istek, tenant_id=tenant_id)
+            sonuc = await async_parasut_post(f"/{cfg['company_id']}/purchase_bills", istek, tenant_id=tenant_id)
+        else:
+            # Eski akış: sales_invoices (Osman)
+            istek = {
+                "data": {
+                    "type": "sales_invoices",
+                    "attributes": {"item_type": "invoice", "description": f"Hurda Alım — İrsaliye {parasut_irsaliye_id}",
+                                   "issue_date": bugun, "due_date": bugun, "currency": "TRL"},
+                    "relationships": {
+                        "contact": {"data": {"type": "contacts", "id": str(contact_id)}},
+                        "details": {"data": detaylar},
+                        "shipment_document": {"data": {"type": "shipment_documents", "id": str(parasut_irsaliye_id)}}
+                    }
+                }
+            }
+            try:
+                sonuc = await async_parasut_post(f"/{cfg['company_id']}/sales_invoices", istek, tenant_id=tenant_id)
+            except Exception as e:
+                logger.warning(f"İrsaliye bağlantılı fatura başarısız: {e}")
+                istek["data"]["relationships"].pop("shipment_document", None)
+                sonuc = await async_parasut_post(f"/{cfg['company_id']}/sales_invoices", istek, tenant_id=tenant_id)
 
         fatura_id = sonuc["data"]["id"]
         logger.info(f"✅ Fatura kesildi: {fatura_id} ← irsaliye {parasut_irsaliye_id}")
@@ -1485,10 +1526,11 @@ async def fatura_kes_endpoint(request: Request, background_tasks: BackgroundTask
         except Exception as e:
             logger.error(f"DB güncelleme hatası: {e}")
 
-        try:
-            await async_parasut_delete(f"/{cfg['company_id']}/shipment_documents/{parasut_irsaliye_id}", tenant_id=tenant_id)
-        except Exception as e:
-            logger.warning(f"İrsaliye silinemedi: {e}")
+        if not dogru_akis:
+            try:
+                await async_parasut_delete(f"/{cfg['company_id']}/shipment_documents/{parasut_irsaliye_id}", tenant_id=tenant_id)
+            except Exception as e:
+                logger.warning(f"İrsaliye silinemedi: {e}")
 
         ozet = f"✅ Fatura kesildi!\n\n🏢 {cari_adi}\n"
         for malzeme_adi_ozet, fiyat_ozet in toplanan_fiyatlar.items():
@@ -1767,6 +1809,10 @@ async def tenant_ekle(request: Request):
     parasut_password      = (data.get("parasut_password") or "").strip()
     parasut_company_id    = (data.get("parasut_company_id") or "").strip()
     parasut_hurda_product_id = (data.get("parasut_hurda_product_id") or "").strip() or None
+    ozellikler               = data.get("ozellikler", None)  # JSON dict opsiyonel
+    if isinstance(ozellikler, dict):
+        import json as _json
+        ozellikler = _json.dumps(ozellikler, ensure_ascii=False)
 
     if not all([tenant_id, ad, parasut_client_id, parasut_client_secret,
                 parasut_username, parasut_password, parasut_company_id]):
@@ -1790,6 +1836,7 @@ async def tenant_ekle(request: Request):
             parasut_password=_encrypt_cred(parasut_password),
             parasut_company_id=parasut_company_id,
             parasut_hurda_product_id=parasut_hurda_product_id,
+            ozellikler=ozellikler,
             aktif=1,
         )
         db.add(tenant)
