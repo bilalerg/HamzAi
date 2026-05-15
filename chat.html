@@ -1130,11 +1130,14 @@
   async function odemeFormGoster() {
     billablePanelTikla('odeme_ekle');
     showTyping();
-    let hesaplar = [];
+    let hesaplar = [], faturalar = [];
     try {
-      const res = await fetch('/api/hesaplar');
-      const d = await res.json();
-      hesaplar = d.hesaplar || [];
+      const [hr, fr] = await Promise.all([
+        fetch('/api/hesaplar'),
+        fetch('/api/bekleyen-alis-faturalari')
+      ]);
+      hesaplar = (await hr.json()).hesaplar || [];
+      faturalar = (await fr.json()).faturalar || [];
     } catch {}
     removeTyping();
 
@@ -1145,11 +1148,6 @@
     baslik.style.cssText = 'font-weight:500;margin-bottom:10px;';
     baslik.textContent = '💸 Ödeme Ekle (Alış Faturası)';
     wrap.appendChild(baslik);
-
-    const bilgi = document.createElement('div');
-    bilgi.style.cssText = 'font-size:12px;color:var(--muted);margin-bottom:12px;padding:8px 12px;background:var(--accent-lt);border-radius:8px;border-left:3px solid var(--accent);';
-    bilgi.textContent = 'Alış faturasına ödeme kaydetmek için fatura ID\'sini girin.';
-    wrap.appendChild(bilgi);
 
     function satir(label, el) {
       const d = document.createElement('div');
@@ -1162,18 +1160,40 @@
       return d;
     }
 
-    const faturaInp = document.createElement('input');
-    faturaInp.type = 'text'; faturaInp.className = 'fiyat-input'; faturaInp.placeholder = 'Paraşüt fatura ID';
-    wrap.appendChild(satir('Fatura ID', faturaInp));
+    // Fatura seçimi — ya dropdown ya manuel ID
+    let seciliFaturaId = '';
+    let seciliKalan = 0;
+    const faturaSel = document.createElement('select');
+    faturaSel.className = 'fiyat-input';
+    const bos0 = document.createElement('option'); bos0.value = ''; bos0.textContent = faturalar.length ? 'Fatura seçin…' : 'Ödenmemiş fatura yok — ID manuel girin';
+    faturaSel.appendChild(bos0);
+    faturalar.forEach(function(f) {
+      const o = document.createElement('option'); o.value = f.id;
+      const kalan = f.kalan.toLocaleString('tr-TR', {minimumFractionDigits:2});
+      o.textContent = `${f.cari} · ${f.tarih} · ${kalan} ₺`;
+      faturaSel.appendChild(o);
+    });
+    wrap.appendChild(satir('Fatura (ödenmemiş)', faturaSel));
+
+    const manuelInp = document.createElement('input');
+    manuelInp.type = 'text'; manuelInp.className = 'fiyat-input';
+    manuelInp.placeholder = 'veya fatura ID girin (Paraşüt URL\'den)';
+    wrap.appendChild(satir('', manuelInp));
 
     const tutarInp = document.createElement('input');
     tutarInp.type = 'text'; tutarInp.className = 'fiyat-input'; tutarInp.placeholder = 'Örn: 15000';
     wrap.appendChild(satir('Tutar (₺)', tutarInp));
 
+    // Fatura seçince kalan tutarı otomatik doldur
+    faturaSel.onchange = function() {
+      const f = faturalar.find(function(x) { return x.id === faturaSel.value; });
+      if (f) { tutarInp.value = String(f.kalan); manuelInp.value = ''; }
+    };
+
     const kasaSel = document.createElement('select');
     kasaSel.className = 'fiyat-input';
-    const bos = document.createElement('option'); bos.value = ''; bos.textContent = 'Kasa/Banka (opsiyonel)';
-    kasaSel.appendChild(bos);
+    const bosH = document.createElement('option'); bosH.value = ''; bosH.textContent = 'Kasa/Banka (opsiyonel)';
+    kasaSel.appendChild(bosH);
     hesaplar.forEach(function(h) {
       const o = document.createElement('option'); o.value = h.id; o.textContent = h.name;
       kasaSel.appendChild(o);
@@ -1201,9 +1221,9 @@
     iptalBtn.onclick = function() { addMessage('❌ Ödeme iptal edildi.', 'bot'); };
 
     kaydetBtn.onclick = async function() {
-      const fatura_id = faturaInp.value.trim();
+      const fatura_id = faturaSel.value || manuelInp.value.trim();
       const tutar = parseFiyat(tutarInp.value);
-      if (!fatura_id) { faturaInp.style.borderColor = '#e53e3e'; return; }
+      if (!fatura_id) { faturaSel.style.borderColor = '#e53e3e'; manuelInp.style.borderColor = '#e53e3e'; return; }
       if (!tutar || tutar <= 0) { tutarInp.style.borderColor = '#e53e3e'; return; }
       kaydetBtn.disabled = true; iptalBtn.disabled = true;
       kaydetBtn.textContent = 'Kaydediliyor…';
@@ -1218,9 +1238,12 @@
         });
         const d = await res.json();
         if (d.basarili) {
-          addMessage(`✅ Ödeme kaydedildi. (Fatura: ${fatura_id}, Tutar: ${tutar.toLocaleString('tr-TR')} ₺)`, 'bot');
+          const label = faturalar.find(function(x) { return x.id === fatura_id; })?.cari || fatura_id;
+          addMessage(`✅ Ödeme kaydedildi. (${label} · ${tutar.toLocaleString('tr-TR')} ₺)`, 'bot');
         } else {
           addMessage(`❌ Ödeme kaydedilemedi: ${d.hata || d.detail || 'Bilinmeyen hata'}`, 'bot');
+          kaydetBtn.disabled = false; iptalBtn.disabled = false;
+          kaydetBtn.textContent = 'Kaydet';
         }
       } catch { addMessage('❌ Ödeme kaydedilemedi.', 'bot'); }
     };
@@ -1230,7 +1253,6 @@
     wrap.appendChild(btnRow);
     addMessage('', 'bot', wrap);
     sohbetPanelKaydet('odeme_ekle', {});
-    setTimeout(function() { faturaInp.focus(); }, 100);
   }
 
   // ── PARA TRANSFERİ ────────────────────────────────────────────────

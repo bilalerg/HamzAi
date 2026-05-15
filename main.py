@@ -1724,6 +1724,19 @@ async def hesaplar_getir(request: Request):
         return JSONResponse({"hata": _guvenli_hata(e)}, status_code=500)
 
 
+@app.get("/api/bekleyen-alis-faturalari")
+async def bekleyen_alis_faturalari(request: Request):
+    """Ödenmemiş alış faturalarını listeler."""
+    aktif_user = mevcut_kullanici(request)
+    tenant_id  = _tenant_id_from_user(aktif_user)
+    from app.parasut.client import async_son_alis_faturalari_getir
+    try:
+        faturalar = await async_son_alis_faturalari_getir(limit=30, tenant_id=tenant_id)
+        return JSONResponse({"faturalar": faturalar, "toplam": len(faturalar)})
+    except Exception as e:
+        return JSONResponse({"hata": _guvenli_hata(e)}, status_code=500)
+
+
 @app.post("/api/odeme-ekle")
 async def odeme_ekle_endpoint(request: Request, background_tasks: BackgroundTasks):
     """Alış faturasına (purchase_bill) ödeme ekler."""

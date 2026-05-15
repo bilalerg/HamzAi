@@ -1110,14 +1110,55 @@ def hesap_listesi_getir(tenant_id=None) -> list:
             attr = h.get("attributes", {})
             hesaplar.append({
                 "id":           h["id"],
-                "ad":           attr.get("name", "-"),
-                "tip":          attr.get("account_type", "-"),
-                "para_birimi":  attr.get("currency", "TRL"),
-                "bakiye":       float(attr.get("balance", 0) or 0),
+                "name":         attr.get("name", "-"),
+                "account_type": attr.get("account_type", "-"),
+                "currency":     attr.get("currency", "TRL"),
+                "balance":      float(attr.get("balance", 0) or 0),
             })
         return hesaplar
     except Exception as e:
         logger.error(f"Hesap listesi hatası: {e}")
+        return []
+
+
+def son_alis_faturalari_getir(limit: int = 30, tenant_id=None) -> list:
+    """Ödenmemiş / son alış faturalarını döner."""
+    tid   = _resolve_tid(tenant_id)
+    creds = _tenant_credentials(tid)
+    cid   = creds["company_id"]
+    try:
+        sonuc = parasut_get(
+            f"/{cid}/purchase_bills",
+            params={"filter[payment_status]": "unpaid", "page[size]": limit, "sort": "-issue_date"},
+            tenant_id=tid,
+        )
+        faturalar = []
+        for f in sonuc.get("data", []):
+            attr = f.get("attributes", {})
+            # cari adını ilişkilerden bul
+            contact_name = "-"
+            try:
+                contact_id = f.get("relationships", {}).get("contact", {}).get("data", {}).get("id")
+                if contact_id:
+                    included = sonuc.get("included", [])
+                    for inc in included:
+                        if inc.get("type") == "contacts" and inc.get("id") == contact_id:
+                            contact_name = inc.get("attributes", {}).get("name", "-")
+                            break
+            except Exception:
+                pass
+            faturalar.append({
+                "id":           f["id"],
+                "cari":         contact_name,
+                "tarih":        attr.get("issue_date", "-"),
+                "tutar":        float(attr.get("gross_total", 0) or 0),
+                "odenen":       float(attr.get("total_paid", 0) or 0),
+                "kalan":        float(attr.get("remaining", 0) or attr.get("gross_total", 0) or 0),
+                "aciklama":     attr.get("description", ""),
+            })
+        return faturalar
+    except Exception as e:
+        logger.error(f"Alış fatura listesi hatası: {e}")
         return []
 
 
@@ -1362,6 +1403,10 @@ async def async_fatura_detay_getir(fatura_id: str, tenant_id=None) -> dict:
 
 async def async_hesap_listesi_getir(tenant_id=None) -> list:
     return await asyncio.to_thread(hesap_listesi_getir, tenant_id)
+
+
+async def async_son_alis_faturalari_getir(limit: int = 30, tenant_id=None) -> list:
+    return await asyncio.to_thread(son_alis_faturalari_getir, limit, tenant_id)
 
 
 async def async_alıs_faturasi_odeme_ekle(
