@@ -1228,7 +1228,7 @@ def stok_hareketleri_getir(urun_id: str = None, limit: int = 50, tenant_id=None)
     creds = _tenant_credentials(tid)
     cid   = creds["company_id"]
     try:
-        params = {"page[size]": min(limit, 25), "sort": "-id"}
+        params = {"page[size]": min(limit, 25), "sort": "-date"}
         if urun_id:
             params["filter[product_id]"] = urun_id
         sonuc    = parasut_get(f"/{cid}/stock_movements", params=params, tenant_id=tid)
