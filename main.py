@@ -1318,10 +1318,13 @@ async def toplu_fatura_kes_endpoint(request: Request, background_tasks: Backgrou
             return JSONResponse({"cevap": "❌ Fatura kalemi oluşturulamadı.", "basarili": False})
 
         from app.core.tenant import get_tenant_ozellik
-        dogru_akis = get_tenant_ozellik(tenant_id, "dogru_parasut_akisi", varsayilan=False)
+        from app.parasut.client import async_cari_tipi_bul
+        dogru_akis   = get_tenant_ozellik(tenant_id, "dogru_parasut_akisi", varsayilan=False)
+        account_type = await async_cari_tipi_bul(cari_adi, tenant_id=tenant_id) if dogru_akis else "customer"
+        is_supplier  = (account_type == "supplier")
 
-        if dogru_akis:
-            # Doğru akış: purchase_bills, purchase_bill_details, irsaliye silinmez
+        if dogru_akis and is_supplier:
+            # Tedarikçiden alış: purchase_bills, irsaliye silinmez
             detaylar_pb = [dict(d, type="purchase_bill_details") for d in detaylar]
             istek = {
                 "data": {
@@ -1337,7 +1340,7 @@ async def toplu_fatura_kes_endpoint(request: Request, background_tasks: Backgrou
             }
             sonuc = await async_parasut_post(f"/{cfg['company_id']}/purchase_bills", istek, tenant_id=tenant_id)
         else:
-            # Eski akış: sales_invoices (Osman)
+            # Müşteriye satış veya eski akış (Osman): sales_invoices
             istek = {
                 "data": {
                     "type": "sales_invoices",
@@ -1465,10 +1468,14 @@ async def fatura_kes_endpoint(request: Request, background_tasks: BackgroundTask
                               "relationships": {"product": {"data": {"type": "products", "id": str(cfg["hurda_product_id"])}}}}]
 
         from app.core.tenant import get_tenant_ozellik
-        dogru_akis = get_tenant_ozellik(tenant_id, "dogru_parasut_akisi", varsayilan=False)
+        from app.parasut.client import async_cari_tipi_bul
+        dogru_akis   = get_tenant_ozellik(tenant_id, "dogru_parasut_akisi", varsayilan=False)
+        account_type = await async_cari_tipi_bul(cari_adi, tenant_id=tenant_id) if dogru_akis else "customer"
+        is_supplier  = (account_type == "supplier")
+        logger.info(f"Fatura akışı: cari={cari_adi} account_type={account_type} is_supplier={is_supplier} dogru_akis={dogru_akis}")
 
-        if dogru_akis:
-            # Doğru akış: purchase_bills, purchase_bill_details, irsaliye silinmez
+        if dogru_akis and is_supplier:
+            # Tedarikçiden alış: purchase_bills, irsaliye silinmez
             detaylar_pb = [dict(d, type="purchase_bill_details") for d in detaylar]
             istek = {
                 "data": {
@@ -1484,11 +1491,11 @@ async def fatura_kes_endpoint(request: Request, background_tasks: BackgroundTask
             }
             sonuc = await async_parasut_post(f"/{cfg['company_id']}/purchase_bills", istek, tenant_id=tenant_id)
         else:
-            # Eski akış: sales_invoices (Osman)
+            # Müşteriye satış veya eski akış (Osman): sales_invoices
             istek = {
                 "data": {
                     "type": "sales_invoices",
-                    "attributes": {"item_type": "invoice", "description": f"Hurda Alım — İrsaliye {parasut_irsaliye_id}",
+                    "attributes": {"item_type": "invoice", "description": f"Hurda Satış — İrsaliye {parasut_irsaliye_id}",
                                    "issue_date": bugun, "due_date": bugun, "currency": "TRL"},
                     "relationships": {
                         "contact": {"data": {"type": "contacts", "id": str(contact_id)}},

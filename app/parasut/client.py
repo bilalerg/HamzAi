@@ -291,6 +291,7 @@ def _cari_listesi_api(tenant_id=None) -> list:
                 "vergi_no":       attr.get("tax_number", "-"),
                 "adres":          attr.get("address", "-"),
                 "vergi_dairesi":  attr.get("tax_office", "-"),
+                "account_type":   attr.get("account_type", "customer"),
             })
         if len(data) < 25:
             break
@@ -1374,6 +1375,32 @@ def para_transferi(
         return {"basarili": False, "hata": str(e)}
 
 
+def cari_tipi_bul(cari_adi: str, tenant_id=None) -> str:
+    """
+    Cari adından Paraşüt account_type döner.
+    'supplier'  → tedarikçi (alış akışı: purchase_bills, gelen irsaliye)
+    'customer'  → müşteri  (satış akışı: sales_invoices, giden irsaliye)
+    Bulunamazsa 'customer' döner (güvenli varsayılan).
+    """
+    tid    = _resolve_tid(tenant_id)
+    cariler = _cari_caches.get(tid) or []
+    if not cariler:
+        cariler = cari_listesi_getir(tenant_id=tid)
+
+    cari_id = cari_id_bul(cari_adi, tenant_id=tid)
+    if not cari_id:
+        return "customer"
+
+    for c in cariler:
+        if str(c.get("id")) == str(cari_id):
+            t = c.get("account_type", "customer")
+            # Paraşüt 'both' döndürebilir — supplier öncelikli
+            if t in ("supplier", "both"):
+                return "supplier"
+            return t
+    return "customer"
+
+
 # ── ASYNC WRAPPER'LAR ─────────────────────────────────────────────────
 
 async def async_cari_listesi_getir(force_refresh: bool = False, tenant_id=None) -> list:
@@ -1443,6 +1470,10 @@ async def async_fatura_detay_getir(fatura_id: str, tenant_id=None) -> dict:
 
 async def async_hesap_listesi_getir(tenant_id=None) -> list:
     return await asyncio.to_thread(hesap_listesi_getir, tenant_id)
+
+
+async def async_cari_tipi_bul(cari_adi: str, tenant_id=None) -> str:
+    return await asyncio.to_thread(cari_tipi_bul, cari_adi, tenant_id)
 
 
 async def async_son_alis_faturalari_getir(limit: int = 30, tenant_id=None) -> list:
