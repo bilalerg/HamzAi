@@ -1385,6 +1385,15 @@ async def toplu_fatura_kes_endpoint(request: Request, background_tasks: Backgrou
                     ticket = db.query(WeighTicket).filter(WeighTicket.id == waybill.ticket_id).first()
                     if ticket:
                         ticket.status = TicketStatus.TAMAMLANDI
+                else:
+                    phantom = Waybill(
+                        irsaliye_no=str(pid),
+                        parasut_irsaliye_id=str(pid),
+                        status=TicketStatus.TAMAMLANDI,
+                        tenant_id=tenant_id,
+                    )
+                    db.add(phantom)
+                    logger.info(f"Phantom waybill oluşturuldu: {pid}")
             except Exception as e:
                 logger.error(f"DB güncelleme hatası ({pid}): {e}")
                 db.rollback()
@@ -1535,7 +1544,17 @@ async def fatura_kes_endpoint(request: Request, background_tasks: BackgroundTask
                 ticket = db.query(WeighTicket).filter(WeighTicket.id == waybill.ticket_id).first()
                 if ticket:
                     ticket.status = TicketStatus.TAMAMLANDI
-                db.commit()
+            else:
+                # Paraşüt'te var ama DB'de yok (reset sonrası) — phantom kayıt oluştur
+                phantom = Waybill(
+                    irsaliye_no=str(parasut_irsaliye_id),
+                    parasut_irsaliye_id=str(parasut_irsaliye_id),
+                    status=TicketStatus.TAMAMLANDI,
+                    tenant_id=tenant_id,
+                )
+                db.add(phantom)
+                logger.info(f"Phantom waybill oluşturuldu: {parasut_irsaliye_id}")
+            db.commit()
         except Exception as e:
             logger.error(f"DB güncelleme hatası: {e}")
 
