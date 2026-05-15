@@ -263,6 +263,11 @@ _PANEL_TIKLAMA_EVENT = {
     "son_fisler": "AI_CHAT",
     "fatura_detay": "FATURA_KESILDI",
     "cari_cache_yenile": "AI_CHAT",
+    "hesaplar": "AI_CHAT",
+    "stok_hareketleri": "AI_CHAT",
+    "gelir_gider_raporu": "AI_CHAT",
+    "odeme_ekle": "TAHSILAT_EKLENDI",
+    "para_transferi": "TAHSILAT_EKLENDI",
 }
 
 

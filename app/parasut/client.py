@@ -1129,7 +1129,7 @@ def son_alis_faturalari_getir(limit: int = 30, tenant_id=None) -> list:
     try:
         sonuc = parasut_get(
             f"/{cid}/purchase_bills",
-            params={"filter[payment_status]": "unpaid", "page[size]": limit, "sort": "-issue_date"},
+            params={"filter[payment_status]": "unpaid", "page[size]": min(limit, 25), "sort": "-issue_date"},
             tenant_id=tid,
         )
         faturalar = []
@@ -1209,7 +1209,7 @@ def stok_hareketleri_getir(urun_id: str = None, limit: int = 50, tenant_id=None)
     creds = _tenant_credentials(tid)
     cid   = creds["company_id"]
     try:
-        params = {"page[size]": min(limit, 100), "sort": "-created_at"}
+        params = {"page[size]": min(limit, 25), "sort": "-id"}
         if urun_id:
             params["filter[product_id]"] = urun_id
         sonuc    = parasut_get(f"/{cid}/stock_movements", params=params, tenant_id=tid)
@@ -1218,7 +1218,7 @@ def stok_hareketleri_getir(urun_id: str = None, limit: int = 50, tenant_id=None)
             attr = h.get("attributes", {})
             hareketler.append({
                 "id":          h["id"],
-                "tarih":       attr.get("created_at", "-")[:10],
+                "tarih":       (attr.get("date") or attr.get("created_at") or "-")[:10],
                 "miktar":      float(attr.get("quantity", 0) or 0),
                 "aciklama":    attr.get("description", "-"),
                 "giris_mi":    attr.get("inflow", False),
@@ -1238,17 +1238,33 @@ def gelir_gider_raporu_getir(baslangic: str, bitis: str, tenant_id=None) -> dict
     tid   = _resolve_tid(tenant_id)
     creds = _tenant_credentials(tid)
     cid   = creds["company_id"]
+    def _tum_sayfalari_cek(endpoint, extra_params, tid):
+        """Paraşüt max page[size]=25 olduğundan tüm sayfaları döngüyle çeker."""
+        tum_data = []
+        page = 1
+        while True:
+            params = {"page[size]": 25, "page[number]": page, **extra_params}
+            sonuc = parasut_get(endpoint, params=params, tenant_id=tid)
+            data = sonuc.get("data", [])
+            tum_data.extend(data)
+            meta = sonuc.get("meta", {})
+            total_pages = meta.get("total_pages", 1)
+            if page >= total_pages or not data:
+                break
+            page += 1
+        return tum_data
+
     try:
         # Satış faturaları (gelir)
-        satis_sonuc = parasut_get(
+        satis_data = _tum_sayfalari_cek(
             f"/{cid}/sales_invoices",
-            params={"page[size]": 100, "sort": "-issue_date"},
-            tenant_id=tid,
+            {"sort": "-issue_date"},
+            tid,
         )
         toplam_gelir  = 0.0
         toplam_gelir_kdv = 0.0
         satis_sayisi  = 0
-        for f in satis_sonuc.get("data", []):
+        for f in satis_data:
             attr  = f.get("attributes", {})
             tarih = attr.get("issue_date", "")
             if baslangic and tarih < baslangic:
@@ -1260,15 +1276,15 @@ def gelir_gider_raporu_getir(baslangic: str, bitis: str, tenant_id=None) -> dict
             satis_sayisi     += 1
 
         # Alış faturaları (gider)
-        alis_sonuc = parasut_get(
+        alis_data = _tum_sayfalari_cek(
             f"/{cid}/purchase_bills",
-            params={"page[size]": 100, "sort": "-issue_date"},
-            tenant_id=tid,
+            {"sort": "-issue_date"},
+            tid,
         )
         toplam_gider     = 0.0
         toplam_gider_kdv = 0.0
         alis_sayisi      = 0
-        for f in alis_sonuc.get("data", []):
+        for f in alis_data:
             attr  = f.get("attributes", {})
             tarih = attr.get("issue_date", "")
             if baslangic and tarih < baslangic:
