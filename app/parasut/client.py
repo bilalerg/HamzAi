@@ -1187,17 +1187,19 @@ def alıs_faturasi_odeme_ekle(
             "data": {
                 "type": "payments",
                 "attributes": {
-                    "date":          bugun,
-                    "notes":         notlar or "Hurda alım ödemesi",
-                    "amount":        tutar,
-                    "exchange_rate": 1.0,
-                },
-                "relationships": {
-                    "account": {"data": {"type": "accounts", "id": str(hesap_id)}}
+                    "description": notlar or "Hurda alım ödemesi",
+                    "date":        bugun,
+                    "amount":      tutar,
+                    "account_id":  int(hesap_id),
                 }
             }
         }
-        sonuc    = parasut_post(f"/{cid}/purchase_bills/{fatura_id}/payments", istek, tenant_id=tid)
+        try:
+            sonuc = parasut_post(f"/{cid}/purchase_bills/{fatura_id}/payments", istek, tenant_id=tid)
+        except Exception as e:
+            istek["data"]["attributes"]["amount"] = str(tutar)
+            logger.warning(f"Ödeme v2 deneniyor: {e}")
+            sonuc = parasut_post(f"/{cid}/purchase_bills/{fatura_id}/payments", istek, tenant_id=tid)
         odeme_id = sonuc["data"]["id"]
         logger.info(f"Alış faturası ödeme eklendi: fatura={fatura_id} tutar={tutar:,.0f} TL (tenant={tid})")
         return {"basarili": True, "id": odeme_id, "fatura_id": fatura_id, "tutar": tutar, "tarih": bugun}
