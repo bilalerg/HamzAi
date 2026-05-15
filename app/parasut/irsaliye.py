@@ -59,9 +59,15 @@ def irsaliye_olustur(ticket_id: int, beklet: bool = False, tenant_id: str = None
             return {"basarili": False, "hata": hata_mesaji}
 
         from app.parasut.client import cari_tipi_bul
-        account_type = cari_tipi_bul(ticket.firma, tenant_id=tenant_id)
-        inflow = (account_type == "supplier")
-        logger.info(f"İrsaliye yönü: cari={ticket.firma} account_type={account_type} inflow={inflow}")
+        from app.core.tenant import get_tenant_ozellik
+        # varsayilan=True → yeni tenantlar standart akış; Osman dogru_parasut_akisi=False → eski akış
+        dogru_akis = get_tenant_ozellik(tenant_id, "dogru_parasut_akisi", varsayilan=True)
+        if not dogru_akis:
+            inflow = False  # Osman: daima giden irsaliye
+        else:
+            account_type = cari_tipi_bul(ticket.firma, tenant_id=tenant_id)
+            inflow = (account_type == "supplier")
+            logger.info(f"İrsaliye yönü: cari={ticket.firma} account_type={account_type} inflow={inflow}")
 
         attributes = {
             "description": f"Kantar Fişi — {ticket.plaka} — {ticket.agirlik_kg} kg",
