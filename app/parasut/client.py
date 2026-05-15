@@ -1129,7 +1129,7 @@ def son_alis_faturalari_getir(limit: int = 30, tenant_id=None) -> list:
     try:
         sonuc = parasut_get(
             f"/{cid}/purchase_bills",
-            params={"page[size]": 25, "sort": "-issue_date", "include": "contact"},
+            params={"page[size]": 25, "sort": "-issue_date", "include": "supplier"},
             tenant_id=tid,
         )
         included = sonuc.get("included", [])
@@ -1141,10 +1141,13 @@ def son_alis_faturalari_getir(limit: int = 30, tenant_id=None) -> list:
                 continue  # ödenmişleri atla
             contact_name = "-"
             try:
-                contact_id = f.get("relationships", {}).get("contact", {}).get("data", {}).get("id")
-                if contact_id:
+                # purchase_bills'de tedarikçi "supplier" ilişkisiyle gelir
+                rels = f.get("relationships", {})
+                supplier_data = rels.get("supplier", {}).get("data") or rels.get("contact", {}).get("data")
+                supplier_id = (supplier_data or {}).get("id")
+                if supplier_id:
                     for inc in included:
-                        if inc.get("type") == "contacts" and inc.get("id") == contact_id:
+                        if inc.get("id") == supplier_id and inc.get("type") in ("contacts", "suppliers"):
                             contact_name = inc.get("attributes", {}).get("name", "-")
                             break
             except Exception:
