@@ -1129,18 +1129,20 @@ def son_alis_faturalari_getir(limit: int = 30, tenant_id=None) -> list:
     try:
         sonuc = parasut_get(
             f"/{cid}/purchase_bills",
-            params={"filter[payment_status]": "unpaid", "page[size]": min(limit, 25), "sort": "-issue_date"},
+            params={"page[size]": 25, "sort": "-issue_date"},
             tenant_id=tid,
         )
+        included = sonuc.get("included", [])
         faturalar = []
         for f in sonuc.get("data", []):
             attr = f.get("attributes", {})
-            # cari adını ilişkilerden bul
+            kalan = float(attr.get("remaining", 0) or 0)
+            if kalan <= 0:
+                continue  # ödenmişleri atla
             contact_name = "-"
             try:
                 contact_id = f.get("relationships", {}).get("contact", {}).get("data", {}).get("id")
                 if contact_id:
-                    included = sonuc.get("included", [])
                     for inc in included:
                         if inc.get("type") == "contacts" and inc.get("id") == contact_id:
                             contact_name = inc.get("attributes", {}).get("name", "-")
@@ -1148,14 +1150,15 @@ def son_alis_faturalari_getir(limit: int = 30, tenant_id=None) -> list:
             except Exception:
                 pass
             faturalar.append({
-                "id":           f["id"],
-                "cari":         contact_name,
-                "tarih":        attr.get("issue_date", "-"),
-                "tutar":        float(attr.get("gross_total", 0) or 0),
-                "odenen":       float(attr.get("total_paid", 0) or 0),
-                "kalan":        float(attr.get("remaining", 0) or attr.get("gross_total", 0) or 0),
-                "aciklama":     attr.get("description", ""),
+                "id":       f["id"],
+                "cari":     contact_name,
+                "tarih":    attr.get("issue_date", "-"),
+                "tutar":    float(attr.get("gross_total", 0) or 0),
+                "kalan":    kalan,
+                "aciklama": attr.get("description", ""),
             })
+            if len(faturalar) >= limit:
+                break
         return faturalar
     except Exception as e:
         logger.error(f"Alış fatura listesi hatası: {e}")
