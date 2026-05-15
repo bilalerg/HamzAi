@@ -1129,7 +1129,7 @@ def son_alis_faturalari_getir(limit: int = 30, tenant_id=None) -> list:
     try:
         sonuc = parasut_get(
             f"/{cid}/purchase_bills",
-            params={"page[size]": 25, "sort": "-issue_date"},
+            params={"page[size]": 25, "sort": "-issue_date", "include": "contact"},
             tenant_id=tid,
         )
         included = sonuc.get("included", [])
@@ -1149,13 +1149,15 @@ def son_alis_faturalari_getir(limit: int = 30, tenant_id=None) -> list:
                             break
             except Exception:
                 pass
+            aciklama = attr.get("description", "") or ""
+            goruntu_adi = contact_name if contact_name != "-" else (aciklama[:30] if aciklama else f["id"])
             faturalar.append({
                 "id":       f["id"],
-                "cari":     contact_name,
+                "cari":     goruntu_adi,
                 "tarih":    attr.get("issue_date", "-"),
                 "tutar":    float(attr.get("gross_total", 0) or 0),
                 "kalan":    kalan,
-                "aciklama": attr.get("description", ""),
+                "aciklama": aciklama,
             })
             if len(faturalar) >= limit:
                 break
