@@ -1129,20 +1129,22 @@ def son_alis_faturalari_getir(limit: int = 30, tenant_id=None) -> list:
     try:
         sonuc = parasut_get(
             f"/{cid}/purchase_bills",
-            params={"page[size]": 25, "sort": "-issue_date"},
+            params={"page[size]": 25, "sort": "-issue_date", "include": "supplier"},
             tenant_id=tid,
         )
-        # Cari cache'den id→ad eşlemesi yap (zaten bellekte var, API çağrısı yok)
-        cari_cache = _cari_caches.get(tid) or []
-        id_to_ad = {str(c.get("id", "")): c.get("ad", "-") for c in cari_cache if c.get("id")}
-        logger.info(f"DEBUG alis fatura: cache_boyut={len(cari_cache)}, id_to_ad_ornek={list(id_to_ad.items())[:3]}")
-
-        included = sonuc.get("included", [])
-        for inc in included:
+        # included'dan id→ad haritası kur (include=supplier ile gelir)
+        id_to_ad = {}
+        for inc in sonuc.get("included", []):
             inc_id = str(inc.get("id", ""))
             inc_ad = inc.get("attributes", {}).get("name", "")
             if inc_id and inc_ad:
-                id_to_ad.setdefault(inc_id, inc_ad)
+                id_to_ad[inc_id] = inc_ad
+
+        # Cari cache ile de zenginleştir (boşlukları doldur)
+        for c in (_cari_caches.get(tid) or []):
+            cid_str = str(c.get("id", ""))
+            if cid_str and cid_str not in id_to_ad:
+                id_to_ad[cid_str] = c.get("ad", "-")
 
         faturalar = []
         for f in sonuc.get("data", []):
@@ -1153,15 +1155,15 @@ def son_alis_faturalari_getir(limit: int = 30, tenant_id=None) -> list:
             contact_name = "-"
             try:
                 rels = f.get("relationships", {})
-                logger.info(f"DEBUG fatura {f['id']}: rel_keys={list(rels.keys())}")
                 for rel_key in ("supplier", "contact", "spender"):
-                    rel_data = rels.get(rel_key, {}).get("data")
-                    if rel_data:
+                    rel_obj = rels.get(rel_key, {})
+                    rel_data = rel_obj.get("data") if isinstance(rel_obj, dict) else None
+                    if rel_data and isinstance(rel_data, dict):
                         sid = str(rel_data.get("id", ""))
-                        logger.info(f"DEBUG fatura {f['id']}: rel={rel_key} id={sid} bulundu_mu={sid in id_to_ad}")
-                        contact_name = id_to_ad.get(sid, "-")
-                        if contact_name != "-":
-                            break
+                        if sid:
+                            contact_name = id_to_ad.get(sid, "-")
+                            if contact_name != "-":
+                                break
             except Exception:
                 pass
             aciklama = attr.get("description", "") or ""
