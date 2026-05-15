@@ -1135,9 +1135,9 @@ def son_alis_faturalari_getir(limit: int = 30, tenant_id=None) -> list:
         # Cari cache'den id→ad eşlemesi yap (zaten bellekte var, API çağrısı yok)
         cari_cache = _cari_caches.get(tid) or []
         id_to_ad = {str(c.get("id", "")): c.get("ad", "-") for c in cari_cache if c.get("id")}
+        logger.info(f"DEBUG alis fatura: cache_boyut={len(cari_cache)}, id_to_ad_ornek={list(id_to_ad.items())[:3]}")
 
         included = sonuc.get("included", [])
-        # included varsa oradan da ekle
         for inc in included:
             inc_id = str(inc.get("id", ""))
             inc_ad = inc.get("attributes", {}).get("name", "")
@@ -1149,14 +1149,17 @@ def son_alis_faturalari_getir(limit: int = 30, tenant_id=None) -> list:
             attr = f.get("attributes", {})
             kalan = float(attr.get("remaining", 0) or 0)
             if kalan <= 0:
-                continue  # ödenmişleri atla
+                continue
             contact_name = "-"
             try:
                 rels = f.get("relationships", {})
+                logger.info(f"DEBUG fatura {f['id']}: rel_keys={list(rels.keys())}")
                 for rel_key in ("supplier", "contact", "spender"):
                     rel_data = rels.get(rel_key, {}).get("data")
                     if rel_data:
-                        contact_name = id_to_ad.get(str(rel_data.get("id", "")), "-")
+                        sid = str(rel_data.get("id", ""))
+                        logger.info(f"DEBUG fatura {f['id']}: rel={rel_key} id={sid} bulundu_mu={sid in id_to_ad}")
+                        contact_name = id_to_ad.get(sid, "-")
                         if contact_name != "-":
                             break
             except Exception:
