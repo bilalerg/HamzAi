@@ -1129,10 +1129,21 @@ def son_alis_faturalari_getir(limit: int = 30, tenant_id=None) -> list:
     try:
         sonuc = parasut_get(
             f"/{cid}/purchase_bills",
-            params={"page[size]": 25, "sort": "-issue_date", "include": "supplier"},
+            params={"page[size]": 25, "sort": "-issue_date"},
             tenant_id=tid,
         )
+        # Cari cache'den id→ad eşlemesi yap (zaten bellekte var, API çağrısı yok)
+        cari_cache = _cari_caches.get(tid) or []
+        id_to_ad = {str(c.get("id", "")): c.get("ad", "-") for c in cari_cache if c.get("id")}
+
         included = sonuc.get("included", [])
+        # included varsa oradan da ekle
+        for inc in included:
+            inc_id = str(inc.get("id", ""))
+            inc_ad = inc.get("attributes", {}).get("name", "")
+            if inc_id and inc_ad:
+                id_to_ad.setdefault(inc_id, inc_ad)
+
         faturalar = []
         for f in sonuc.get("data", []):
             attr = f.get("attributes", {})
@@ -1141,14 +1152,12 @@ def son_alis_faturalari_getir(limit: int = 30, tenant_id=None) -> list:
                 continue  # ödenmişleri atla
             contact_name = "-"
             try:
-                # purchase_bills'de tedarikçi "supplier" ilişkisiyle gelir
                 rels = f.get("relationships", {})
-                supplier_data = rels.get("supplier", {}).get("data") or rels.get("contact", {}).get("data")
-                supplier_id = (supplier_data or {}).get("id")
-                if supplier_id:
-                    for inc in included:
-                        if inc.get("id") == supplier_id and inc.get("type") in ("contacts", "suppliers"):
-                            contact_name = inc.get("attributes", {}).get("name", "-")
+                for rel_key in ("supplier", "contact", "spender"):
+                    rel_data = rels.get(rel_key, {}).get("data")
+                    if rel_data:
+                        contact_name = id_to_ad.get(str(rel_data.get("id", "")), "-")
+                        if contact_name != "-":
                             break
             except Exception:
                 pass
