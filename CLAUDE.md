@@ -213,10 +213,15 @@ GET  /api/cari-faturalar/{cari}      Cari faturaları (?baslangic=&bitis=&durum=
 GET  /api/fatura-detay/{id}          Fatura detayı
 POST /api/fatura-kes                 Tek fatura kes
 POST /api/toplu-fatura-kes           Toplu fatura kes
-POST /api/tahsilat                   Tahsilat ekle
+POST /api/tahsilat                   Tahsilat ekle (satış faturası)
+POST /api/odeme-ekle                 Ödeme ekle (alış faturası) — {fatura_id, tutar, kasa_id?, tarih?, notlar?}
 POST /api/cari-olustur               Yeni cari
 GET  /api/gunluk-ozet                Günlük özet
 GET  /api/son-fisler                 Son 10 fiş
+GET  /api/hesaplar                   Kasa/banka hesap listesi
+GET  /api/stok-hareketleri           Stok hareketleri (?urun_id=&limit=)
+GET  /api/gelir-gider-raporu         Gelir/gider raporu (?baslangic=&bitis=)
+POST /api/para-transferi             Hesaplar arası transfer — {kaynak_id, hedef_id, tutar, tarih?, aciklama?}
 
 # Billing
 GET  /api/billing/usage/{user_id}    Kullanım istatistikleri (?baslangic=&bitis=&limit=)

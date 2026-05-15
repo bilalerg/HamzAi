@@ -667,12 +667,17 @@
     <button class="panel-btn" onclick="panelKapat();topluFaturaGoster()"><span class="btn-icon">🧾</span> Toplu fatura</button>
     <button class="panel-btn" onclick="panelKapat();faturaListesiGoster()"><span class="btn-icon">🔍</span> Fatura sorgula</button>
     <button class="panel-btn" onclick="panelKapat();tahsilatFormGoster()"><span class="btn-icon">💵</span> Tahsilat ekle</button>
+    <button class="panel-btn" onclick="panelKapat();odemeFormGoster()"><span class="btn-icon">💸</span> Ödeme ekle</button>
+    <button class="panel-btn" onclick="panelKapat();paraTransferiFormGoster()"><span class="btn-icon">🔄</span> Para transferi</button>
     <button class="panel-btn" onclick="panelKapat();cariFormGoster()"><span class="btn-icon">➕</span> Yeni cari</button>
     <div class="panel-section-label">Raporlar</div>
     <button class="panel-btn" onclick="panelKapat();bakiyeleriGoster()"><span class="btn-icon">💰</span> Müşteri bakiyeleri</button>
     <button class="panel-btn" onclick="panelKapat();hesapOzetiGoster()"><span class="btn-icon">📊</span> Hesap özeti</button>
     <button class="panel-btn" onclick="panelKapat();gunlukOzetGoster()"><span class="btn-icon">📈</span> Günlük özet</button>
     <button class="panel-btn" onclick="panelKapat();sonFisleriGoster()"><span class="btn-icon">🗂️</span> Son yüklenen fişler</button>
+    <button class="panel-btn" onclick="panelKapat();hesaplarGoster()"><span class="btn-icon">🏦</span> Kasa / banka hesapları</button>
+    <button class="panel-btn" onclick="panelKapat();stokHareketleriGoster()"><span class="btn-icon">📦</span> Stok hareketleri</button>
+    <button class="panel-btn" onclick="panelKapat();gelirGiderRaporuGoster()"><span class="btn-icon">📉</span> Gelir/Gider raporu</button>
     <div class="panel-section-label">Sistem</div>
     <button class="panel-btn" onclick="cacheYenile(this)"><span class="btn-icon">🔄</span> Bakiyeleri yenile</button>
   </div>
@@ -1011,6 +1016,336 @@
       removeTyping();
       addMessage('❌ Fişler yüklenemedi.', 'bot');
     }
+  }
+
+  // ── HESAPLAR (KASA/BANKA) ─────────────────────────────────────────
+
+  async function hesaplarGoster() {
+    billablePanelTikla('hesaplar');
+    showTyping();
+    try {
+      const res = await fetch('/api/hesaplar');
+      const d = await res.json();
+      removeTyping();
+      if (!d.hesaplar || d.hesaplar.length === 0) {
+        addMessage('🏦 Kayıtlı hesap bulunamadı.', 'bot');
+        return;
+      }
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'font-size:13px;';
+      const baslik = document.createElement('div');
+      baslik.style.cssText = 'font-weight:500;margin-bottom:10px;';
+      baslik.textContent = '🏦 Kasa / Banka Hesapları';
+      wrap.appendChild(baslik);
+      d.hesaplar.forEach(function(h) {
+        const row = document.createElement('div');
+        row.style.cssText = 'padding:8px 12px;background:var(--bg);border-radius:9px;margin-bottom:5px;display:flex;justify-content:space-between;align-items:center;';
+        const tip = h.account_type === 'cash' ? '💵' : '🏦';
+        const bakiye = (h.balance || 0).toLocaleString('tr-TR', {minimumFractionDigits:2});
+        row.innerHTML = `<div>${tip} <b>${h.name}</b><div style="font-size:11px;color:var(--muted)">${h.currency || 'TRL'}</div></div><div style="font-weight:600;">${bakiye} ₺</div>`;
+        wrap.appendChild(row);
+      });
+      addMessage('', 'bot', wrap);
+      sohbetPanelKaydet('hesaplar', {});
+    } catch {
+      removeTyping();
+      addMessage('❌ Hesaplar yüklenemedi.', 'bot');
+    }
+  }
+
+  // ── STOK HAREKETLERİ ──────────────────────────────────────────────
+
+  async function stokHareketleriGoster() {
+    billablePanelTikla('stok_hareketleri');
+    showTyping();
+    try {
+      const res = await fetch('/api/stok-hareketleri?limit=20');
+      const d = await res.json();
+      removeTyping();
+      if (!d.hareketler || d.hareketler.length === 0) {
+        addMessage('📦 Stok hareketi bulunamadı.', 'bot');
+        return;
+      }
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'font-size:13px;';
+      const baslik = document.createElement('div');
+      baslik.style.cssText = 'font-weight:500;margin-bottom:10px;';
+      baslik.textContent = '📦 Son Stok Hareketleri';
+      wrap.appendChild(baslik);
+      d.hareketler.forEach(function(h) {
+        const row = document.createElement('div');
+        row.style.cssText = 'padding:8px 12px;background:var(--bg);border-radius:9px;margin-bottom:5px;font-size:12px;';
+        const yon = (h.direction === 'in' || h.quantity > 0) ? '⬆️' : '⬇️';
+        const miktar = Math.abs(h.quantity || 0).toLocaleString('tr-TR');
+        row.innerHTML =
+          `<div style="display:flex;justify-content:space-between;margin-bottom:2px;">` +
+          `<b>${h.product_name || h.description || '—'}</b>` +
+          `<span style="color:var(--muted)">${h.date || ''}</span></div>` +
+          `<div style="color:var(--muted)">${yon} ${miktar} kg · ${h.description || ''}</div>`;
+        wrap.appendChild(row);
+      });
+      addMessage('', 'bot', wrap);
+      sohbetPanelKaydet('stok_hareketleri', {});
+    } catch {
+      removeTyping();
+      addMessage('❌ Stok hareketleri yüklenemedi.', 'bot');
+    }
+  }
+
+  // ── GELİR/GİDER RAPORU ───────────────────────────────────────────
+
+  async function gelirGiderRaporuGoster() {
+    billablePanelTikla('gelir_gider_raporu');
+    // Son 30 gün
+    const bitis = new Date().toISOString().split('T')[0];
+    const baslangicD = new Date(); baslangicD.setDate(baslangicD.getDate() - 30);
+    const baslangic = baslangicD.toISOString().split('T')[0];
+    showTyping();
+    try {
+      const res = await fetch(`/api/gelir-gider-raporu?baslangic=${baslangic}&bitis=${bitis}`);
+      const d = await res.json();
+      removeTyping();
+      const fmt = function(n) { return (n || 0).toLocaleString('tr-TR', {minimumFractionDigits:2}); };
+      const netRenk = (d.net_kar || 0) >= 0 ? '#38a169' : '#e53e3e';
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'font-size:13px;line-height:2;';
+      wrap.innerHTML =
+        `<b>📉 Gelir/Gider Raporu</b><br>` +
+        `<span style="font-size:11px;color:var(--muted)">${baslangic} – ${bitis}</span><br>` +
+        `💚 Toplam gelir: <b>${fmt(d.toplam_gelir)} ₺</b><br>` +
+        `🔴 Toplam gider: <b>${fmt(d.toplam_gider)} ₺</b><br>` +
+        `<span style="color:${netRenk}">⚖️ Net kar: <b>${fmt(d.net_kar)} ₺</b></span><br>` +
+        `🧾 KDV beyan: <b>${fmt(d.kdv_beyan)} ₺</b><br>` +
+        `📄 Fatura sayısı: <b>${d.fatura_sayisi || 0}</b>`;
+      addMessage('', 'bot', wrap);
+      sohbetPanelKaydet('gelir_gider_raporu', {});
+    } catch {
+      removeTyping();
+      addMessage('❌ Rapor yüklenemedi.', 'bot');
+    }
+  }
+
+  // ── ÖDEME EKLE (alış faturası) ────────────────────────────────────
+
+  async function odemeFormGoster() {
+    billablePanelTikla('odeme_ekle');
+    showTyping();
+    let hesaplar = [];
+    try {
+      const res = await fetch('/api/hesaplar');
+      const d = await res.json();
+      hesaplar = d.hesaplar || [];
+    } catch {}
+    removeTyping();
+
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'font-size:13px;';
+
+    const baslik = document.createElement('div');
+    baslik.style.cssText = 'font-weight:500;margin-bottom:10px;';
+    baslik.textContent = '💸 Ödeme Ekle (Alış Faturası)';
+    wrap.appendChild(baslik);
+
+    const bilgi = document.createElement('div');
+    bilgi.style.cssText = 'font-size:12px;color:var(--muted);margin-bottom:12px;padding:8px 12px;background:var(--accent-lt);border-radius:8px;border-left:3px solid var(--accent);';
+    bilgi.textContent = 'Alış faturasına ödeme kaydetmek için fatura ID\'sini girin.';
+    wrap.appendChild(bilgi);
+
+    function satir(label, el) {
+      const d = document.createElement('div');
+      d.style.cssText = 'margin-bottom:8px;';
+      const l = document.createElement('div');
+      l.style.cssText = 'font-size:11px;color:var(--muted);margin-bottom:3px;';
+      l.textContent = label;
+      d.appendChild(l);
+      d.appendChild(el);
+      return d;
+    }
+
+    const faturaInp = document.createElement('input');
+    faturaInp.type = 'text'; faturaInp.className = 'fiyat-input'; faturaInp.placeholder = 'Paraşüt fatura ID';
+    wrap.appendChild(satir('Fatura ID', faturaInp));
+
+    const tutarInp = document.createElement('input');
+    tutarInp.type = 'text'; tutarInp.className = 'fiyat-input'; tutarInp.placeholder = 'Örn: 15000';
+    wrap.appendChild(satir('Tutar (₺)', tutarInp));
+
+    const kasaSel = document.createElement('select');
+    kasaSel.className = 'fiyat-input';
+    const bos = document.createElement('option'); bos.value = ''; bos.textContent = 'Kasa/Banka (opsiyonel)';
+    kasaSel.appendChild(bos);
+    hesaplar.forEach(function(h) {
+      const o = document.createElement('option'); o.value = h.id; o.textContent = h.name;
+      kasaSel.appendChild(o);
+    });
+    wrap.appendChild(satir('Hesap', kasaSel));
+
+    const tarihInp = document.createElement('input');
+    tarihInp.type = 'date'; tarihInp.className = 'fiyat-input';
+    tarihInp.style.maxWidth = '160px';
+    tarihInp.value = new Date().toISOString().split('T')[0];
+    wrap.appendChild(satir('Tarih', tarihInp));
+
+    const notlarInp = document.createElement('input');
+    notlarInp.type = 'text'; notlarInp.className = 'fiyat-input'; notlarInp.placeholder = 'Açıklama (opsiyonel)';
+    wrap.appendChild(satir('Notlar', notlarInp));
+
+    const btnRow = document.createElement('div');
+    btnRow.style.cssText = 'display:flex;gap:8px;margin-top:12px;';
+
+    const kaydetBtn = document.createElement('button');
+    kaydetBtn.className = 'btn-primary'; kaydetBtn.textContent = 'Kaydet';
+
+    const iptalBtn = document.createElement('button');
+    iptalBtn.className = 'btn-cancel'; iptalBtn.textContent = '✕ İptal';
+    iptalBtn.onclick = function() { addMessage('❌ Ödeme iptal edildi.', 'bot'); };
+
+    kaydetBtn.onclick = async function() {
+      const fatura_id = faturaInp.value.trim();
+      const tutar = parseFiyat(tutarInp.value);
+      if (!fatura_id) { faturaInp.style.borderColor = '#e53e3e'; return; }
+      if (!tutar || tutar <= 0) { tutarInp.style.borderColor = '#e53e3e'; return; }
+      kaydetBtn.disabled = true; iptalBtn.disabled = true;
+      kaydetBtn.textContent = 'Kaydediliyor…';
+      try {
+        const body = { fatura_id, tutar, tarih: tarihInp.value };
+        if (kasaSel.value) body.kasa_id = kasaSel.value;
+        if (notlarInp.value.trim()) body.notlar = notlarInp.value.trim();
+        const res = await fetch('/api/odeme-ekle', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (localStorage.getItem('token') || '') },
+          body: JSON.stringify(body)
+        });
+        const d = await res.json();
+        if (d.basarili) {
+          addMessage(`✅ Ödeme kaydedildi. (Fatura: ${fatura_id}, Tutar: ${tutar.toLocaleString('tr-TR')} ₺)`, 'bot');
+        } else {
+          addMessage(`❌ Ödeme kaydedilemedi: ${d.hata || d.detail || 'Bilinmeyen hata'}`, 'bot');
+        }
+      } catch { addMessage('❌ Ödeme kaydedilemedi.', 'bot'); }
+    };
+
+    btnRow.appendChild(kaydetBtn);
+    btnRow.appendChild(iptalBtn);
+    wrap.appendChild(btnRow);
+    addMessage('', 'bot', wrap);
+    sohbetPanelKaydet('odeme_ekle', {});
+    setTimeout(function() { faturaInp.focus(); }, 100);
+  }
+
+  // ── PARA TRANSFERİ ────────────────────────────────────────────────
+
+  async function paraTransferiFormGoster() {
+    billablePanelTikla('para_transferi');
+    showTyping();
+    let hesaplar = [];
+    try {
+      const res = await fetch('/api/hesaplar');
+      const d = await res.json();
+      hesaplar = d.hesaplar || [];
+    } catch {}
+    removeTyping();
+
+    if (hesaplar.length < 2) {
+      addMessage('❌ Transfer için en az 2 hesap gerekli.', 'bot');
+      return;
+    }
+
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'font-size:13px;';
+
+    const baslik = document.createElement('div');
+    baslik.style.cssText = 'font-weight:500;margin-bottom:10px;';
+    baslik.textContent = '🔄 Para Transferi';
+    wrap.appendChild(baslik);
+
+    function satir(label, el) {
+      const d = document.createElement('div');
+      d.style.cssText = 'margin-bottom:8px;';
+      const l = document.createElement('div');
+      l.style.cssText = 'font-size:11px;color:var(--muted);margin-bottom:3px;';
+      l.textContent = label;
+      d.appendChild(l);
+      d.appendChild(el);
+      return d;
+    }
+
+    function hesapSelect() {
+      const sel = document.createElement('select');
+      sel.className = 'fiyat-input';
+      const bos = document.createElement('option'); bos.value = ''; bos.textContent = 'Hesap seçin';
+      sel.appendChild(bos);
+      hesaplar.forEach(function(h) {
+        const o = document.createElement('option'); o.value = h.id; o.textContent = h.name;
+        sel.appendChild(o);
+      });
+      return sel;
+    }
+
+    const kaynakSel = hesapSelect();
+    wrap.appendChild(satir('Kaynak Hesap', kaynakSel));
+
+    const hedefSel = hesapSelect();
+    wrap.appendChild(satir('Hedef Hesap', hedefSel));
+
+    const tutarInp = document.createElement('input');
+    tutarInp.type = 'text'; tutarInp.className = 'fiyat-input'; tutarInp.placeholder = 'Örn: 5000';
+    wrap.appendChild(satir('Tutar (₺)', tutarInp));
+
+    const tarihInp = document.createElement('input');
+    tarihInp.type = 'date'; tarihInp.className = 'fiyat-input';
+    tarihInp.style.maxWidth = '160px';
+    tarihInp.value = new Date().toISOString().split('T')[0];
+    wrap.appendChild(satir('Tarih', tarihInp));
+
+    const aciklamaInp = document.createElement('input');
+    aciklamaInp.type = 'text'; aciklamaInp.className = 'fiyat-input'; aciklamaInp.placeholder = 'Açıklama (opsiyonel)';
+    wrap.appendChild(satir('Açıklama', aciklamaInp));
+
+    const btnRow = document.createElement('div');
+    btnRow.style.cssText = 'display:flex;gap:8px;margin-top:12px;';
+
+    const kaydetBtn = document.createElement('button');
+    kaydetBtn.className = 'btn-primary'; kaydetBtn.textContent = 'Transfer Et';
+
+    const iptalBtn = document.createElement('button');
+    iptalBtn.className = 'btn-cancel'; iptalBtn.textContent = '✕ İptal';
+    iptalBtn.onclick = function() { addMessage('❌ Transfer iptal edildi.', 'bot'); };
+
+    kaydetBtn.onclick = async function() {
+      const kaynak_id = kaynakSel.value;
+      const hedef_id = hedefSel.value;
+      const tutar = parseFiyat(tutarInp.value);
+      if (!kaynak_id) { kaynakSel.style.borderColor = '#e53e3e'; return; }
+      if (!hedef_id) { hedefSel.style.borderColor = '#e53e3e'; return; }
+      if (kaynak_id === hedef_id) { addMessage('❌ Kaynak ve hedef hesap aynı olamaz.', 'bot'); return; }
+      if (!tutar || tutar <= 0) { tutarInp.style.borderColor = '#e53e3e'; return; }
+      kaydetBtn.disabled = true; iptalBtn.disabled = true;
+      kaydetBtn.textContent = 'Transfering…';
+      try {
+        const body = { kaynak_id, hedef_id, tutar, tarih: tarihInp.value };
+        if (aciklamaInp.value.trim()) body.aciklama = aciklamaInp.value.trim();
+        const res = await fetch('/api/para-transferi', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (localStorage.getItem('token') || '') },
+          body: JSON.stringify(body)
+        });
+        const d = await res.json();
+        if (d.basarili) {
+          const kaynakAd = hesaplar.find(function(h) { return h.id === kaynak_id; })?.name || kaynak_id;
+          const hedefAd = hesaplar.find(function(h) { return h.id === hedef_id; })?.name || hedef_id;
+          addMessage(`✅ Transfer tamamlandı: ${kaynakAd} → ${hedefAd} · ${tutar.toLocaleString('tr-TR')} ₺`, 'bot');
+        } else {
+          addMessage(`❌ Transfer başarısız: ${d.hata || d.detail || 'Bilinmeyen hata'}`, 'bot');
+        }
+      } catch { addMessage('❌ Transfer yapılamadı.', 'bot'); }
+    };
+
+    btnRow.appendChild(kaydetBtn);
+    btnRow.appendChild(iptalBtn);
+    wrap.appendChild(btnRow);
+    addMessage('', 'bot', wrap);
+    sohbetPanelKaydet('para_transferi', {});
   }
 
   // ── CACHE YENİLE ─────────────────────────────────────────────────

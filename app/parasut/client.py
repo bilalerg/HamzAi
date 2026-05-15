@@ -1098,6 +1098,201 @@ def irsaliye_detay_getir(irsaliye_id: str, tenant_id=None) -> dict:
         return {}
 
 
+def hesap_listesi_getir(tenant_id=None) -> list:
+    """Tüm kasa ve banka hesaplarını döner."""
+    tid   = _resolve_tid(tenant_id)
+    creds = _tenant_credentials(tid)
+    cid   = creds["company_id"]
+    try:
+        sonuc = parasut_get(f"/{cid}/accounts", tenant_id=tid)
+        hesaplar = []
+        for h in sonuc.get("data", []):
+            attr = h.get("attributes", {})
+            hesaplar.append({
+                "id":           h["id"],
+                "ad":           attr.get("name", "-"),
+                "tip":          attr.get("account_type", "-"),
+                "para_birimi":  attr.get("currency", "TRL"),
+                "bakiye":       float(attr.get("balance", 0) or 0),
+            })
+        return hesaplar
+    except Exception as e:
+        logger.error(f"Hesap listesi hatası: {e}")
+        return []
+
+
+def alıs_faturasi_odeme_ekle(
+        fatura_id: str,
+        tutar: float,
+        kasa_id: str = None,
+        tarih: str = None,
+        notlar: str = None,
+        tenant_id=None,
+) -> dict:
+    """Alış faturasına (purchase_bill) ödeme ekler."""
+    tid   = _resolve_tid(tenant_id)
+    creds = _tenant_credentials(tid)
+    cid   = creds["company_id"]
+    try:
+        from datetime import datetime
+        bugun    = tarih or datetime.now().strftime("%Y-%m-%d")
+        hesap_id = kasa_id or _kasa_hesabi_bul(tenant_id=tid)
+        if not hesap_id:
+            return {"basarili": False, "hata": "Kasa/banka hesabı bulunamadı."}
+        istek = {
+            "data": {
+                "type": "payments",
+                "attributes": {
+                    "date":          bugun,
+                    "notes":         notlar or "Hurda alım ödemesi",
+                    "amount":        tutar,
+                    "exchange_rate": 1.0,
+                },
+                "relationships": {
+                    "account": {"data": {"type": "accounts", "id": str(hesap_id)}}
+                }
+            }
+        }
+        sonuc    = parasut_post(f"/{cid}/purchase_bills/{fatura_id}/payments", istek, tenant_id=tid)
+        odeme_id = sonuc["data"]["id"]
+        logger.info(f"Alış faturası ödeme eklendi: fatura={fatura_id} tutar={tutar:,.0f} TL (tenant={tid})")
+        return {"basarili": True, "id": odeme_id, "fatura_id": fatura_id, "tutar": tutar, "tarih": bugun}
+    except Exception as e:
+        logger.error(f"Alış faturası ödeme hatası: {e}")
+        return {"basarili": False, "hata": str(e)}
+
+
+def stok_hareketleri_getir(urun_id: str = None, limit: int = 50, tenant_id=None) -> list:
+    """Stok giriş/çıkış hareketlerini döner. urun_id ile filtrelenebilir."""
+    tid   = _resolve_tid(tenant_id)
+    creds = _tenant_credentials(tid)
+    cid   = creds["company_id"]
+    try:
+        params = {"page[size]": min(limit, 100), "sort": "-created_at"}
+        if urun_id:
+            params["filter[product_id]"] = urun_id
+        sonuc    = parasut_get(f"/{cid}/stock_movements", params=params, tenant_id=tid)
+        hareketler = []
+        for h in sonuc.get("data", []):
+            attr = h.get("attributes", {})
+            hareketler.append({
+                "id":          h["id"],
+                "tarih":       attr.get("created_at", "-")[:10],
+                "miktar":      float(attr.get("quantity", 0) or 0),
+                "aciklama":    attr.get("description", "-"),
+                "giris_mi":    attr.get("inflow", False),
+            })
+        logger.info(f"Stok hareketleri: {len(hareketler)} kayıt (tenant={tid})")
+        return hareketler
+    except Exception as e:
+        logger.error(f"Stok hareketleri hatası: {e}")
+        return []
+
+
+def gelir_gider_raporu_getir(baslangic: str, bitis: str, tenant_id=None) -> dict:
+    """
+    Belirtilen tarih aralığı için gelir/gider raporu üretir.
+    Paraşüt'te özel rapor endpoint'i olmadığından Python'da hesaplanır.
+    """
+    tid   = _resolve_tid(tenant_id)
+    creds = _tenant_credentials(tid)
+    cid   = creds["company_id"]
+    try:
+        # Satış faturaları (gelir)
+        satis_sonuc = parasut_get(
+            f"/{cid}/sales_invoices",
+            params={"page[size]": 100, "sort": "-issue_date"},
+            tenant_id=tid,
+        )
+        toplam_gelir  = 0.0
+        toplam_gelir_kdv = 0.0
+        satis_sayisi  = 0
+        for f in satis_sonuc.get("data", []):
+            attr  = f.get("attributes", {})
+            tarih = attr.get("issue_date", "")
+            if baslangic and tarih < baslangic:
+                continue
+            if bitis and tarih > bitis:
+                continue
+            toplam_gelir     += float(attr.get("gross_total", 0) or 0)
+            toplam_gelir_kdv += float(attr.get("total_vat", 0) or 0)
+            satis_sayisi     += 1
+
+        # Alış faturaları (gider)
+        alis_sonuc = parasut_get(
+            f"/{cid}/purchase_bills",
+            params={"page[size]": 100, "sort": "-issue_date"},
+            tenant_id=tid,
+        )
+        toplam_gider     = 0.0
+        toplam_gider_kdv = 0.0
+        alis_sayisi      = 0
+        for f in alis_sonuc.get("data", []):
+            attr  = f.get("attributes", {})
+            tarih = attr.get("issue_date", "")
+            if baslangic and tarih < baslangic:
+                continue
+            if bitis and tarih > bitis:
+                continue
+            toplam_gider     += float(attr.get("gross_total", 0) or 0)
+            toplam_gider_kdv += float(attr.get("total_vat", 0) or 0)
+            alis_sayisi      += 1
+
+        net_kar = toplam_gelir - toplam_gider
+        logger.info(f"Gelir/gider raporu: gelir={toplam_gelir:,.0f} gider={toplam_gider:,.0f} (tenant={tid})")
+        return {
+            "baslangic":       baslangic,
+            "bitis":           bitis,
+            "toplam_gelir":    toplam_gelir,
+            "gelir_kdv":       toplam_gelir_kdv,
+            "satis_sayisi":    satis_sayisi,
+            "toplam_gider":    toplam_gider,
+            "gider_kdv":       toplam_gider_kdv,
+            "alis_sayisi":     alis_sayisi,
+            "net_kar":         net_kar,
+            "kdv_beyan":       toplam_gelir_kdv - toplam_gider_kdv,
+        }
+    except Exception as e:
+        logger.error(f"Gelir/gider raporu hatası: {e}")
+        return {}
+
+
+def para_transferi(
+        kaynak_id: str,
+        hedef_id: str,
+        tutar: float,
+        tarih: str = None,
+        aciklama: str = None,
+        tenant_id=None,
+) -> dict:
+    """Kasa/banka hesapları arasında para transferi yapar."""
+    tid   = _resolve_tid(tenant_id)
+    creds = _tenant_credentials(tid)
+    cid   = creds["company_id"]
+    try:
+        from datetime import datetime
+        bugun = tarih or datetime.now().strftime("%Y-%m-%d")
+        not_  = aciklama or "Hesaplar arası transfer"
+
+        # Kaynaktan çıkış (credit = bakiyeyi düşürür)
+        parasut_post(f"/{cid}/accounts/{kaynak_id}/credit_transactions", {
+            "data": {"type": "credit_transactions",
+                     "attributes": {"description": not_, "amount": tutar, "date": bugun}}
+        }, tenant_id=tid)
+
+        # Hedefe giriş (debit = bakiyeyi artırır)
+        parasut_post(f"/{cid}/accounts/{hedef_id}/debit_transactions", {
+            "data": {"type": "debit_transactions",
+                     "attributes": {"description": not_, "amount": tutar, "date": bugun}}
+        }, tenant_id=tid)
+
+        logger.info(f"Para transferi: {kaynak_id} → {hedef_id} | {tutar:,.0f} TL (tenant={tid})")
+        return {"basarili": True, "tutar": tutar, "tarih": bugun, "kaynak_id": kaynak_id, "hedef_id": hedef_id}
+    except Exception as e:
+        logger.error(f"Para transferi hatası: {e}")
+        return {"basarili": False, "hata": str(e)}
+
+
 # ── ASYNC WRAPPER'LAR ─────────────────────────────────────────────────
 
 async def async_cari_listesi_getir(force_refresh: bool = False, tenant_id=None) -> list:
@@ -1163,3 +1358,29 @@ async def async_cari_faturalari_getir(
 
 async def async_fatura_detay_getir(fatura_id: str, tenant_id=None) -> dict:
     return await asyncio.to_thread(fatura_detay_getir, fatura_id, tenant_id)
+
+
+async def async_hesap_listesi_getir(tenant_id=None) -> list:
+    return await asyncio.to_thread(hesap_listesi_getir, tenant_id)
+
+
+async def async_alıs_faturasi_odeme_ekle(
+        fatura_id: str, tutar: float, kasa_id: str = None,
+        tarih: str = None, notlar: str = None, tenant_id=None,
+) -> dict:
+    return await asyncio.to_thread(alıs_faturasi_odeme_ekle, fatura_id, tutar, kasa_id, tarih, notlar, tenant_id)
+
+
+async def async_stok_hareketleri_getir(urun_id: str = None, limit: int = 50, tenant_id=None) -> list:
+    return await asyncio.to_thread(stok_hareketleri_getir, urun_id, limit, tenant_id)
+
+
+async def async_gelir_gider_raporu_getir(baslangic: str, bitis: str, tenant_id=None) -> dict:
+    return await asyncio.to_thread(gelir_gider_raporu_getir, baslangic, bitis, tenant_id)
+
+
+async def async_para_transferi(
+        kaynak_id: str, hedef_id: str, tutar: float,
+        tarih: str = None, aciklama: str = None, tenant_id=None,
+) -> dict:
+    return await asyncio.to_thread(para_transferi, kaynak_id, hedef_id, tutar, tarih, aciklama, tenant_id)

@@ -1711,6 +1711,118 @@ def irsaliye_debug(irsaliye_id: str, request: Request):
         return JSONResponse({"hata": _guvenli_hata(e)})
 
 
+@app.get("/api/hesaplar")
+async def hesaplar_getir(request: Request):
+    """Kasa ve banka hesaplarını listeler."""
+    aktif_user = mevcut_kullanici(request)
+    tenant_id  = _tenant_id_from_user(aktif_user)
+    from app.parasut.client import async_hesap_listesi_getir
+    try:
+        hesaplar = await async_hesap_listesi_getir(tenant_id=tenant_id)
+        return JSONResponse({"hesaplar": hesaplar, "toplam": len(hesaplar)})
+    except Exception as e:
+        return JSONResponse({"hata": _guvenli_hata(e)}, status_code=500)
+
+
+@app.post("/api/odeme-ekle")
+async def odeme_ekle_endpoint(request: Request, background_tasks: BackgroundTasks):
+    """Alış faturasına (purchase_bill) ödeme ekler."""
+    aktif_user = mevcut_kullanici(request)
+    tenant_id  = _tenant_id_from_user(aktif_user)
+    data       = await request.json()
+    fatura_id  = (data.get("fatura_id") or "").strip()
+    tutar      = float(data.get("tutar") or 0)
+    kasa_id    = data.get("kasa_id")
+    tarih      = data.get("tarih")
+    notlar     = data.get("notlar")
+
+    if not fatura_id or tutar <= 0:
+        return JSONResponse({"hata": "fatura_id ve tutar zorunlu"}, status_code=400)
+
+    from app.parasut.client import async_alıs_faturasi_odeme_ekle
+    sonuc = await async_alıs_faturasi_odeme_ekle(
+        fatura_id=fatura_id, tutar=tutar, kasa_id=kasa_id,
+        tarih=tarih, notlar=notlar, tenant_id=tenant_id
+    )
+    if sonuc.get("basarili"):
+        if aktif_user:
+            background_tasks.add_task(_billable_kaydet, aktif_user, "ODEME_EKLENDI",
+                                      f"fatura={fatura_id} | {int(tutar)} TL", 1, "parasut",
+                                      {"fatura_id": fatura_id, "tutar": int(tutar)},
+                                      f"odeme:{fatura_id}:{int(tutar)}")
+        return JSONResponse(sonuc)
+    return JSONResponse(sonuc, status_code=500)
+
+
+@app.get("/api/stok-hareketleri")
+async def stok_hareketleri_endpoint(request: Request, urun_id: str = None, limit: int = 50):
+    """Stok giriş/çıkış hareketleri."""
+    aktif_user = mevcut_kullanici(request)
+    tenant_id  = _tenant_id_from_user(aktif_user)
+    from app.parasut.client import async_stok_hareketleri_getir
+    try:
+        hareketler = await async_stok_hareketleri_getir(urun_id=urun_id, limit=limit, tenant_id=tenant_id)
+        return JSONResponse({"hareketler": hareketler, "toplam": len(hareketler)})
+    except Exception as e:
+        return JSONResponse({"hata": _guvenli_hata(e)}, status_code=500)
+
+
+@app.get("/api/gelir-gider-raporu")
+async def gelir_gider_raporu_endpoint(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    baslangic: str = None,
+    bitis: str = None,
+):
+    """Belirtilen tarih aralığı için gelir/gider raporu."""
+    aktif_user = mevcut_kullanici(request)
+    tenant_id  = _tenant_id_from_user(aktif_user)
+    from datetime import datetime, timedelta
+    from app.parasut.client import async_gelir_gider_raporu_getir
+    if not baslangic:
+        baslangic = (datetime.now().replace(day=1)).strftime("%Y-%m-%d")
+    if not bitis:
+        bitis = datetime.now().strftime("%Y-%m-%d")
+    if aktif_user:
+        background_tasks.add_task(_usage_kaydet, aktif_user.get("id"), aktif_user.get("username"),
+                                   "SORGU", "gelir_gider_raporu", 1, aktif_user.get("profaix_user_id"))
+    try:
+        rapor = await async_gelir_gider_raporu_getir(baslangic=baslangic, bitis=bitis, tenant_id=tenant_id)
+        return JSONResponse(rapor)
+    except Exception as e:
+        return JSONResponse({"hata": _guvenli_hata(e)}, status_code=500)
+
+
+@app.post("/api/para-transferi")
+async def para_transferi_endpoint(request: Request, background_tasks: BackgroundTasks):
+    """Kasa/banka hesapları arasında para transferi."""
+    aktif_user = mevcut_kullanici(request)
+    tenant_id  = _tenant_id_from_user(aktif_user)
+    data       = await request.json()
+    kaynak_id  = (data.get("kaynak_id") or "").strip()
+    hedef_id   = (data.get("hedef_id") or "").strip()
+    tutar      = float(data.get("tutar") or 0)
+    tarih      = data.get("tarih")
+    aciklama   = data.get("aciklama")
+
+    if not kaynak_id or not hedef_id or tutar <= 0:
+        return JSONResponse({"hata": "kaynak_id, hedef_id ve tutar zorunlu"}, status_code=400)
+
+    from app.parasut.client import async_para_transferi
+    sonuc = await async_para_transferi(
+        kaynak_id=kaynak_id, hedef_id=hedef_id, tutar=tutar,
+        tarih=tarih, aciklama=aciklama, tenant_id=tenant_id
+    )
+    if sonuc.get("basarili"):
+        if aktif_user:
+            background_tasks.add_task(_billable_kaydet, aktif_user, "PARA_TRANSFERI",
+                                      f"{int(tutar)} TL transfer", 1, "parasut",
+                                      {"kaynak_id": kaynak_id, "hedef_id": hedef_id, "tutar": int(tutar)},
+                                      None)
+        return JSONResponse(sonuc)
+    return JSONResponse(sonuc, status_code=500)
+
+
 @app.get("/admin/islem-loglari")
 def islem_loglari(request: Request, limit: int = 50, islem_tipi: str = None):
     if not _admin_kontrol(request):
