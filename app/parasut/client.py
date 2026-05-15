@@ -920,7 +920,7 @@ def tum_bekleyen_irsaliyeleri_getir(
                 "page[size]":    25,
                 "page[number]":  page,
                 "sort":          "-issue_date",
-                "include":       "stock_movements,contact,purchase_bill,sales_invoice",
+                "include":       "stock_movements,contact",
             }
             sonuc    = parasut_get(f"/{cid}/shipment_documents", params=params, tenant_id=tid)
             data     = sonuc.get("data", [])
