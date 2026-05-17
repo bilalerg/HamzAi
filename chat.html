@@ -1076,13 +1076,16 @@
       d.hareketler.forEach(function(h) {
         const row = document.createElement('div');
         row.style.cssText = 'padding:8px 12px;background:var(--bg);border-radius:9px;margin-bottom:5px;font-size:12px;';
-        const yon = (h.direction === 'in' || h.quantity > 0) ? '⬆️' : '⬇️';
-        const miktar = Math.abs(h.quantity || 0).toLocaleString('tr-TR');
+        const girismi = h.giris_mi !== undefined ? h.giris_mi : (h.direction === 'in' || (h.quantity || h.miktar || 0) > 0);
+        const yon = girismi ? '⬆️ Giriş' : '⬇️ Çıkış';
+        const miktar = Math.abs(h.miktar || h.quantity || 0).toLocaleString('tr-TR');
+        const tarih = h.tarih || h.date || '';
+        const aciklama = h.aciklama || h.description || h.product_name || '—';
         row.innerHTML =
           `<div style="display:flex;justify-content:space-between;margin-bottom:2px;">` +
-          `<b>${h.product_name || h.description || '—'}</b>` +
-          `<span style="color:var(--muted)">${h.date || ''}</span></div>` +
-          `<div style="color:var(--muted)">${yon} ${miktar} kg · ${h.description || ''}</div>`;
+          `<b>${safeHtml(aciklama)}</b>` +
+          `<span style="color:var(--muted)">${tarih}</span></div>` +
+          `<div style="color:var(--muted)">${yon} · ${miktar} kg</div>`;
         wrap.appendChild(row);
       });
       addMessage('', 'bot', wrap);
