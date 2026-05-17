@@ -1877,8 +1877,27 @@ async def stok_hareketleri_endpoint(request: Request, urun_id: str = None, limit
     aktif_user = mevcut_kullanici(request)
     tenant_id  = _tenant_id_from_user(aktif_user)
     from app.parasut.client import async_stok_hareketleri_getir
+    from app.core.database import SessionLocal, Waybill, WeighTicket
     try:
         hareketler = await async_stok_hareketleri_getir(urun_id=urun_id, limit=limit, tenant_id=tenant_id)
+
+        # Shipment document ID'lerinden firma adlarını DB'den çek
+        irsaliye_ids = [h["irsaliye_id"] for h in hareketler if h.get("irsaliye_id")]
+        if irsaliye_ids:
+            db = SessionLocal()
+            try:
+                kayitlar = (
+                    db.query(Waybill.parasut_irsaliye_id, WeighTicket.firma)
+                    .join(WeighTicket, Waybill.ticket_id == WeighTicket.id)
+                    .filter(Waybill.parasut_irsaliye_id.in_(irsaliye_ids))
+                    .all()
+                )
+                firma_map = {r.parasut_irsaliye_id: r.firma for r in kayitlar}
+                for h in hareketler:
+                    h["firma"] = firma_map.get(h.get("irsaliye_id"), "")
+            finally:
+                db.close()
+
         return JSONResponse({"hareketler": hareketler, "toplam": len(hareketler)})
     except Exception as e:
         return JSONResponse({"hata": _guvenli_hata(e)}, status_code=500)
