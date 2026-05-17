@@ -1403,7 +1403,7 @@ async def toplu_fatura_kes_endpoint(request: Request, background_tasks: Backgrou
                 "data": {
                     "type": "purchase_bills",
                     "attributes": {"item_type": "invoice", "description": f"Toplu Hurda Alım — {len(irsaliye_ids)} irsaliye",
-                                   "issue_date": bugun, "due_date": bugun, "currency": "TRY"},
+                                   "issue_date": bugun, "due_date": bugun, "currency": "TRL"},
                     "relationships": {
                         "supplier": {"data": {"type": "contacts", "id": str(contact_id)}},
                         "details": {"data": detaylar_pb},
@@ -1563,7 +1563,7 @@ async def fatura_kes_endpoint(request: Request, background_tasks: BackgroundTask
                 "data": {
                     "type": "purchase_bills",
                     "attributes": {"item_type": "invoice", "description": f"Hurda Alım — İrsaliye {parasut_irsaliye_id}",
-                                   "issue_date": bugun, "due_date": bugun, "currency": "TRY"},
+                                   "issue_date": bugun, "due_date": bugun, "currency": "TRL"},
                     "relationships": {
                         "supplier": {"data": {"type": "contacts", "id": str(contact_id)}},
                         "details": {"data": detaylar_pb},
