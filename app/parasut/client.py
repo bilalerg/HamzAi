@@ -628,28 +628,32 @@ def acik_faturalar_getir(tenant_id=None) -> list:
     creds = _tenant_credentials(tid)
     cid   = creds["company_id"]
     try:
-        sonuc = parasut_get(
-            f"/{cid}/sales_invoices",
-            params={"filter[payment_status]": "overdue,not_paid", "page[size]": 25, "sort": "-issue_date"},
-            tenant_id=tid,
-        )
         faturalar = []
-        for f in sonuc.get("data", []):
-            attr     = f.get("attributes", {})
-            aciklama = attr.get("description") or ""
-            irsaliye_id = None
-            m = re.search(r'[İI]rsaliye\s+(\d{8,})', aciklama)
-            if m:
-                irsaliye_id = m.group(1)
-            faturalar.append({
-                "id":          f["id"],
-                "tarih":       attr.get("issue_date", "-"),
-                "vade":        attr.get("due_date", "-"),
-                "tutar":       attr.get("gross_total", 0),
-                "kalan":       attr.get("remaining", 0),
-                "aciklama":    aciklama or "-",
-                "irsaliye_id": irsaliye_id,
-            })
+        for durum in ("overdue", "not_due", "unscheduled"):
+            sonuc = parasut_get(
+                f"/{cid}/sales_invoices",
+                params={"filter[payment_status]": durum, "page[size]": 25, "sort": "-issue_date"},
+                tenant_id=tid,
+            )
+            for f in sonuc.get("data", []):
+                attr     = f.get("attributes", {})
+                kalan    = float(attr.get("remaining") or 0)
+                if kalan <= 0:
+                    continue
+                aciklama = attr.get("description") or ""
+                irsaliye_id = None
+                m = re.search(r'[İI]rsaliye\s+(\d{8,})', aciklama)
+                if m:
+                    irsaliye_id = m.group(1)
+                faturalar.append({
+                    "id":          f["id"],
+                    "tarih":       attr.get("issue_date", "-"),
+                    "vade":        attr.get("due_date", "-"),
+                    "tutar":       attr.get("gross_total", 0),
+                    "kalan":       kalan,
+                    "aciklama":    aciklama or "-",
+                    "irsaliye_id": irsaliye_id,
+                })
         return faturalar
     except Exception as e:
         logger.error(f"Açık fatura hatası: {e}")
@@ -849,7 +853,7 @@ def tahsilat_ekle(
             return {"basarili": False, "hata": f"'{cari_adi}' adlı cari bulunamadı."}
         sonuc = parasut_get(
             f"/{cid}/sales_invoices",
-            params={"filter[contact_id]": cari_id, "filter[payment_status]": "overdue,not_paid",
+            params={"filter[contact_id]": cari_id, "filter[payment_status]": "overdue",
                     "page[size]": 25, "sort": "issue_date"},
             tenant_id=tid,
         )
@@ -920,7 +924,7 @@ def tum_bekleyen_irsaliyeleri_getir(
                 "page[size]":    25,
                 "page[number]":  page,
                 "sort":          "-issue_date",
-                "include":       "stock_movements,contact",
+                "include":       "stock_movements,contact,invoices",
             }
             sonuc    = parasut_get(f"/{cid}/shipment_documents", params=params, tenant_id=tid)
             data     = sonuc.get("data", [])
@@ -933,8 +937,8 @@ def tum_bekleyen_irsaliyeleri_getir(
             for i in data:
                 attr         = i.get("attributes", {})
                 rels         = i.get("relationships", {})
-                # Paraşüt'te bu irsaliye zaten bir faturaya bağlıysa atla
-                if rels.get("sales_invoice", {}).get("data") or rels.get("purchase_bill", {}).get("data"):
+                # Faturaya bağlı irsaliyeleri atla — invoices ilişkisi doluysa faturalanmış
+                if rels.get("invoices", {}).get("data"):
                     continue
                 contact_data = rels.get("contact", {}).get("data", {})
                 contact_id   = contact_data.get("id") if contact_data else None
@@ -1352,16 +1356,13 @@ def para_transferi(
         bugun = tarih or datetime.now().strftime("%Y-%m-%d")
         not_  = aciklama or "Hesaplar arası transfer"
 
-        parasut_post(f"/{cid}/transactions", {
-            "data": {
-                "type": "transactions",
-                "attributes": {"description": not_, "amount": tutar, "date": bugun},
-                "relationships": {
-                    "source_account":      {"data": {"type": "accounts", "id": str(kaynak_id)}},
-                    "destination_account": {"data": {"type": "accounts", "id": str(hedef_id)}},
-                }
-            }
-        }, tenant_id=tid)
+        attrs = {"date": bugun, "amount": tutar, "description": not_}
+        # Kaynak hesaptan çıkış (debit = para çıkışı)
+        parasut_post(f"/{cid}/accounts/{kaynak_id}/debit_transactions",
+                     {"data": {"type": "transactions", "attributes": attrs}}, tenant_id=tid)
+        # Hedef hesaba giriş (credit = para girişi)
+        parasut_post(f"/{cid}/accounts/{hedef_id}/credit_transactions",
+                     {"data": {"type": "transactions", "attributes": attrs}}, tenant_id=tid)
 
         logger.info(f"Para transferi: {kaynak_id} → {hedef_id} | {tutar:,.0f} TL (tenant={tid})")
         return {"basarili": True, "tutar": tutar, "tarih": bugun, "kaynak_id": kaynak_id, "hedef_id": hedef_id}
