@@ -1271,19 +1271,30 @@ def stok_hareketleri_getir(urun_id: str = None, limit: int = 50, tenant_id=None)
     creds = _tenant_credentials(tid)
     cid   = creds["company_id"]
     try:
-        params = {"page[size]": min(limit, 25), "sort": "-date"}
+        params = {"page[size]": min(limit, 25), "sort": "-date", "include": "product"}
         if urun_id:
             params["filter[product_id]"] = urun_id
         sonuc    = parasut_get(f"/{cid}/stock_movements", params=params, tenant_id=tid)
+        # Ürün adlarını included'dan al
+        urun_map = {
+            inc["id"]: inc.get("attributes", {}).get("name", "-")
+            for inc in sonuc.get("included", [])
+            if inc.get("type") == "products"
+        }
         hareketler = []
         for h in sonuc.get("data", []):
             attr = h.get("attributes", {})
+            # Ürün adını ilişkiden bul
+            urun_rel  = h.get("relationships", {}).get("product", {}).get("data") or {}
+            urun_id_r = urun_rel.get("id")
+            urun_adi  = urun_map.get(urun_id_r) if urun_id_r else None
+            aciklama  = urun_adi or attr.get("description") or "-"
             hareketler.append({
-                "id":          h["id"],
-                "tarih":       (attr.get("date") or attr.get("created_at") or "-")[:10],
-                "miktar":      float(attr.get("quantity", 0) or 0),
-                "aciklama":    attr.get("description", "-"),
-                "giris_mi":    attr.get("inflow", False),
+                "id":       h["id"],
+                "tarih":    (attr.get("date") or attr.get("created_at") or "-")[:10],
+                "miktar":   float(attr.get("quantity", 0) or 0),
+                "aciklama": aciklama,
+                "giris_mi": attr.get("inflow", False),
             })
         logger.info(f"Stok hareketleri: {len(hareketler)} kayıt (tenant={tid})")
         return hareketler
