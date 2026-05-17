@@ -1534,7 +1534,7 @@ def alis_faturasi_olustur(
         aciklama: str = None,
         issue_date: str = None,
         due_date: str = None,
-        currency: str = "TRY",
+        currency: str = "TRL",
         item_type: str = "purchase_bill",
         tenant_id=None,
 ) -> dict:
@@ -1542,10 +1542,14 @@ def alis_faturasi_olustur(
     Detaylı alış faturası (purchase_bill) oluşturur.
     kalemler: [{aciklama, miktar, birim_fiyat, vat_rate?, product_id?}, ...]
     item_type: 'purchase_bill' (varsayılan), 'expense', 'refund'
+
+    NOT: Paraşüt purchase_bills için currency 'TRL' bekler (TRY değil).
+         Her kalemde 'product' ilişkisi zorunludur — verilmezse hurda_product_id otomatik kullanılır.
     """
-    tid   = _resolve_tid(tenant_id)
-    creds = _tenant_credentials(tid)
-    cid   = creds["company_id"]
+    tid     = _resolve_tid(tenant_id)
+    creds   = _tenant_credentials(tid)
+    cid     = creds["company_id"]
+    hurda_p = creds.get("hurda_product_id") or PARASUT_HURDA_PRODUCT_ID
     try:
         from datetime import datetime
         bugun   = datetime.now().strftime("%Y-%m-%d")
@@ -1561,6 +1565,10 @@ def alis_faturasi_olustur(
             if miktar <= 0 or bf <= 0:
                 continue
             toplam += miktar * bf
+            # Paraşüt purchase_bill_details için 'product' zorunlu
+            urun_id = k.get("product_id") or hurda_p
+            if not urun_id:
+                return {"basarili": False, "hata": "product_id verilmedi ve hurda_product_id yapılandırılmamış"}
             d = {
                 "type": "purchase_bill_details",
                 "attributes": {
@@ -1569,11 +1577,10 @@ def alis_faturasi_olustur(
                     "vat_rate":    k.get("vat_rate", 0),
                     "description": k.get("aciklama") or "-",
                 },
+                "relationships": {
+                    "product": {"data": {"type": "products", "id": str(urun_id)}}
+                },
             }
-            if k.get("product_id"):
-                d["relationships"] = {
-                    "product": {"data": {"type": "products", "id": str(k["product_id"])}}
-                }
             detaylar.append(d)
 
         if not detaylar:
@@ -1616,13 +1623,16 @@ def alis_faturasi_basit_olustur(
         aciklama: str = None,
         issue_date: str = None,
         due_date: str = None,
-        currency: str = "TRY",
+        currency: str = "TRL",
         vat_rate: float = 0,
         tenant_id=None,
 ) -> dict:
     """
     Tek tutarlı basit alış faturası — kalem detayı olmadan.
     Hurda iş akışında en yaygın kullanım.
+
+    NOT: Paraşüt purchase_bills için currency 'TRL' bekler.
+    Otomatik olarak hurda_product_id kullanılır (Paraşüt 'product' alanını zorunlu kılar).
     """
     kalemler = [{
         "aciklama":    aciklama or "Hurda alım",
@@ -2177,7 +2187,7 @@ async def async_satis_faturasi_guncelle(
 async def async_alis_faturasi_olustur(
         cari_adi: str, kalemler: list,
         aciklama: str = None, issue_date: str = None, due_date: str = None,
-        currency: str = "TRY", item_type: str = "purchase_bill", tenant_id=None,
+        currency: str = "TRL", item_type: str = "purchase_bill", tenant_id=None,
 ) -> dict:
     return await asyncio.to_thread(
         alis_faturasi_olustur, cari_adi, kalemler, aciklama,
@@ -2188,7 +2198,7 @@ async def async_alis_faturasi_olustur(
 async def async_alis_faturasi_basit_olustur(
         cari_adi: str, tutar: float,
         aciklama: str = None, issue_date: str = None, due_date: str = None,
-        currency: str = "TRY", vat_rate: float = 0, tenant_id=None,
+        currency: str = "TRL", vat_rate: float = 0, tenant_id=None,
 ) -> dict:
     return await asyncio.to_thread(
         alis_faturasi_basit_olustur, cari_adi, tutar, aciklama,
