@@ -48,11 +48,13 @@ FİRMA
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Öncelik sırası:
-1. Fişte "Firma:", "Firma Adı:", "Tedarikçi:", "Gönderen:", "Ad Soyad:" gibi etiketli bir satır VARSA → o satırdaki şirket/isim adını yaz
+1. Fişte "Firma:", "Firma Adı:", "Tedarikçi:", "Gönderen:" etiketli bir satır VARSA → o satırdaki şirket adını yaz
 2. Böyle bir alan YOKSA → fişin başlığındaki (en üstteki) şirket adını yaz
 
-Not: Üstteki başlık genellikle kantarın/fabrikanın adıdır (fişi basan yer), tedarikçi değildir.
-Etiketli "Firma:" alanı varsa MUTLAKA onu al — başlığı değil.
+ÖNEMLİ:
+- "Nakliye Firması:", "Taşıyıcı:", "Şoför:", "Ad Soyad:" → bunlar firma DEĞİL, alma
+- Üstteki başlık kantarın/fabrikanın adıdır — "Firma:" alanı varsa başlığı değil onu yaz
+- Fişte birden fazla şirket adı varsa: açıkça "Firma:" veya "Tedarikçi:" etiketli olanı seç
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 PLAKA

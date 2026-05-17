@@ -63,7 +63,7 @@ def fatura_kes(waybill_id: int, birim_fiyat: float = 0, tenant_id: str = None) -
                     "description": f"Hurda Alım — {ticket.plaka} — {ticket.agirlik_kg} kg",
                     "issue_date": fis_tarihi,
                     "due_date":   bugun,
-                    "currency":   "TRL"
+                    "currency":   "TRY"
                 },
                 "relationships": {
                     "contact": {"data": {"type": "contacts", "id": contact_id}},
