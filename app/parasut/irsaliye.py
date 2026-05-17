@@ -73,7 +73,7 @@ def irsaliye_olustur(ticket_id: int, beklet: bool = False, tenant_id: str = None
             "description": f"Kantar Fişi — {ticket.plaka} — {ticket.agirlik_kg} kg",
             "issue_date": tarih_str,
             "inflow": inflow,
-            "currency": "TRL",
+            "currency": "TRY",
         }
         if ticket.plaka:
             attributes["carrier_license_plate"] = ticket.plaka

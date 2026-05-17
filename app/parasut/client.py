@@ -811,10 +811,10 @@ def fatura_tahsilat_ekle(
         hesap_id = _kasa_hesabi_bul(tenant_id=tid)
         if not hesap_id:
             return {"basarili": False, "hata": "Kasa/banka hesabı bulunamadı."}
-        istek = {"data": {"type": "payments",
-            "attributes": {"description": aciklama or "Tahsilat", "date": bugun, "amount": tutar},
-            "relationships": {"account": {"data": {"type": "accounts", "id": str(hesap_id)}}},
-        }}
+        istek = {"data": {"type": "payments", "attributes": {
+            "description": aciklama or "Tahsilat", "date": bugun,
+            "amount": tutar, "account_id": int(hesap_id),
+        }}}
         try:
             sonuc = parasut_post(f"/{cid}/sales_invoices/{fatura_id}/payments", istek, tenant_id=tid)
         except Exception as e:
@@ -1206,10 +1206,10 @@ def alıs_faturasi_odeme_ekle(
         hesap_id = kasa_id or _kasa_hesabi_bul(tenant_id=tid)
         if not hesap_id:
             return {"basarili": False, "hata": "Kasa/banka hesabı bulunamadı."}
-        istek = {"data": {"type": "payments",
-            "attributes": {"description": notlar or "Hurda alım ödemesi", "date": bugun, "amount": tutar},
-            "relationships": {"account": {"data": {"type": "accounts", "id": str(hesap_id)}}},
-        }}
+        istek = {"data": {"type": "payments", "attributes": {
+            "description": notlar or "Hurda alım ödemesi", "date": bugun,
+            "amount": tutar, "account_id": int(hesap_id),
+        }}}
         try:
             sonuc = parasut_post(f"/{cid}/purchase_bills/{fatura_id}/payments", istek, tenant_id=tid)
         except Exception as e:
@@ -1352,16 +1352,15 @@ def para_transferi(
         bugun = tarih or datetime.now().strftime("%Y-%m-%d")
         not_  = aciklama or "Hesaplar arası transfer"
 
-        # Kaynaktan çıkış (credit = bakiyeyi düşürür)
-        parasut_post(f"/{cid}/accounts/{kaynak_id}/credit_transactions", {
-            "data": {"type": "credit_transactions",
-                     "attributes": {"description": not_, "amount": tutar, "date": bugun}}
-        }, tenant_id=tid)
-
-        # Hedefe giriş (debit = bakiyeyi artırır)
-        parasut_post(f"/{cid}/accounts/{hedef_id}/debit_transactions", {
-            "data": {"type": "debit_transactions",
-                     "attributes": {"description": not_, "amount": tutar, "date": bugun}}
+        parasut_post(f"/{cid}/transactions", {
+            "data": {
+                "type": "transactions",
+                "attributes": {"description": not_, "amount": tutar, "date": bugun},
+                "relationships": {
+                    "source_account":      {"data": {"type": "accounts", "id": str(kaynak_id)}},
+                    "destination_account": {"data": {"type": "accounts", "id": str(hedef_id)}},
+                }
+            }
         }, tenant_id=tid)
 
         logger.info(f"Para transferi: {kaynak_id} → {hedef_id} | {tutar:,.0f} TL (tenant={tid})")
