@@ -708,9 +708,13 @@ async def upload_fis(request: Request, background_tasks: BackgroundTasks,
         )
 
         # Cari listesi async çekiliyor — event loop bloklanmıyor
+        # Kantar fişi = gelen mal = tedarikçi → sadece supplier + both göster
         from app.parasut.client import async_cari_listesi_getir
         cariler       = await async_cari_listesi_getir(tenant_id=tenant_id)
-        firma_listesi = [c["ad"] for c in cariler]
+        firma_listesi = [
+            c["ad"] for c in cariler
+            if c.get("account_type", "customer") in ("supplier", "both", "customer_supplier")
+        ]
 
         return JSONResponse({
             "cevap": cevap, "bekliyor": "firma_sec", "ticket_id": ticket.id,
@@ -853,12 +857,34 @@ async def cariler_getir(request: Request, background_tasks: BackgroundTasks, ref
     try:
         from app.parasut.client import async_cari_listesi_getir, async_cari_cache_yenile
         cariler = await async_cari_cache_yenile(tenant_id=tenant_id) if refresh else await async_cari_listesi_getir(tenant_id=tenant_id)
-        sonuc   = [{"id": c["id"], "ad": c["ad"], "bakiye": c.get("bakiye", 0)} for c in cariler]
+        sonuc   = [{"id": c["id"], "ad": c["ad"], "bakiye": c.get("bakiye", 0), "tip": c.get("account_type", "customer")} for c in cariler]
         sonuc.sort(key=lambda x: x["bakiye"], reverse=True)
         return JSONResponse({"cariler": sonuc, "toplam": len(sonuc)})
     except Exception as e:
         logger.error(f"Cariler hatası: {e}")
         return JSONResponse({"cariler": [], "hata": _guvenli_hata(e)})
+
+
+# ── CARİ BİLGİ (iletişim / adres / vergi) ────────────────────────────
+
+@app.get("/api/cari-bilgi/{cari_adi}")
+async def cari_bilgi_getir(cari_adi: str, request: Request):
+    mevcut_kullanici(request)  # auth kontrolü
+    tenant_id = _tenant_id_from_user(mevcut_kullanici(request))
+    try:
+        from app.parasut.client import async_cari_id_bul, async_cari_detay_getir, cari_listesi_getir
+        cari_id = await async_cari_id_bul(cari_adi, tenant_id=tenant_id)
+        if not cari_id:
+            return JSONResponse({"hata": f"'{cari_adi}' bulunamadı."}, status_code=404)
+        detay = await async_cari_detay_getir(cari_id, tenant_id=tenant_id)
+        # account_type cache'den al
+        cariler = cari_listesi_getir(tenant_id=tenant_id)
+        tip = next((c.get("account_type", "customer") for c in cariler if str(c["id"]) == str(cari_id)), "customer")
+        detay["tip"] = tip
+        return JSONResponse(detay)
+    except Exception as e:
+        logger.error(f"Cari bilgi hatası: {e}")
+        return JSONResponse({"hata": _guvenli_hata(e)}, status_code=500)
 
 
 # ── HESAP ÖZETİ ───────────────────────────────────────────────────────

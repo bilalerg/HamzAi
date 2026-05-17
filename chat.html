@@ -1377,7 +1377,14 @@
     billablePanelTikla('alis_faturasi_kes', onMusteri ? { musteri: onMusteri } : {});
     showTyping();
     let cariler = [];
-    try { cariler = await carileriGetir(false, true); } catch {}
+    try {
+      const tumCariler = await carileriGetir(false, true);
+      // Sadece tedarikçiler (supplier / both / customer_supplier) — Paraşüt'teki ayrım
+      cariler = tumCariler.filter(function(c) {
+        const t = c.tip || '';
+        return t === 'supplier' || t === 'both' || t === 'customer_supplier';
+      });
+    } catch {}
     removeTyping();
 
     const wrap = document.createElement('div');
@@ -2193,6 +2200,8 @@
     'alis_faturasi_kes':    (p) => alisFaturasiFormGoster(p.musteri),
     'fatura_iptal':         (p) => faturaIptalFormGoster(p.fatura_id || p.faturaId),
     'e_fatura_kes':         (p) => eFaturaFormGoster(p.fatura_id || p.faturaId),
+    'cari_detay':           (p) => cariDetayGoster(p.musteri),
+    'satis_faturasi_kes':   (p) => topluFaturaGoster(),
   };
 
   async function restoreUiPanel(kind, params) {
@@ -2664,14 +2673,45 @@
         const eslesen = cariler.filter(function(c) { return c.ad.toLowerCase().includes(filtre); });
         if (eslesen.length > 0) cariler = eslesen;
       }
+
+      // Paraşüt tipine göre grupla
+      function tipSirala(liste) {
+        const s = ['customer', 'both', 'customer_supplier', 'supplier', ''];
+        return liste.slice().sort(function(a, b) {
+          return s.indexOf(a.tip || '') - s.indexOf(b.tip || '');
+        });
+      }
+
       const wrap = document.createElement('div');
+
+      // Belirli bir cari aranmıyorsa başlık + tip ayırıcıları göster
+      if (!onMusteriFiltreParam) {
+        const musteriler  = tipSirala(carilerData.filter(function(c) { const t = c.tip||'customer'; return t==='customer'; }));
+        const tedarikciler = tipSirala(carilerData.filter(function(c) { const t = c.tip||''; return t==='supplier'; }));
+        const herkesi      = tipSirala(carilerData.filter(function(c) { const t = c.tip||''; return t==='both'||t==='customer_supplier'; }));
+        cariler = musteriler.concat(herkesi).concat(tedarikciler);
+      }
+
       const baslik = document.createElement('div');
       baslik.style.cssText = 'font-size:12px;color:var(--muted);margin-bottom:8px;';
       baslik.textContent = onMusteriFiltreParam
         ? onMusteriFiltreParam + " bakiyesi (Parasut):"
         : "Güncel bakiyeler (Parasut):";
       wrap.appendChild(baslik);
+
+      let sonTip = null;
       cariler.forEach(function(c) {
+        const t = c.tip || 'customer';
+        // Grup başlığı
+        if (!onMusteriFiltreParam && t !== sonTip) {
+          sonTip = t;
+          const grupBaslik = document.createElement('div');
+          grupBaslik.style.cssText = 'font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:8px 0 3px;padding-left:4px;';
+          if (t === 'customer') grupBaslik.textContent = '👤 Müşteriler';
+          else if (t === 'supplier') grupBaslik.textContent = '🏭 Tedarikçiler';
+          else grupBaslik.textContent = '🔄 Müşteri & Tedarikçi';
+          wrap.appendChild(grupBaslik);
+        }
         const row = document.createElement('div');
         row.className = 'cari-row';
         const ad = document.createElement('span');
@@ -2784,42 +2824,12 @@
     cariLabel.textContent = 'Firma (boş bırakılırsa tümü):';
     wrap.appendChild(cariLabel);
 
-    const cariWrap = document.createElement('div');
-    cariWrap.style.cssText = 'position:relative;margin-bottom:10px;';
-    const cariInp = document.createElement('input');
-    cariInp.type = 'text';
-    cariInp.className = 'cari-search-input';
-    cariInp.placeholder = 'Firma adı yazın veya boş bırakın…';
-    cariWrap.appendChild(cariInp);
-    wrap.appendChild(cariWrap);
-
-    // Dropdown
     let secilenCari = null;
-    const dropdown = document.createElement('div');
-    dropdown.className = 'cari-dropdown';
-    dropdown.style.display = 'none';
-    cariWrap.appendChild(dropdown);
-
-    cariInp.addEventListener('input', function() {
-      const q = cariInp.value.toLowerCase().trim();
-      secilenCari = null;
-      dropdown.innerHTML = '';
-      if (!q) { dropdown.style.display = 'none'; return; }
-      const eslesen = cariler.filter(function(c) { return c.ad.toLowerCase().includes(q); }).slice(0, 8);
-      if (!eslesen.length) { dropdown.style.display = 'none'; return; }
-      eslesen.forEach(function(c) {
-        const item = document.createElement('div');
-        item.className = 'cari-dropdown-item';
-        item.textContent = c.ad;
-        item.onclick = function() {
-          secilenCari = c.ad;
-          cariInp.value = c.ad;
-          dropdown.style.display = 'none';
-        };
-        dropdown.appendChild(item);
-      });
-      dropdown.style.display = 'block';
-    });
+    const { wrap: cariWrap, inp: cariInp } = cariSecimDropdown(cariler, function(c) {
+      secilenCari = c.ad;
+    }, 'Firma adı yazın veya boş bırakın…');
+    cariWrap.style.marginBottom = '10px';
+    wrap.appendChild(cariWrap);
 
     // Tarih aralığı
     const tarihLabel = document.createElement('div');
@@ -2860,7 +2870,6 @@
     sorguBtn.onclick = async function() {
       sorguBtn.disabled = true;
       sorguBtn.textContent = 'Yükleniyor…';
-      dropdown.style.display = 'none';
       try {
         const cari = secilenCari || cariInp.value.trim();
         const baslangic = baslangicInp.value;
@@ -3022,9 +3031,14 @@
     } catch {}
     removeTyping();
 
+    // Sadece müşteriler (customer / both / customer_supplier) — tedarikçi burada çıkmasın
+    const musteriler = cariler.filter(function(c) {
+      const t = c.tip || 'customer';
+      return t === 'customer' || t === 'both' || t === 'customer_supplier';
+    });
     // Alacaklıları önce göster
-    const alacaklilar = cariler.filter(function(c) { return c.bakiye > 0; });
-    const digerler = cariler.filter(function(c) { return c.bakiye <= 0; });
+    const alacaklilar = musteriler.filter(function(c) { return c.bakiye > 0; });
+    const digerler = musteriler.filter(function(c) { return c.bakiye <= 0; });
     const siralanmis = alacaklilar.concat(digerler);
 
     const wrap = document.createElement('div');
@@ -3264,6 +3278,26 @@
           ad.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
           ad.textContent = c.ad;
           item.appendChild(ad);
+          // Tip etiketi (Paraşüt account_type'dan)
+          const tip = c.tip || '';
+          if (tip) {
+            const tipBadge = document.createElement('span');
+            tipBadge.style.cssText = 'flex-shrink:0;margin-left:6px;font-size:10px;padding:1px 5px;border-radius:4px;white-space:nowrap;';
+            if (tip === 'supplier') {
+              tipBadge.textContent = 'Tedarikçi';
+              tipBadge.style.background = '#fef3c7';
+              tipBadge.style.color = '#92400e';
+            } else if (tip === 'customer') {
+              tipBadge.textContent = 'Müşteri';
+              tipBadge.style.background = '#dbeafe';
+              tipBadge.style.color = '#1e40af';
+            } else {
+              tipBadge.textContent = 'Her ikisi';
+              tipBadge.style.background = '#f0fdf4';
+              tipBadge.style.color = '#166534';
+            }
+            item.appendChild(tipBadge);
+          }
           const bakiye = c.bakiye || 0;
           if (bakiye !== 0) {
             const bak = document.createElement('span');
@@ -3307,7 +3341,12 @@
     showTyping();
     let cariler = [];
     try {
-      cariler = await carileriGetir(false, true);
+      const tumCariler = await carileriGetir(false, true);
+      // Satış faturaları → sadece müşteriler (customer + both)
+      cariler = tumCariler.filter(function(c) {
+        const t = c.tip || 'customer';
+        return t === 'customer' || t === 'both' || t === 'customer_supplier';
+      });
     } catch {}
     removeTyping();
 
@@ -3896,6 +3935,72 @@
       removeTyping();
       addMessage('❌ Toplu fatura kesilemedi, tekrar deneyin.', 'bot');
       topluAkis = null;
+    }
+  }
+
+  // ── CARİ DETAY ───────────────────────────────────────────────────
+
+  async function cariDetayGoster(onMusteri) {
+    // Cari adı gelmemişse dropdown ile sor
+    if (!onMusteri) {
+      showTyping();
+      let cariler = [];
+      try { cariler = await carileriGetir(false, true); } catch {}
+      removeTyping();
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'font-size:13px;';
+      const baslik = document.createElement('div');
+      baslik.style.cssText = 'font-weight:500;margin-bottom:10px;';
+      baslik.textContent = '🏢 Cari Detay';
+      wrap.appendChild(baslik);
+      const { wrap: ddWrap } = cariSecimDropdown(cariler, function(c) {
+        cariDetayGoster(c.ad);
+      }, 'Cari adı yazın…');
+      wrap.appendChild(ddWrap);
+      addMessage('', 'bot', wrap);
+      return;
+    }
+
+    showTyping();
+    try {
+      const res  = await fetch('/api/cari-bilgi/' + encodeURIComponent(onMusteri));
+      const data = await res.json();
+      removeTyping();
+      if (data.hata) { addMessage('❌ ' + data.hata, 'bot'); return; }
+
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'font-size:13px;min-width:260px;';
+
+      const baslik = document.createElement('div');
+      baslik.style.cssText = 'font-weight:600;font-size:14px;margin-bottom:10px;';
+      const tipLabel = data.tip === 'supplier' ? ' 🏭 Tedarikçi' : data.tip === 'both' || data.tip === 'customer_supplier' ? ' 🔄 Müşteri & Tedarikçi' : ' 👤 Müşteri';
+      baslik.textContent = (data.ad || onMusteri) + tipLabel;
+      wrap.appendChild(baslik);
+
+      function satirEkle(icon, label, deger) {
+        if (!deger || deger === '-') return;
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);font-size:12px;';
+        row.innerHTML = '<span style="color:var(--muted);min-width:100px;">' + icon + ' ' + label + '</span><span style="font-weight:500;">' + safeHtml(deger) + '</span>';
+        wrap.appendChild(row);
+      }
+
+      const bakiye = data.bakiye || 0;
+      const bakiyeRow = document.createElement('div');
+      bakiyeRow.style.cssText = 'padding:8px 12px;border-radius:8px;margin-bottom:10px;font-size:12px;font-weight:600;background:' + (bakiye > 0 ? 'rgba(239,68,68,.1)' : bakiye < 0 ? 'rgba(37,99,235,.1)' : 'var(--bg)') + ';color:' + (bakiye > 0 ? 'var(--alacak)' : bakiye < 0 ? '#2563eb' : 'var(--muted)') + ';';
+      bakiyeRow.textContent = 'Bakiye: ' + bakiye.toLocaleString('tr-TR', {minimumFractionDigits:2}) + ' TL' + (bakiye > 0 ? ' ⚠️ Alacak' : bakiye < 0 ? ' 🔵 Borç' : ' ✅ Sıfır');
+      wrap.appendChild(bakiyeRow);
+
+      satirEkle('📧', 'E-posta', data.email);
+      satirEkle('📞', 'Telefon', data.telefon);
+      satirEkle('🏠', 'Adres', data.adres);
+      satirEkle('🏛️', 'Vergi Dairesi', data.vergi_dairesi);
+      satirEkle('🔢', 'Vergi No', data.vergi_no);
+
+      addMessage('', 'bot', wrap);
+    } catch {
+      removeTyping();
+      addMessage('❌ Cari bilgisi alınamadı.', 'bot');
     }
   }
 

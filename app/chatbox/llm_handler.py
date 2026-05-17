@@ -55,6 +55,7 @@ SESSION_UI_RESTORE_INTENTS = frozenset({
     "gunluk_ozet",
     "son_fisler",
     "alis_faturasi_kes",
+    "cari_detay",
 })
 
 INTENT_TOOL = [
