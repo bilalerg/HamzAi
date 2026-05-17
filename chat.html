@@ -668,6 +668,7 @@
     <button class="panel-btn" onclick="panelKapat();faturaListesiGoster()"><span class="btn-icon">🔍</span> Fatura sorgula</button>
     <button class="panel-btn" onclick="panelKapat();tahsilatFormGoster()"><span class="btn-icon">💵</span> Tahsilat ekle</button>
     <button class="panel-btn" onclick="panelKapat();odemeFormGoster()"><span class="btn-icon">💸</span> Ödeme ekle</button>
+    <button class="panel-btn" onclick="panelKapat();alisFaturasiFormGoster()"><span class="btn-icon">📥</span> Alış faturası kes</button>
     <button class="panel-btn" onclick="panelKapat();paraTransferiFormGoster()"><span class="btn-icon">🔄</span> Para transferi</button>
     <button class="panel-btn" onclick="panelKapat();cariFormGoster()"><span class="btn-icon">➕</span> Yeni cari</button>
     <div class="panel-section-label">Raporlar</div>
@@ -1370,6 +1371,449 @@
     sohbetPanelKaydet('para_transferi', {});
   }
 
+  // ── ALIŞ FATURASI KES (basit — tek tutar) ─────────────────────────
+
+  async function alisFaturasiFormGoster(onMusteri) {
+    billablePanelTikla('alis_faturasi_kes', onMusteri ? { musteri: onMusteri } : {});
+    showTyping();
+    let cariler = [];
+    try { cariler = await carileriGetir(false, true); } catch {}
+    removeTyping();
+
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'font-size:13px;';
+
+    const baslik = document.createElement('div');
+    baslik.style.cssText = 'font-weight:500;margin-bottom:10px;';
+    baslik.textContent = '📥 Alış Faturası Kes';
+    wrap.appendChild(baslik);
+
+    const bilgi = document.createElement('div');
+    bilgi.style.cssText = 'font-size:12px;color:var(--muted);margin-bottom:10px;padding:8px 12px;background:var(--accent-lt);border-radius:8px;border-left:3px solid var(--accent);';
+    bilgi.textContent = 'Tedarikçi/hurda satıcısı adı seçin, tutarı girin. Basit tek tutarlı fatura kesilir.';
+    wrap.appendChild(bilgi);
+
+    function satir(label, el) {
+      const d = document.createElement('div');
+      d.style.cssText = 'margin-bottom:8px;';
+      const l = document.createElement('div');
+      l.style.cssText = 'font-size:11px;color:var(--muted);margin-bottom:3px;';
+      l.textContent = label;
+      d.appendChild(l);
+      d.appendChild(el);
+      return d;
+    }
+
+    let secilenCari = '';
+    const { wrap: ddWrap, inp: ddInp } = cariSecimDropdown(cariler, function(c) {
+      secilenCari = c.ad;
+    }, 'Cari adı yazın…');
+    if (onMusteri) {
+      ddInp.value = onMusteri;
+      const m = cariler.find(function(c) { return c.ad.toLowerCase().includes(String(onMusteri).toLowerCase()); });
+      if (m) secilenCari = m.ad;
+    }
+    wrap.appendChild(satir('Tedarikçi / Cari *', ddWrap));
+
+    const tutarInp = document.createElement('input');
+    tutarInp.type = 'text'; tutarInp.className = 'fiyat-input'; tutarInp.placeholder = 'Örn: 15000';
+    wrap.appendChild(satir('Tutar (₺) *', tutarInp));
+
+    const aciklamaInp = document.createElement('input');
+    aciklamaInp.type = 'text'; aciklamaInp.className = 'fiyat-input'; aciklamaInp.placeholder = 'Açıklama (opsiyonel) — örn: Hurda alım 37LK081';
+    wrap.appendChild(satir('Açıklama', aciklamaInp));
+
+    const tarihInp = document.createElement('input');
+    tarihInp.type = 'date'; tarihInp.className = 'fiyat-input';
+    tarihInp.style.maxWidth = '160px';
+    tarihInp.value = new Date().toISOString().split('T')[0];
+    wrap.appendChild(satir('Fatura Tarihi', tarihInp));
+
+    const vadeInp = document.createElement('input');
+    vadeInp.type = 'date'; vadeInp.className = 'fiyat-input';
+    vadeInp.style.maxWidth = '160px';
+    vadeInp.value = new Date().toISOString().split('T')[0];
+    wrap.appendChild(satir('Vade Tarihi', vadeInp));
+
+    const kdvSel = document.createElement('select');
+    kdvSel.className = 'fiyat-input';
+    [0, 1, 8, 10, 18, 20].forEach(function(v) {
+      const o = document.createElement('option');
+      o.value = String(v); o.textContent = '%' + v;
+      kdvSel.appendChild(o);
+    });
+    kdvSel.value = '0';
+    wrap.appendChild(satir('KDV Oranı', kdvSel));
+
+    const btnRow = document.createElement('div');
+    btnRow.style.cssText = 'display:flex;gap:8px;margin-top:12px;';
+
+    const kaydetBtn = document.createElement('button');
+    kaydetBtn.className = 'btn-primary'; kaydetBtn.textContent = 'Fatura Kes';
+
+    const iptalBtn = document.createElement('button');
+    iptalBtn.className = 'btn-cancel'; iptalBtn.textContent = '✕ İptal';
+    iptalBtn.onclick = function() { addMessage('❌ Alış faturası iptal edildi.', 'bot'); };
+
+    kaydetBtn.onclick = async function() {
+      const cariAdi = (secilenCari || ddInp.value || '').trim();
+      const tutar   = parseFiyat(tutarInp.value);
+      if (!cariAdi) { ddInp.style.borderColor = '#e53e3e'; return; }
+      if (!tutar || tutar <= 0) { tutarInp.style.borderColor = '#e53e3e'; return; }
+      kaydetBtn.disabled = true; iptalBtn.disabled = true;
+      kaydetBtn.textContent = 'Kesiliyor…';
+      try {
+        const body = {
+          cari_adi:   cariAdi,
+          tutar:      tutar,
+          aciklama:   aciklamaInp.value.trim() || null,
+          issue_date: tarihInp.value || null,
+          due_date:   vadeInp.value  || null,
+          vat_rate:   parseFloat(kdvSel.value || '0'),
+        };
+        const res = await fetch('/api/alis-faturasi-kes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (localStorage.getItem('token') || '') },
+          body: JSON.stringify(body)
+        });
+        const d = await res.json();
+        if (d.basarili) {
+          addMessage('✅ Alış faturası kesildi: ' + safeHtml(cariAdi) + ' · ' + tutar.toLocaleString('tr-TR') + ' ₺ (fatura #' + d.fatura_id + ')', 'bot');
+        } else {
+          addMessage('❌ Fatura kesilemedi: ' + (d.hata || d.detail || 'Bilinmeyen hata'), 'bot');
+          kaydetBtn.disabled = false; iptalBtn.disabled = false;
+          kaydetBtn.textContent = 'Fatura Kes';
+        }
+      } catch {
+        addMessage('❌ Fatura kesilemedi.', 'bot');
+        kaydetBtn.disabled = false; iptalBtn.disabled = false;
+        kaydetBtn.textContent = 'Fatura Kes';
+      }
+    };
+
+    btnRow.appendChild(kaydetBtn);
+    btnRow.appendChild(iptalBtn);
+    wrap.appendChild(btnRow);
+    addMessage('', 'bot', wrap);
+    sohbetPanelKaydet('alis_faturasi_kes', onMusteri ? { musteri: onMusteri } : {});
+    setTimeout(function() { (onMusteri ? tutarInp : ddInp).focus(); }, 100);
+  }
+
+  // ── FATURA İPTAL ─────────────────────────────────────────────────
+
+  async function faturaIptalFormGoster(faturaId) {
+    billablePanelTikla('fatura_iptal', faturaId ? { fatura_id: String(faturaId) } : {});
+
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'font-size:13px;';
+
+    const baslik = document.createElement('div');
+    baslik.style.cssText = 'font-weight:500;margin-bottom:10px;color:#dc2626;';
+    baslik.textContent = '❌ Fatura İptal';
+    wrap.appendChild(baslik);
+
+    const uyari = document.createElement('div');
+    uyari.style.cssText = 'font-size:12px;color:#78350f;background:#fffbeb;border:1.5px solid #f59e0b;border-radius:8px;padding:8px 12px;margin-bottom:10px;line-height:1.6;';
+    uyari.innerHTML = '⚠️ <b>Dikkat:</b> İptal edilen fatura Paraşüt\'te geri alınamayabilir. Ödenmiş faturalar önce tahsilatı silinmeden iptal edilemez.';
+    wrap.appendChild(uyari);
+
+    function satir(label, el) {
+      const d = document.createElement('div');
+      d.style.cssText = 'margin-bottom:8px;';
+      const l = document.createElement('div');
+      l.style.cssText = 'font-size:11px;color:var(--muted);margin-bottom:3px;';
+      l.textContent = label;
+      d.appendChild(l);
+      d.appendChild(el);
+      return d;
+    }
+
+    const idInp = document.createElement('input');
+    idInp.type = 'text'; idInp.className = 'fiyat-input'; idInp.placeholder = 'Fatura ID (Paraşüt URL\'den)';
+    if (faturaId) idInp.value = String(faturaId);
+    wrap.appendChild(satir('Fatura ID *', idInp));
+
+    const tipSel = document.createElement('select');
+    tipSel.className = 'fiyat-input';
+    [['satis', 'Satış Faturası'], ['alis', 'Alış Faturası']].forEach(function(t) {
+      const o = document.createElement('option'); o.value = t[0]; o.textContent = t[1];
+      tipSel.appendChild(o);
+    });
+    wrap.appendChild(satir('Fatura Tipi', tipSel));
+
+    const btnRow = document.createElement('div');
+    btnRow.style.cssText = 'display:flex;gap:8px;margin-top:12px;';
+
+    const iptalEtBtn = document.createElement('button');
+    iptalEtBtn.className = 'btn-primary';
+    iptalEtBtn.style.background = '#dc2626';
+    iptalEtBtn.textContent = '❌ İptal Et';
+
+    const vazgecBtn = document.createElement('button');
+    vazgecBtn.className = 'btn-cancel'; vazgecBtn.textContent = '✕ Vazgeç';
+    vazgecBtn.onclick = function() { addMessage('✅ İptal işlemi durduruldu.', 'bot'); };
+
+    iptalEtBtn.onclick = async function() {
+      const fid = idInp.value.trim();
+      if (!fid) { idInp.style.borderColor = '#e53e3e'; return; }
+      iptalEtBtn.disabled = true; vazgecBtn.disabled = true;
+      iptalEtBtn.textContent = 'İptal ediliyor…';
+      try {
+        const endpoint = tipSel.value === 'alis' ? '/api/alis-faturasi-iptal' : '/api/fatura-iptal';
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (localStorage.getItem('token') || '') },
+          body: JSON.stringify({ fatura_id: fid })
+        });
+        const d = await res.json();
+        if (d.basarili) {
+          addMessage('✅ Fatura iptal edildi (#' + fid + ').', 'bot');
+        } else {
+          addMessage('❌ İptal edilemedi: ' + (d.hata || d.detail || 'Bilinmeyen hata'), 'bot');
+          iptalEtBtn.disabled = false; vazgecBtn.disabled = false;
+          iptalEtBtn.textContent = '❌ İptal Et';
+        }
+      } catch {
+        addMessage('❌ İptal işlemi başarısız.', 'bot');
+        iptalEtBtn.disabled = false; vazgecBtn.disabled = false;
+        iptalEtBtn.textContent = '❌ İptal Et';
+      }
+    };
+
+    btnRow.appendChild(iptalEtBtn);
+    btnRow.appendChild(vazgecBtn);
+    wrap.appendChild(btnRow);
+    addMessage('', 'bot', wrap);
+    sohbetPanelKaydet('fatura_iptal', faturaId ? { fatura_id: String(faturaId) } : {});
+    if (!faturaId) setTimeout(function() { idInp.focus(); }, 100);
+  }
+
+  // ── FATURA GÜNCELLE ──────────────────────────────────────────────
+
+  async function faturaGuncelleFormGoster(faturaId, mevcut) {
+    mevcut = mevcut || {};
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'font-size:13px;';
+
+    const baslik = document.createElement('div');
+    baslik.style.cssText = 'font-weight:500;margin-bottom:10px;';
+    baslik.textContent = '✏️ Fatura #' + faturaId + ' Güncelle';
+    wrap.appendChild(baslik);
+
+    const bilgi = document.createElement('div');
+    bilgi.style.cssText = 'font-size:12px;color:var(--muted);margin-bottom:10px;padding:8px 12px;background:var(--accent-lt);border-radius:8px;border-left:3px solid var(--accent);';
+    bilgi.textContent = 'Sadece açıklama, fatura tarihi ve vade güncellenebilir. Kalemler/tutar değişmez.';
+    wrap.appendChild(bilgi);
+
+    function satir(label, el) {
+      const d = document.createElement('div');
+      d.style.cssText = 'margin-bottom:8px;';
+      const l = document.createElement('div');
+      l.style.cssText = 'font-size:11px;color:var(--muted);margin-bottom:3px;';
+      l.textContent = label;
+      d.appendChild(l);
+      d.appendChild(el);
+      return d;
+    }
+
+    function toIsoTarih(t) {
+      if (!t || t === '-') return '';
+      // "27.03.2026" → "2026-03-27"
+      const m = String(t).match(/^(\d{2})\.(\d{2})\.(\d{4})/);
+      if (m) return m[3] + '-' + m[2] + '-' + m[1];
+      // already iso?
+      if (/^\d{4}-\d{2}-\d{2}/.test(String(t))) return String(t).substring(0, 10);
+      return '';
+    }
+
+    const aciklamaInp = document.createElement('input');
+    aciklamaInp.type = 'text'; aciklamaInp.className = 'fiyat-input';
+    aciklamaInp.placeholder = 'Açıklama';
+    aciklamaInp.value = mevcut.aciklama || '';
+    wrap.appendChild(satir('Açıklama', aciklamaInp));
+
+    const tarihInp = document.createElement('input');
+    tarihInp.type = 'date'; tarihInp.className = 'fiyat-input';
+    tarihInp.style.maxWidth = '160px';
+    tarihInp.value = toIsoTarih(mevcut.tarih);
+    wrap.appendChild(satir('Fatura Tarihi', tarihInp));
+
+    const vadeInp = document.createElement('input');
+    vadeInp.type = 'date'; vadeInp.className = 'fiyat-input';
+    vadeInp.style.maxWidth = '160px';
+    vadeInp.value = toIsoTarih(mevcut.vade);
+    wrap.appendChild(satir('Vade Tarihi', vadeInp));
+
+    const btnRow = document.createElement('div');
+    btnRow.style.cssText = 'display:flex;gap:8px;margin-top:12px;';
+
+    const kaydetBtn = document.createElement('button');
+    kaydetBtn.className = 'btn-primary'; kaydetBtn.textContent = 'Kaydet';
+
+    const iptalBtn = document.createElement('button');
+    iptalBtn.className = 'btn-cancel'; iptalBtn.textContent = '✕ İptal';
+    iptalBtn.onclick = function() { addMessage('❌ Güncelleme iptal edildi.', 'bot'); };
+
+    kaydetBtn.onclick = async function() {
+      kaydetBtn.disabled = true; iptalBtn.disabled = true;
+      kaydetBtn.textContent = 'Kaydediliyor…';
+      try {
+        const body = { fatura_id: String(faturaId) };
+        if (aciklamaInp.value.trim() !== (mevcut.aciklama || '')) body.aciklama = aciklamaInp.value.trim();
+        if (tarihInp.value && tarihInp.value !== toIsoTarih(mevcut.tarih)) body.issue_date = tarihInp.value;
+        if (vadeInp.value && vadeInp.value !== toIsoTarih(mevcut.vade))   body.due_date   = vadeInp.value;
+        const res = await fetch('/api/fatura-guncelle', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (localStorage.getItem('token') || '') },
+          body: JSON.stringify(body)
+        });
+        const d = await res.json();
+        if (d.basarili) {
+          addMessage('✅ Fatura güncellendi (#' + faturaId + ').', 'bot');
+        } else {
+          addMessage('❌ Güncellenemedi: ' + (d.hata || d.detail || 'Bilinmeyen hata'), 'bot');
+          kaydetBtn.disabled = false; iptalBtn.disabled = false;
+          kaydetBtn.textContent = 'Kaydet';
+        }
+      } catch {
+        addMessage('❌ Güncellenemedi.', 'bot');
+        kaydetBtn.disabled = false; iptalBtn.disabled = false;
+        kaydetBtn.textContent = 'Kaydet';
+      }
+    };
+
+    btnRow.appendChild(kaydetBtn);
+    btnRow.appendChild(iptalBtn);
+    wrap.appendChild(btnRow);
+    addMessage('', 'bot', wrap);
+  }
+
+  // ── E-FATURA / E-ARŞİV RESMİLEŞTİRME ─────────────────────────────
+
+  async function eFaturaFormGoster(faturaId) {
+    billablePanelTikla('e_fatura_kes', faturaId ? { fatura_id: String(faturaId) } : {});
+
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'font-size:13px;';
+
+    const baslik = document.createElement('div');
+    baslik.style.cssText = 'font-weight:500;margin-bottom:10px;';
+    baslik.textContent = '📤 E-Fatura / E-Arşiv';
+    wrap.appendChild(baslik);
+
+    const bilgi = document.createElement('div');
+    bilgi.style.cssText = 'font-size:12px;color:var(--muted);margin-bottom:10px;padding:8px 12px;background:var(--accent-lt);border-radius:8px;border-left:3px solid var(--accent);line-height:1.6;';
+    bilgi.innerHTML = 'VKN girerseniz mükellef kontrolü yapılır:<br>· <b>Mükellef</b> → resmi <b>E-Fatura</b> kesilir<br>· <b>Değilse</b> → <b>E-Arşiv</b> kesilir<br>VKN boş bırakılırsa direkt E-Arşiv olarak gönderilir.';
+    wrap.appendChild(bilgi);
+
+    function satir(label, el) {
+      const d = document.createElement('div');
+      d.style.cssText = 'margin-bottom:8px;';
+      const l = document.createElement('div');
+      l.style.cssText = 'font-size:11px;color:var(--muted);margin-bottom:3px;';
+      l.textContent = label;
+      d.appendChild(l);
+      d.appendChild(el);
+      return d;
+    }
+
+    const idInp = document.createElement('input');
+    idInp.type = 'text'; idInp.className = 'fiyat-input'; idInp.placeholder = 'Fatura ID';
+    if (faturaId) idInp.value = String(faturaId);
+    wrap.appendChild(satir('Satış Faturası ID *', idInp));
+
+    const vknInp = document.createElement('input');
+    vknInp.type = 'text'; vknInp.className = 'fiyat-input';
+    vknInp.placeholder = '10 haneli VKN (opsiyonel)';
+    vknInp.maxLength = 11;
+    wrap.appendChild(satir('Alıcı VKN', vknInp));
+
+    const tcknInp = document.createElement('input');
+    tcknInp.type = 'text'; tcknInp.className = 'fiyat-input';
+    tcknInp.placeholder = 'TCKN (sadece şahıs için)';
+    tcknInp.maxLength = 11;
+    wrap.appendChild(satir('Alıcı TCKN', tcknInp));
+
+    // Mükellef kontrol önizleme alanı
+    const onizleme = document.createElement('div');
+    onizleme.style.cssText = 'font-size:11px;margin-top:4px;min-height:18px;';
+    wrap.appendChild(onizleme);
+
+    let mukellef_etiket = null;
+    vknInp.onblur = async function() {
+      const vkn = vknInp.value.trim();
+      mukellef_etiket = null;
+      if (!vkn || vkn.length < 10) { onizleme.textContent = ''; return; }
+      onizleme.style.color = 'var(--muted)';
+      onizleme.textContent = '⏳ Mükellef kontrol ediliyor…';
+      try {
+        const res = await fetch('/api/e-fatura-mukellef/' + encodeURIComponent(vkn));
+        const d = await res.json();
+        if (d.mukellef) {
+          mukellef_etiket = d.etiket;
+          onizleme.style.color = '#16a34a';
+          onizleme.textContent = '✅ E-Fatura mükellefi: ' + (d.unvan || vkn) + (d.etiket ? ' (' + d.etiket + ')' : '');
+        } else {
+          onizleme.style.color = '#b45309';
+          onizleme.textContent = 'ℹ️ Mükellef değil — E-Arşiv kesilecek.';
+        }
+      } catch {
+        onizleme.style.color = '#dc2626';
+        onizleme.textContent = '❌ Sorgu başarısız.';
+      }
+    };
+
+    const btnRow = document.createElement('div');
+    btnRow.style.cssText = 'display:flex;gap:8px;margin-top:12px;';
+
+    const gonderBtn = document.createElement('button');
+    gonderBtn.className = 'btn-primary'; gonderBtn.textContent = '📤 Resmileştir';
+
+    const iptalBtn = document.createElement('button');
+    iptalBtn.className = 'btn-cancel'; iptalBtn.textContent = '✕ İptal';
+    iptalBtn.onclick = function() { addMessage('❌ Resmileştirme iptal edildi.', 'bot'); };
+
+    gonderBtn.onclick = async function() {
+      const fid  = idInp.value.trim();
+      const vkn  = vknInp.value.trim() || null;
+      const tckn = tcknInp.value.trim() || null;
+      if (!fid) { idInp.style.borderColor = '#e53e3e'; return; }
+      gonderBtn.disabled = true; iptalBtn.disabled = true;
+      gonderBtn.textContent = 'Gönderiliyor…';
+      try {
+        const body = { fatura_id: fid };
+        if (vkn)  body.vkn  = vkn;
+        if (tckn) body.tckn = tckn;
+        const res = await fetch('/api/e-fatura-kes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (localStorage.getItem('token') || '') },
+          body: JSON.stringify(body)
+        });
+        const d = await res.json();
+        if (d.basarili) {
+          const tipAd = d.tip === 'e_fatura' ? 'E-Fatura' : 'E-Arşiv';
+          addMessage('✅ ' + tipAd + ' başarıyla kesildi (#' + fid + ').', 'bot');
+        } else {
+          const hatalar = d.hatalar && d.hatalar.length ? ' — ' + d.hatalar.join(', ') : '';
+          addMessage('❌ Resmileştirme başarısız: ' + (d.hata || d.durum || 'Bilinmeyen') + hatalar, 'bot');
+          gonderBtn.disabled = false; iptalBtn.disabled = false;
+          gonderBtn.textContent = '📤 Resmileştir';
+        }
+      } catch {
+        addMessage('❌ Resmileştirme başarısız.', 'bot');
+        gonderBtn.disabled = false; iptalBtn.disabled = false;
+        gonderBtn.textContent = '📤 Resmileştir';
+      }
+    };
+
+    btnRow.appendChild(gonderBtn);
+    btnRow.appendChild(iptalBtn);
+    wrap.appendChild(btnRow);
+    addMessage('', 'bot', wrap);
+    sohbetPanelKaydet('e_fatura_kes', faturaId ? { fatura_id: String(faturaId) } : {});
+    if (!faturaId) setTimeout(function() { idInp.focus(); }, 100);
+  }
+
   // ── CACHE YENİLE ─────────────────────────────────────────────────
 
   async function cacheYenile(btn) {
@@ -1684,6 +2128,33 @@
         ['yeni musteri'], ['yeni müşteri'], ['firma ekle'], ['musteri ekle'],
         ['müşteri ekle'], ['yeni firma']
       ]
+    },
+    {
+      kind: 'alis_faturasi_kes',
+      fn: () => alisFaturasiFormGoster(),
+      kelimeler: [
+        ['alış faturası'], ['alis faturasi'], ['alış faturasi'], ['alis faturası'],
+        ['alış faturası kes'], ['alis faturasi kes'],
+        ['tedarikçiden fatura'], ['tedarikciden fatura'],
+        ['hurda aldım fatura'], ['hurda aldim fatura']
+      ]
+    },
+    {
+      kind: 'fatura_iptal',
+      fn: () => faturaIptalFormGoster(),
+      kelimeler: [
+        ['fatura iptal'], ['faturayi iptal'], ['faturayı iptal'],
+        ['yanlış fatura'], ['yanlis fatura'], ['fatura sil'], ['faturayı sil'], ['faturayi sil'],
+        ['hatalı fatura'], ['hatali fatura']
+      ]
+    },
+    {
+      kind: 'e_fatura_kes',
+      fn: () => eFaturaFormGoster(),
+      kelimeler: [
+        ['e-fatura'], ['efatura'], ['e fatura'], ['e-arşiv'], ['e arsiv'], ['e-arsiv'],
+        ['resmileştir'], ['resmilestir'], ['e fatura kes'], ['efatura kes']
+      ]
     }
   ];
 
@@ -1719,6 +2190,9 @@
     'gelir_gider_raporu':   (p) => gelirGiderRaporuGoster(),
     'odeme_ekle':           (p) => odemeFormGoster(),
     'para_transferi':       (p) => paraTransferiFormGoster(),
+    'alis_faturasi_kes':    (p) => alisFaturasiFormGoster(p.musteri),
+    'fatura_iptal':         (p) => faturaIptalFormGoster(p.fatura_id || p.faturaId),
+    'e_fatura_kes':         (p) => eFaturaFormGoster(p.fatura_id || p.faturaId),
   };
 
   async function restoreUiPanel(kind, params) {
@@ -3111,6 +3585,43 @@
           detayWrap.appendChild(row);
         });
       }
+
+      // ── EYLEM BUTONLARI: İptal / Güncelle / E-Fatura/E-Arşiv ─────
+      const actionRow = document.createElement('div');
+      actionRow.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;margin-top:14px;border-top:1px solid var(--border);padding-top:12px;';
+
+      const efBtn = document.createElement('button');
+      efBtn.className = 'btn-primary';
+      efBtn.style.fontSize = '12px';
+      efBtn.textContent = '📤 E-Fatura/E-Arşiv';
+      efBtn.onclick = function() { eFaturaFormGoster(String(faturaId)); };
+      actionRow.appendChild(efBtn);
+
+      const guncelleBtn = document.createElement('button');
+      guncelleBtn.className = 'btn-cancel';
+      guncelleBtn.style.fontSize = '12px';
+      guncelleBtn.textContent = '✏️ Güncelle';
+      guncelleBtn.onclick = function() {
+        faturaGuncelleFormGoster(String(faturaId), {
+          aciklama: f.aciklama || '',
+          tarih:    f.tarih    || '',
+          vade:     f.vade     || '',
+        });
+      };
+      actionRow.appendChild(guncelleBtn);
+
+      // İptal sadece ödenmemiş faturalar için anlamlı
+      const iptalEdilebilir = (parseFloat(f.kalan || 0) > 0 || (f.tahsilatlar || []).length === 0);
+      if (iptalEdilebilir) {
+        const iptalBtn = document.createElement('button');
+        iptalBtn.className = 'btn-cancel';
+        iptalBtn.style.cssText = 'font-size:12px;color:#dc2626;border-color:#fecaca;';
+        iptalBtn.textContent = '❌ Faturayı İptal Et';
+        iptalBtn.onclick = function() { faturaIptalFormGoster(String(faturaId)); };
+        actionRow.appendChild(iptalBtn);
+      }
+
+      detayWrap.appendChild(actionRow);
 
       addMessage('🧾 Fatura #' + faturaId, 'bot', detayWrap);
       sohbetPanelKaydet('fatura_detay', {

@@ -26,6 +26,9 @@ INTENTLER = {
     "toplu_fatura":          "Toplu fatura kesme akışını başlatır",
     "fatura_sorgula":        "Kesilmiş fatura listesi ve sorgulama ekranını açar",
     "satis_faturasi_kes":    "Belirli bir cariye yeni satış faturası keser",
+    "alis_faturasi_kes":     "Tedarikçiye/hurda satıcısına alış faturası kesme formunu açar",
+    "fatura_iptal":          "Yanlış kesilmiş satış faturasını iptal etme akışını başlatır",
+    "e_fatura_kes":          "Kesilmiş satış faturasını e-fatura veya e-arşiv olarak resmileştirir",
     "tahsilat_ekle":         "Tahsilat ekleme formunu açar",
     "odeme_ekle":            "Tedarikçiye ödeme kaydetme formunu açar",
     "yeni_cari":             "Yeni cari oluşturma formunu açar",
@@ -51,6 +54,7 @@ SESSION_UI_RESTORE_INTENTS = frozenset({
     "hesap_ozeti",
     "gunluk_ozet",
     "son_fisler",
+    "alis_faturasi_kes",
 })
 
 INTENT_TOOL = [
@@ -113,9 +117,16 @@ SEKTÖRE ÖZEL AYIRIM (ÇOK ÖNEMLİ):
 - Kesilmiş fatura / ödeme durumu / tahsilat geçmişi / fatura sorgula → fatura_sorgula
 - Müşteriden para geldi / tahsilat / ödeme aldık → tahsilat_ekle
 - Tedarikçiye para çıktı / ödeme yaptık / biz ödedik → odeme_ekle
-- Fatura kes (belirli bir cariye yeni fatura) → satis_faturasi_kes
+- Fatura kes (belirli bir cariye yeni SATIŞ faturası) → satis_faturasi_kes
+- Hurda aldık / tedarikçiden alış / alış faturası kes → alis_faturasi_kes
+- Yanlış fatura / faturayı iptal / fatura sil / hatalı kestik → fatura_iptal
+- E-fatura yap / e-arşiv kes / resmileştir / vergi dairesine gönder → e_fatura_kes
 - Cari iletişim / adres / vergi bilgisi / telefon → cari_detay
 Bu ayrımlar hurda sektöründe çok karışır, dikkatli ayırt et.
+
+ÖNEMLİ AYIRIM:
+- "satış faturası" / "müşteriye fatura" / "biz fatura kestik" → satis_faturasi_kes
+- "alış faturası" / "tedarikçiden aldık" / "hurda aldık fatura" → alis_faturasi_kes
 
 GÜVENİRLİK KURALI:
 Eğer mesaj listedeki intentlerden hiçbirine %80'den fazla uymuyorsa kesinlikle "none" döndür.
@@ -130,7 +141,8 @@ MESAJ YAZARKEN:
 
 "NE YAPABİLİRSİN" SORULARINDA:
 Bekleyen irsaliyeleri görüp fatura kesme, toplu fatura, fatura sorgulama, tahsilat ve ödeme ekleme,
-müşteri bakiyeleri, hesap özeti, günlük özet, yeni cari açma, cari detay, son fişler.
+alış faturası kesme, fatura iptali, e-fatura/e-arşiv resmileştirme, müşteri bakiyeleri,
+hesap özeti, günlük özet, yeni cari açma, cari detay, son fişler.
 Soldaki menüden de erişilebileceğini hatırlat.
 
 ÖRNEKLER (bu tonu yakala):
@@ -145,10 +157,16 @@ Soldaki menüden de erişilebileceğini hatırlat.
 "arene ödeme yaptım" → intent: odeme_ekle, mesaj: "Ödeme ekranını açıyorum.", params: {{musteri: "arene"}}
 "tedarikçiye para çıktı" → intent: odeme_ekle, mesaj: "Ödeme ekranını açıyorum."
 "uht'e fatura kes" → intent: satis_faturasi_kes, mesaj: "Satış faturası ekranını açıyorum.", params: {{musteri: "uht"}}
+"ahmet hurdadan alış faturası" → intent: alis_faturasi_kes, mesaj: "Alış faturası ekranını açıyorum.", params: {{musteri: "ahmet hurda"}}
+"hurda aldık fatura kesicem" → intent: alis_faturasi_kes, mesaj: "Alış faturası ekranını açıyorum."
+"yanlış fatura kestim iptal et" → intent: fatura_iptal, mesaj: "Hangi faturayı iptal edelim?"
+"faturayı sil" → intent: fatura_iptal, mesaj: "Fatura iptal ekranını açıyorum."
+"bu faturayı e-fatura yap" → intent: e_fatura_kes, mesaj: "E-fatura/e-arşiv ekranını açıyorum."
+"resmileştir faturayı" → intent: e_fatura_kes, mesaj: "Resmileştirme ekranını açıyorum."
 "günlük özet" → intent: gunluk_ozet, mesaj: "Bugünün özetine bakıyorum."
 "son fişler" → intent: son_fisler, mesaj: "Son fişleri getiriyorum."
 "merhaba" → intent: none, mesaj: "Merhaba! Ne yapıyoruz bugün?"
-"neler yapabilirsin" → intent: none, mesaj: "Bekleyen irsaliyeleri görüyorum, fatura kesiyorum, bakiyelere bakıyorum, tahsilat ve ödeme giriyorum, hesap özeti çıkartıyorum. Kısacası muhasebenin çoğunu hallederim. Ne yapalım?"
+"neler yapabilirsin" → intent: none, mesaj: "Bekleyen irsaliyeleri görüyorum, satış/alış faturası kesiyorum, fatura iptali yapıyorum, e-fatura/e-arşiv resmileştiriyorum, bakiyelere bakıyorum, tahsilat ve ödeme giriyorum, hesap özeti çıkartıyorum. Kısacası muhasebenin çoğunu hallederim. Ne yapalım?"
 "beşiktaş maçı kaç kaç" → intent: none, mesaj: "Bunu bilemem ama muhasebe konusunda yardımcı olabilirim."
 """
 

@@ -106,6 +106,7 @@ Mevcut async wrapper'lar (`client.py` sonu):
 
 Mevcut intent'ler:
 `bekleyen_irsaliyeler`, `toplu_fatura`, `fatura_sorgula`, `satis_faturasi_kes`,
+`alis_faturasi_kes`, `fatura_iptal`, `e_fatura_kes`,
 `tahsilat_ekle`, `odeme_ekle`, `yeni_cari`, `cari_detay`, `musteri_bakiyeleri`,
 `hesap_ozeti`, `gunluk_ozet`, `son_fisler`, `none`
 
@@ -213,6 +214,13 @@ GET  /api/cari-faturalar/{cari}      Cari faturaları (?baslangic=&bitis=&durum=
 GET  /api/fatura-detay/{id}          Fatura detayı
 POST /api/fatura-kes                 Tek fatura kes
 POST /api/toplu-fatura-kes           Toplu fatura kes
+POST /api/fatura-iptal               Satış faturasını iptal et — {fatura_id}
+POST /api/fatura-guncelle            Satış faturası üst bilgilerini güncelle — {fatura_id, aciklama?, issue_date?, due_date?}
+POST /api/alis-faturasi-kes          Basit alış faturası kes — {cari_adi, tutar, aciklama?, issue_date?, due_date?, vat_rate?}
+POST /api/alis-faturasi-iptal        Alış faturasını iptal et — {fatura_id}
+GET  /api/alis-faturasi-detay/{id}   Alış faturası detayı (kalemler + ödemeler)
+GET  /api/e-fatura-mukellef/{vkn}    VKN e-fatura mükellef sorgusu
+POST /api/e-fatura-kes               Satış faturasını e-fatura/e-arşiv olarak resmileştir — {fatura_id, vkn?, tckn?}
 POST /api/tahsilat                   Tahsilat ekle (satış faturası)
 POST /api/odeme-ekle                 Ödeme ekle (alış faturası) — {fatura_id, tutar, kasa_id?, tarih?, notlar?}
 POST /api/cari-olustur               Yeni cari
