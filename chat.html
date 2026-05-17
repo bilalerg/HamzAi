@@ -1832,7 +1832,7 @@
 
         // Shared state
         const firmaCariler = (data.firma_listesi || []).map(function(f) { return { ad: f, bakiye: 0 }; });
-        let secilenFirma = data.ocr_firma || '';
+        let secilenFirma = '';
         // Düzenleme alanları (form açıldığında oluşur)
         let plakaInp, fisNoInp, agirlikInp, fireInp, tarihInp, malzRows = [], malzContainer;
 
@@ -1850,7 +1850,6 @@
         const { wrap: ddWrap, inp: ddInp } = cariSecimDropdown(firmaCariler, function(c) {
           secilenFirma = c.ad;
         }, 'Firma adı yazın...');
-        if (secilenFirma) ddInp.value = secilenFirma;
         hizliWrap.appendChild(ddWrap);
 
         const hizliBtnRow = document.createElement('div');
