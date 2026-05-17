@@ -50,17 +50,20 @@ ADIM 1 — FİŞ FORMATINI TESPİT ET
 Aşağıdaki 4 formattan hangisi olduğunu belirle, sonra o formata göre oku:
 
 FORMAT A — TOSCELİK/TOSYALI KANTAR
-Tanıma: Başlıkta "TOSCELIK" veya "TOSYALI KANTAR" yazar.
+Tanıma: Başlıkta "TOSCELIK", "TOSÇELIK" veya "TOSYALI KANTAR" yazar VE başlıkta "KAPTAN" veya "KROMAN" YOKTUR.
 - fis_no     → "Yukleme / Bosaltma Fis No" satırındaki sayı
 - plaka      → "Araç Plakası" satırı
 - tarih      → "Giris Tarihi" satırındaki tarih (GG.AA.YYYY)
 - firma      → "Firma Adı" satırı (UHT, Yeşil İzabe gibi tedarikçi firma — doğru bu)
+              ⚠️ firma hiçbir zaman "TOSCELIK" veya "TOSYALI" olamaz — o kantarın adı
 - net_tartim_kg → "Net Tartım" satırı
 - fire_kg    → "6-) Fire" satırındaki değer (0 ise 0 yaz)
 - malzemeler → "1-) DKP", "2-) Topsis", "3-) Bonus", "4-) 1. Grup", "5-) Karma" satırları
                SADECE 0'dan büyük olanları al, Fire satırını ASLA ekleme
-               Örnek: {"Karma": 15700, "Fire": 800} → YANLIŞ
-                      {"Karma": 15700} → DOĞRU
+               ⚠️ malzeme toplamı fire_kg dahil net_tartim_kg'ı AŞAMAZ
+               Örnek: net=15150, fire=800 → malzeme toplamı max 15150 olabilir
+               {"Karma": 15700, "Fire": 800} → YANLIŞ (fire eklendi + toplam net'i geçiyor)
+               {"Karma": 15150} → DOĞRU
 
 FORMAT B — KROMAN E-POSTA BİLDİRİMİ
 Tanıma: Gönderen "HURDA@kromancelik.com.tr" veya üstte "Fişno:" başlığı var, tablo formatında.
@@ -75,12 +78,13 @@ Tanıma: Gönderen "HURDA@kromancelik.com.tr" veya üstte "Fişno:" başlığı 
                Örnek: HURDA YERLİ EXTRA | 4.711 | 84 → {"HURDA YERLİ EXTRA": 4627}
 
 FORMAT C — KAPTAN DEMİR ÇELİK
-Tanıma: Başlıkta "KAPTAN DEMİR ÇELİK" yazar.
+Tanıma: Başlıkta veya fişin herhangi bir yerinde "KAPTAN DEMİR" veya "KAPTAN ÇELİK" yazar.
+         Bu format tanınırsa BAŞKA FORMAT DENEME — FORMAT C kesindir.
 - fis_no     → "Id:" satırındaki numara
 - plaka      → "Araç - Dorse Plaka" satırında TİRE veya BÖLÜ ile ayrılmış iki plaka var
                SADECE İLK (soldaki) plakayı al → "59 KB 753 - 59 AFM 863" → "59KB753"
 - tarih      → "Geliş - Gidiş Tarihi" satırındaki ilk tarih
-- firma      → Sabit: "KAPTAN DEMİR ÇELİK" yaz
+- firma      → Sabit: "KAPTAN DEMİR ÇELİK" yaz — fişte başka isim görsen de değiştirme
 - net_tartim_kg → "NET" satırındaki değer
 - fire_kg    → 0
 - malzemeler → "Mal Cinsi" satırındaki değer, ağırlık = net_tartim_kg
@@ -195,6 +199,13 @@ def _claude_fis_oku_once(fotograf_yolu: str, temperature: float = 0.0) -> FisVer
         k: _parse_kg(v) for k, v in malzemeler_ham.items()
         if v and _parse_kg(v) > 0 and k.strip().lower() not in FIRE_KELIMELERI
     }
+    # Malzeme toplamı net ağırlığı geçemez — geçerse net ağırlığa normalize et
+    if malzemeler and net_agirlik > 0:
+        toplam_malzeme = sum(malzemeler.values())
+        if toplam_malzeme > net_agirlik:
+            logger.warning(f"⚠️ Malzeme toplamı ({toplam_malzeme}) net ağırlığı ({net_agirlik}) geçiyor, normalize ediliyor")
+            oran = net_agirlik / toplam_malzeme
+            malzemeler = {k: max(1, int(v * oran)) for k, v in malzemeler.items()}
 
     ham_plaka = veri.get("plaka")
     temiz_plaka = re.sub(r'[\s\-]', '', ham_plaka).upper() if ham_plaka else None
