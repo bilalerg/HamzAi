@@ -143,6 +143,11 @@ def calistir(engine, db):
             "ON billable_events(profaix_user_id, created_at)"
         ), "idx_billable_events_user_date")
 
+        _index_olustur(conn, text(
+            "CREATE INDEX IF NOT EXISTS idx_waybills_parasut_irsaliye_id "
+            "ON waybills(parasut_irsaliye_id)"
+        ), "idx_waybills_parasut_irsaliye_id")
+
     # ── YARIMA KALMIŞ İŞLEM TESPİTİ ──────────────────────────────────
     from app.core.database import WeighTicket, TicketStatus
     bekleyenler = db.query(WeighTicket).filter(
