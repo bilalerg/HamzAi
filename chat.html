@@ -1828,32 +1828,159 @@
       removeTyping();
       if (data.bekliyor === 'firma_sec') {
         const wrap = document.createElement('div');
-        wrap.style.cssText = 'display:flex;flex-direction:column;gap:10px;min-width:280px;max-width:420px;';
+        wrap.style.cssText = 'display:flex;flex-direction:column;gap:8px;min-width:280px;max-width:440px;';
 
-        // Firma listesini cari formatına çevir
-        const firmaCariler = (data.firma_listesi || []).map(function(f) {
-          return { ad: f, bakiye: 0 };
-        });
+        // Shared state
+        const firmaCariler = (data.firma_listesi || []).map(function(f) { return { ad: f, bakiye: 0 }; });
+        let secilenFirma = data.ocr_firma || '';
+        // Düzenleme alanları (form açıldığında oluşur)
+        let plakaInp, fisNoInp, agirlikInp, fireInp, tarihInp, malzRows = [], malzContainer;
 
-        const baslik = document.createElement('div');
-        baslik.style.cssText = 'font-size:13px;color:var(--muted);margin-bottom:2px;';
-        baslik.textContent = '🏭 Hangi firmaya ait?';
-        wrap.appendChild(baslik);
+        // ── HIZLI MOD ────────────────────────────────────────────────
+        const hizliWrap = document.createElement('div');
+        hizliWrap.style.cssText = 'display:flex;flex-direction:column;gap:8px;';
+
+        if (data.plaka_uyari) {
+          const uyari = document.createElement('div');
+          uyari.style.cssText = 'color:#f59e0b;font-size:12px;padding:4px 8px;background:rgba(245,158,11,0.12);border-radius:6px;';
+          uyari.textContent = data.plaka_uyari;
+          hizliWrap.appendChild(uyari);
+        }
 
         const { wrap: ddWrap, inp: ddInp } = cariSecimDropdown(firmaCariler, function(c) {
-          firmaSecildi(data.ticket_id, c.ad, data.malzemeler, wrap);
+          secilenFirma = c.ad;
         }, 'Firma adı yazın...');
-        wrap.appendChild(ddWrap);
+        if (secilenFirma) ddInp.value = secilenFirma;
+        hizliWrap.appendChild(ddWrap);
 
-        // İptal butonu
-        const iptalBtn = document.createElement('button');
-        iptalBtn.className = 'btn-cancel';
-        iptalBtn.style.marginTop = '4px';
-        iptalBtn.textContent = '✕ İptal';
-        iptalBtn.onclick = function() {
-          addMessage('❌ Fiş işlemi iptal edildi.', 'bot');
+        const hizliBtnRow = document.createElement('div');
+        hizliBtnRow.style.cssText = 'display:flex;gap:6px;';
+
+        const onayHizliBtn = document.createElement('button');
+        onayHizliBtn.style.cssText = 'flex:1;padding:7px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;background:var(--accent,#6366f1);color:#fff;border:none;';
+        onayHizliBtn.textContent = '✓ İrsaliye Oluştur';
+
+        const duzleBtn = document.createElement('button');
+        duzleBtn.style.cssText = 'padding:7px 12px;border-radius:8px;font-size:12px;cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--muted);';
+        duzleBtn.textContent = '✏️ Düzenle';
+
+        const iptalHizliBtn = document.createElement('button');
+        iptalHizliBtn.className = 'btn-cancel';
+        iptalHizliBtn.style.cssText = 'padding:7px 12px;border-radius:8px;font-size:12px;cursor:pointer;';
+        iptalHizliBtn.textContent = '✕';
+        iptalHizliBtn.onclick = function() { addMessage('❌ Fiş işlemi iptal edildi.', 'bot'); };
+
+        onayHizliBtn.onclick = function() {
+          const firma = secilenFirma || ddInp.value.trim();
+          if (!firma) { alert('Lütfen firma seçin.'); return; }
+          onayHizliBtn.disabled = true; duzleBtn.disabled = true; iptalHizliBtn.disabled = true;
+          firmaSecildi(data.ticket_id, firma, data.malzemeler || {}, null, wrap);
         };
-        wrap.appendChild(iptalBtn);
+
+        // ── DÜZENLEME FORMU (gizli, "Düzenle" ile açılır) ────────────
+        const formWrap = document.createElement('div');
+        formWrap.style.cssText = 'display:none;flex-direction:column;gap:6px;border-top:1px solid var(--border);padding-top:8px;margin-top:2px;';
+
+        function labeledRow(emoji, label, val, type) {
+          const row = document.createElement('div');
+          row.style.cssText = 'display:flex;align-items:center;gap:6px;';
+          const lbl = document.createElement('span');
+          lbl.style.cssText = 'font-size:12px;color:var(--muted);width:130px;flex-shrink:0;';
+          lbl.textContent = emoji + ' ' + label;
+          const inp = document.createElement('input');
+          inp.type = type || 'text'; inp.value = val;
+          inp.style.cssText = 'flex:1;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--input-bg,var(--bg));color:var(--text);font-size:13px;';
+          row.appendChild(lbl); row.appendChild(inp);
+          return { row, inp };
+        }
+
+        duzleBtn.onclick = function() {
+          if (formWrap.style.display === 'none') {
+            // Form henüz oluşturulmadıysa oluştur
+            if (!plakaInp) {
+              const r1 = labeledRow('🚗', 'Plaka',             data.ocr_plaka    || '');
+              const r2 = labeledRow('📋', 'Fiş No',             data.ocr_fis_no   || '');
+              const r3 = labeledRow('⚖️', 'Net Ağırlık (kg)',  data.ocr_agirlik_kg != null ? String(data.ocr_agirlik_kg) : '', 'number');
+              const r4 = labeledRow('🔥', 'Fire (kg)',           data.ocr_fire_kg  != null ? String(data.ocr_fire_kg)  : '0',  'number');
+              const r5 = labeledRow('📅', 'Tarih (GG.AA.YYYY)', data.ocr_tarih    || '');
+              plakaInp = r1.inp; fisNoInp = r2.inp; agirlikInp = r3.inp; fireInp = r4.inp; tarihInp = r5.inp;
+              [r1,r2,r3,r4,r5].forEach(function(r) { formWrap.appendChild(r.row); });
+
+              // Malzemeler
+              const malzLbl = document.createElement('div');
+              malzLbl.style.cssText = 'font-size:12px;color:var(--muted);margin-top:2px;';
+              malzLbl.textContent = '📦 Malzemeler';
+              formWrap.appendChild(malzLbl);
+              malzContainer = document.createElement('div');
+              malzContainer.style.cssText = 'display:flex;flex-direction:column;gap:4px;';
+
+              function addMalzRow(ad, kg) {
+                const row = document.createElement('div');
+                row.style.cssText = 'display:flex;gap:5px;align-items:center;';
+                const adInp = document.createElement('input');
+                adInp.type = 'text'; adInp.value = ad; adInp.placeholder = 'Malzeme adı';
+                adInp.style.cssText = 'flex:1;padding:4px 7px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--input-bg,var(--bg));color:var(--text);';
+                const kgInp = document.createElement('input');
+                kgInp.type = 'number'; kgInp.value = kg; kgInp.placeholder = 'kg';
+                kgInp.style.cssText = 'width:78px;padding:4px 7px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--input-bg,var(--bg));color:var(--text);';
+                const delBtn = document.createElement('button');
+                delBtn.textContent = '×';
+                delBtn.style.cssText = 'padding:2px 8px;border:1px solid var(--border);border-radius:6px;background:transparent;color:var(--muted);cursor:pointer;font-size:15px;line-height:1;';
+                const rowObj = { adInp, kgInp };
+                delBtn.onclick = function() { malzContainer.removeChild(row); malzRows.splice(malzRows.indexOf(rowObj), 1); };
+                row.appendChild(adInp); row.appendChild(kgInp); row.appendChild(delBtn);
+                malzContainer.appendChild(row);
+                malzRows.push(rowObj);
+              }
+              Object.entries(data.malzemeler || {}).forEach(function(e) { addMalzRow(e[0], e[1]); });
+              formWrap.appendChild(malzContainer);
+              const ekleBtn = document.createElement('button');
+              ekleBtn.textContent = '+ Malzeme Ekle';
+              ekleBtn.style.cssText = 'align-self:flex-start;padding:3px 10px;border:1px dashed var(--border);border-radius:6px;background:transparent;color:var(--muted);cursor:pointer;font-size:12px;';
+              ekleBtn.onclick = function() { addMalzRow('', 0); };
+              formWrap.appendChild(ekleBtn);
+            }
+            formWrap.style.display = 'flex';
+            duzleBtn.textContent = '▲ Gizle';
+            // Hızlı "İrsaliye Oluştur" butonunu "Kaydet ve Oluştur" yap
+            onayHizliBtn.textContent = '✓ Kaydet ve İrsaliye Oluştur';
+            onayHizliBtn.onclick = function() {
+              const firma = secilenFirma || ddInp.value.trim();
+              if (!firma) { alert('Lütfen firma seçin.'); return; }
+              const malzOzet = {};
+              malzRows.forEach(function(r) {
+                const ad = r.adInp.value.trim(); const kg = parseInt(r.kgInp.value) || 0;
+                if (ad && kg > 0) malzOzet[ad] = kg;
+              });
+              onayHizliBtn.disabled = true; duzleBtn.disabled = true; iptalHizliBtn.disabled = true;
+              firmaSecildi(data.ticket_id, firma, malzOzet, {
+                plaka:      plakaInp.value.trim().toUpperCase().replace(/[\s\-]/g, ''),
+                fis_no:     fisNoInp.value.trim(),
+                agirlik_kg: parseInt(agirlikInp.value) || 0,
+                fire_kg:    parseInt(fireInp.value) || 0,
+                tarih:      tarihInp.value.trim(),
+              }, wrap);
+            };
+          } else {
+            formWrap.style.display = 'none';
+            duzleBtn.textContent = '✏️ Düzenle';
+            onayHizliBtn.textContent = '✓ İrsaliye Oluştur';
+            onayHizliBtn.onclick = function() {
+              const firma = secilenFirma || ddInp.value.trim();
+              if (!firma) { alert('Lütfen firma seçin.'); return; }
+              onayHizliBtn.disabled = true; duzleBtn.disabled = true; iptalHizliBtn.disabled = true;
+              firmaSecildi(data.ticket_id, firma, data.malzemeler || {}, null, wrap);
+            };
+          }
+        };
+
+        hizliBtnRow.appendChild(onayHizliBtn);
+        hizliBtnRow.appendChild(duzleBtn);
+        hizliBtnRow.appendChild(iptalHizliBtn);
+        hizliWrap.appendChild(hizliBtnRow);
+
+        wrap.appendChild(hizliWrap);
+        wrap.appendChild(formWrap);
 
         addMessage(data.cevap, 'bot', wrap);
         sohbetParcaKaydet('📎 Fiş fotoğrafı', data.cevap);
@@ -1874,15 +2001,19 @@
 
   // ── FİRMA SEÇ ────────────────────────────────────────────────────
 
-  async function firmaSecildi(ticketId, firma, malzemeler, wrap) {
+  async function firmaSecildi(ticketId, firma, malzemeler, duzeltmeler, wrap) {
     if (wrap) Array.from(wrap.querySelectorAll('button')).forEach(function(b) { b.disabled = true; });
     addMessage('🏭 ' + firma, 'user');
     showTyping();
     try {
+      const body = Object.assign(
+        { ticket_id: ticketId, firma: firma, malzemeler: malzemeler, session_id: SESSION_ID },
+        duzeltmeler || {}
+      );
       const res = await fetch('/api/firma-sec', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ticket_id: ticketId, firma: firma, malzemeler: malzemeler, session_id: SESSION_ID })
+        body: JSON.stringify(body)
       });
       const data = await res.json();
       removeTyping();

@@ -709,8 +709,17 @@ async def upload_fis(request: Request, background_tasks: BackgroundTasks,
         cariler       = await async_cari_listesi_getir(tenant_id=tenant_id)
         firma_listesi = [c["ad"] for c in cariler]
 
-        return JSONResponse({"cevap": cevap, "bekliyor": "firma_sec", "ticket_id": ticket.id,
-                              "malzemeler": malzemeler, "firma_listesi": firma_listesi})
+        return JSONResponse({
+            "cevap": cevap, "bekliyor": "firma_sec", "ticket_id": ticket.id,
+            "malzemeler": malzemeler, "firma_listesi": firma_listesi,
+            "ocr_plaka": fis.plaka or "",
+            "ocr_fis_no": fis.fis_no or "",
+            "ocr_agirlik_kg": fis.net_agirlik_kg or 0,
+            "ocr_fire_kg": fis.fire_kg or 0,
+            "ocr_tarih": fis.tarih or "",
+            "ocr_firma": fis.firma or "",
+            "plaka_uyari": fis.plaka_uyari,
+        })
     except Exception as e:
         logger.error(f"Upload hatası: {e}")
         return JSONResponse({"cevap": f"❌ Hata oluştu: {_guvenli_hata(e)}"})
@@ -731,6 +740,11 @@ async def firma_sec(request: Request, background_tasks: BackgroundTasks):
     ticket_id     = data.get("ticket_id")
     secilen_firma = data.get("firma")
     malzemeler    = data.get("malzemeler", {})
+    duz_plaka     = data.get("plaka")
+    duz_fis_no    = data.get("fis_no")
+    duz_agirlik   = data.get("agirlik_kg")
+    duz_fire      = data.get("fire_kg")
+    duz_tarih     = data.get("tarih")
     db            = SessionLocal()
     aktif_user = mevcut_kullanici(request)
     tenant_id  = _tenant_id_from_user(aktif_user)
@@ -740,6 +754,35 @@ async def firma_sec(request: Request, background_tasks: BackgroundTasks):
         if not ticket:
             return JSONResponse({"cevap": "❌ Fiş bulunamadı."})
         ticket.firma = secilen_firma
+        # Kullanıcı düzeltmelerini uygula
+        if duz_plaka is not None:
+            temiz_p = str(duz_plaka).replace(' ', '').replace('-', '').upper()
+            if temiz_p:
+                ticket.plaka = temiz_p
+        if duz_fis_no is not None:
+            fno = str(duz_fis_no).strip()
+            if fno:
+                ticket.fis_no = fno
+        if duz_agirlik is not None:
+            try:
+                ag   = int(duz_agirlik)
+                fire = int(duz_fire or 0)
+                if ag > 0:
+                    ticket.agirlik_kg    = ag
+                    ticket.fire_kg       = fire
+                    ticket.net_tartim_kg = ag + fire
+            except (ValueError, TypeError):
+                pass
+        if duz_tarih:
+            from datetime import datetime as _dt
+            for fmt in ("%d.%m.%Y", "%Y-%m-%d"):
+                try:
+                    ticket.fis_tarihi = _dt.strptime(str(duz_tarih), fmt)
+                    break
+                except ValueError:
+                    continue
+        if malzemeler:
+            ticket.malzemeler = _json.dumps(malzemeler, ensure_ascii=False)
         db.commit()
 
         # irsaliye_olustur senkron ama içinde Parasut çağrısı var
