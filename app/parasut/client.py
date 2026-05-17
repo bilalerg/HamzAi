@@ -1288,12 +1288,13 @@ def stok_hareketleri_getir(urun_id: str = None, limit: int = 50, tenant_id=None)
             urun_rel  = h.get("relationships", {}).get("product", {}).get("data") or {}
             urun_id_r = urun_rel.get("id")
             urun_adi  = urun_map.get(urun_id_r) if urun_id_r else None
-            aciklama  = urun_adi or attr.get("description") or "-"
+            aciklama  = attr.get("description") or "-"   # plaka bilgisi burada
             hareketler.append({
                 "id":       h["id"],
                 "tarih":    (attr.get("date") or attr.get("created_at") or "-")[:10],
                 "miktar":   float(attr.get("quantity", 0) or 0),
-                "aciklama": aciklama,
+                "urun":     urun_adi or "-",
+                "aciklama": aciklama,   # "{plaka} — {malzeme} — {kg} kg"
                 "giris_mi": attr.get("inflow", False),
             })
         logger.info(f"Stok hareketleri: {len(hareketler)} kayıt (tenant={tid})")

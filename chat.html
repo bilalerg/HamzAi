@@ -1080,11 +1080,13 @@
         const yon = girismi ? '⬆️ Giriş' : '⬇️ Çıkış';
         const miktar = Math.abs(h.miktar || h.quantity || 0).toLocaleString('tr-TR');
         const tarih = h.tarih || h.date || '';
-        const aciklama = h.aciklama || h.description || h.product_name || '—';
+        const urun = h.urun && h.urun !== '-' ? h.urun : (h.product_name || '');
+        const aciklama = h.aciklama || h.description || '—';  // plaka burada
         row.innerHTML =
           `<div style="display:flex;justify-content:space-between;margin-bottom:2px;">` +
           `<b>${safeHtml(aciklama)}</b>` +
-          `<span style="color:var(--muted)">${tarih}</span></div>` +
+          `<span style="color:var(--muted);font-size:11px;">${tarih}</span></div>` +
+          (urun ? `<div style="color:var(--accent);font-size:11px;margin-bottom:2px;">${safeHtml(urun)}</div>` : '') +
           `<div style="color:var(--muted)">${yon} · ${miktar} kg</div>`;
         wrap.appendChild(row);
       });
