@@ -44,28 +44,30 @@ OCR_PROMPT = """Bu bir Türkiye hurda/geri dönüşüm sektörüne ait kantar fi
 {"plaka":"araç plakası","fis_no":"fiş no","net_tartim_kg":SAYI,"fire_kg":SAYI_YA_DA_0,"tarih":"GG.AA.YYYY","firma":"şirket adı","irsaliye_no":null,"kantar_no":null,"malzemeler":{}}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-FİRMA ADINI NASIL BUL
+FİRMA
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Fişte iki tür şirket adı olabilir:
-  A) Kantarın/fabrikanın adı (fişi basan yer) — genelde en üstte büyük harfle
-  B) Tedarikçi firma adı — "Firma Adı:", "Tedarikçi:", "Gönderen:" gibi bir alanda
+Öncelik sırası:
+1. Fişte "Firma:", "Firma Adı:", "Tedarikçi:", "Gönderen:", "Ad Soyad:" gibi etiketli bir satır VARSA → o satırdaki şirket/isim adını yaz
+2. Böyle bir alan YOKSA → fişin başlığındaki (en üstteki) şirket adını yaz
 
-Hangi firmayı yaz?
-→ Eğer fişte "Firma Adı" veya "Tedarikçi" gibi açık bir alan VARSA: o alandaki firma adını yaz
-→ Yoksa: fişin başlığındaki (en üstteki) şirket adını yaz
-→ İki plaka varsa (araç + dorse): SADECE İLKİ al
+Not: Üstteki başlık genellikle kantarın/fabrikanın adıdır (fişi basan yer), tedarikçi değildir.
+Etiketli "Firma:" alanı varsa MUTLAKA onu al — başlığı değil.
 
-Bilinen kantar sahipleri (bunlar firma DEĞİL, fişi basan yer):
-- TOSCELİK, TOSYALI → bu fişlerde "Firma Adı" alanındaki tedarikçiyi yaz
-- KROMAN ÇELİK → bu fişlerde firma sabit "KROMAN ÇELİK"tir
-- KAPTAN DEMİR ÇELİK → bu fişlerde firma sabit "KAPTAN DEMİR ÇELİK"tir
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PLAKA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+- Fişte "Araç Plaka", "Plaka", "Araç-Dorse Plaka" gibi bir alan ara
+- İki plaka tire veya boşlukla ayrılmış yazılıysa (örn: "37 LK 081 - 34 BSE 559") → SADECE İLKİNİ al: 37LK081
+- Plakayı fişten oku, TAHMIN ETME veya başka bir fişten hatırlama
+- Boşluk ve tire OLMADAN büyük harf → 37LK081, 06FH8714, 34BEG354
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 AĞIRLIK
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-- net_tartim_kg: fişte "Net Tartım", "Net", "BRÜT" - "TARA" gibi hesaplanmış net değer
+- net_tartim_kg: fişte "Net Tartım", "Net", "BRÜT - TARA" gibi hesaplanmış net değer
 - fire_kg: "Fire", "Tenzil", "Fire/Tenzil" satırı — yoksa 0
 - Malzeme toplamı net_tartim_kg'ı AŞAMAZ (fire ayrı tutulur, malzemeye eklenmez)
 
@@ -82,7 +84,7 @@ MALZEMELER
 FORMAT KURALLARI
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-PLAKA: boşluk ve tire OLMADAN büyük harf → 06FH8714, 34BEG354, 59KB753
+PLAKA: boşluk ve tire OLMADAN büyük harf → 37LK081, 06FH8714, 34BEG354
 KG: tam sayı, nokta/virgül yok → 15150 ✓   15.150 ✗
 TARİH: GG.AA.YYYY → 02.04.2026"""
 
