@@ -39,73 +39,52 @@ class FisVerisi:
 
 OCR_SYSTEM = "Sen sadece JSON üreten bir API'sin. Yanıtın SADECE '{' ile başlamalı ve '}' ile bitmelidir. Hiçbir açıklama, başlık veya markdown ekleme."
 
-OCR_PROMPT = """Kantar fişi fotoğrafı. Sadece JSON döndür, başka hiçbir şey yazma.
+OCR_PROMPT = """Bu bir Türkiye hurda/geri dönüşüm sektörüne ait kantar fişi fotoğrafı. Sadece JSON döndür.
 
-{"plaka":"ana araç plakası","fis_no":"fiş no","net_tartim_kg":SAYI,"fire_kg":SAYI_YA_DA_0,"tarih":"GG.AA.YYYY","firma":"fabrika adı","irsaliye_no":null,"kantar_no":null,"malzemeler":{}}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-ADIM 1 — FİŞ FORMATINI TESPİT ET
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Aşağıdaki 4 formattan hangisi olduğunu belirle, sonra o formata göre oku:
-
-FORMAT A — TOSCELİK/TOSYALI KANTAR
-Tanıma: Başlıkta "TOSCELIK", "TOSÇELIK" veya "TOSYALI KANTAR" yazar VE başlıkta "KAPTAN" veya "KROMAN" YOKTUR.
-- fis_no     → "Yukleme / Bosaltma Fis No" satırındaki sayı
-- plaka      → "Araç Plakası" satırı
-- tarih      → "Giris Tarihi" satırındaki tarih (GG.AA.YYYY)
-- firma      → "Firma Adı" satırı (UHT, Yeşil İzabe gibi tedarikçi firma — doğru bu)
-              ⚠️ firma hiçbir zaman "TOSCELIK" veya "TOSYALI" olamaz — o kantarın adı
-- net_tartim_kg → "Net Tartım" satırı
-- fire_kg    → "6-) Fire" satırındaki değer (0 ise 0 yaz)
-- malzemeler → "1-) DKP", "2-) Topsis", "3-) Bonus", "4-) 1. Grup", "5-) Karma" satırları
-               SADECE 0'dan büyük olanları al, Fire satırını ASLA ekleme
-               ⚠️ malzeme toplamı fire_kg dahil net_tartim_kg'ı AŞAMAZ
-               Örnek: net=15150, fire=800 → malzeme toplamı max 15150 olabilir
-               {"Karma": 15700, "Fire": 800} → YANLIŞ (fire eklendi + toplam net'i geçiyor)
-               {"Karma": 15150} → DOĞRU
-
-FORMAT B — KROMAN E-POSTA BİLDİRİMİ
-Tanıma: Gönderen "HURDA@kromancelik.com.tr" veya üstte "Fişno:" başlığı var, tablo formatında.
-- fis_no     → "Fiş No" satırı
-- plaka      → "Plaka No" satırı
-- tarih      → "Tarih" satırı
-- firma      → Her zaman sabit: "KROMAN ÇELİK" yaz
-- net_tartim_kg → "Net Tartım" satırındaki değer (ham, tenzil düşülmemiş)
-- fire_kg    → "Tenzil" satırındaki değer
-- malzemeler → Alt tablodaki "Hurda Tipi | Miktar | Tenz.Miktar" satırları
-               Net miktar = Miktar - Tenz.Miktar
-               Örnek: HURDA YERLİ EXTRA | 4.711 | 84 → {"HURDA YERLİ EXTRA": 4627}
-
-FORMAT C — KAPTAN DEMİR ÇELİK
-Tanıma: Başlıkta veya fişin herhangi bir yerinde "KAPTAN DEMİR" veya "KAPTAN ÇELİK" yazar.
-         Bu format tanınırsa BAŞKA FORMAT DENEME — FORMAT C kesindir.
-- fis_no     → "Id:" satırındaki numara
-- plaka      → "Araç - Dorse Plaka" satırında TİRE veya BÖLÜ ile ayrılmış iki plaka var
-               SADECE İLK (soldaki) plakayı al → "59 KB 753 - 59 AFM 863" → "59KB753"
-- tarih      → "Geliş - Gidiş Tarihi" satırındaki ilk tarih
-- firma      → Sabit: "KAPTAN DEMİR ÇELİK" yaz — fişte başka isim görsen de değiştirme
-- net_tartim_kg → "NET" satırındaki değer
-- fire_kg    → 0
-- malzemeler → "Mal Cinsi" satırındaki değer, ağırlık = net_tartim_kg
-
-FORMAT D — DİĞER/BİLİNMEYEN FORMAT
-- fis_no     → Fiş/slip/makbuz numarası
-- plaka      → Araç plakası — iki plaka varsa sadece ilki
-- tarih      → Tarihi bul
-- firma      → Fişin EN ÜSTÜNDE büyük harfle yazan şirket/fabrika adı
-- net_tartim_kg → NET veya NET TARTIM satırı
-- fire_kg    → Fire/Tenzil satırı, yoksa 0
-- malzemeler → Malzeme tablosu varsa doldur, yoksa {}
+{"plaka":"araç plakası","fis_no":"fiş no","net_tartim_kg":SAYI,"fire_kg":SAYI_YA_DA_0,"tarih":"GG.AA.YYYY","firma":"şirket adı","irsaliye_no":null,"kantar_no":null,"malzemeler":{}}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-GENEL KURALLAR (TÜM FORMATLAR)
+FİRMA ADINI NASIL BUL
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-PLAKA FORMAT: boşluk ve tire olmadan büyük harf → 06FH8714, 34BEG354, 59KB753
-TÜM KG TAM SAYI: nokta ve virgül OLMADAN → 15150 ✓  15.150 ✗  15,150 ✗
-NET AĞIRLIK KONTROLÜ: net_tartim_kg - fire_kg = gerçek net (negatif olamaz)
-TARİH FORMAT: GG.AA.YYYY → 02.04.2026"""
+Fişte iki tür şirket adı olabilir:
+  A) Kantarın/fabrikanın adı (fişi basan yer) — genelde en üstte büyük harfle
+  B) Tedarikçi firma adı — "Firma Adı:", "Tedarikçi:", "Gönderen:" gibi bir alanda
+
+Hangi firmayı yaz?
+→ Eğer fişte "Firma Adı" veya "Tedarikçi" gibi açık bir alan VARSA: o alandaki firma adını yaz
+→ Yoksa: fişin başlığındaki (en üstteki) şirket adını yaz
+→ İki plaka varsa (araç + dorse): SADECE İLKİ al
+
+Bilinen kantar sahipleri (bunlar firma DEĞİL, fişi basan yer):
+- TOSCELİK, TOSYALI → bu fişlerde "Firma Adı" alanındaki tedarikçiyi yaz
+- KROMAN ÇELİK → bu fişlerde firma sabit "KROMAN ÇELİK"tir
+- KAPTAN DEMİR ÇELİK → bu fişlerde firma sabit "KAPTAN DEMİR ÇELİK"tir
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+AĞIRLIK
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+- net_tartim_kg: fişte "Net Tartım", "Net", "BRÜT" - "TARA" gibi hesaplanmış net değer
+- fire_kg: "Fire", "Tenzil", "Fire/Tenzil" satırı — yoksa 0
+- Malzeme toplamı net_tartim_kg'ı AŞAMAZ (fire ayrı tutulur, malzemeye eklenmez)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MALZEMELER
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+- Malzeme listesi varsa her satırı oku: {"KARMA": 15150, "DKP": 3200}
+- "Fire", "Tenzil" satırlarını malzeme olarak EKLEME
+- Liste yoksa boş bırak: {}
+- Tenzil düşülmüş net miktarları al (varsa)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+FORMAT KURALLARI
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+PLAKA: boşluk ve tire OLMADAN büyük harf → 06FH8714, 34BEG354, 59KB753
+KG: tam sayı, nokta/virgül yok → 15150 ✓   15.150 ✗
+TARİH: GG.AA.YYYY → 02.04.2026"""
 
 
 def _fotograf_to_base64(fotograf_yolu: str) -> tuple[str, str]:
