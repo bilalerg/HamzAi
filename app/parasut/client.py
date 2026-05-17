@@ -960,7 +960,7 @@ def tum_bekleyen_irsaliyeleri_getir(
                 "page[size]":    25,
                 "page[number]":  page,
                 "sort":          "-issue_date",
-                "include":       "stock_movements,contact,invoices",
+                "include": "stock_movements,contact,sales_invoice,purchase_bill",
             }
             sonuc    = parasut_get(f"/{cid}/shipment_documents", params=params, tenant_id=tid)
             data     = sonuc.get("data", [])
@@ -974,7 +974,8 @@ def tum_bekleyen_irsaliyeleri_getir(
                 attr         = i.get("attributes", {})
                 rels         = i.get("relationships", {})
                 # Faturaya bağlı irsaliyeleri atla — invoices ilişkisi doluysa faturalanmış
-                if rels.get("invoices", {}).get("data"):
+                # Faturaya bağlı irsaliyeleri atla (Satış veya Alış faturası kesilmiş mi?)
+                if rels.get("sales_invoice", {}).get("data") or rels.get("purchase_bill", {}).get("data"):
                     continue
                 contact_data = rels.get("contact", {}).get("data", {})
                 contact_id   = contact_data.get("id") if contact_data else None
