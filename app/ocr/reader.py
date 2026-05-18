@@ -37,76 +37,84 @@ class FisVerisi:
     plaka_uyari:      Optional[str]           = None
 
 
-OCR_SYSTEM = """Sen kantar fişi okuyan bir OCR motorusun. SADECE verilen fotoğraftaki görünen metni okursun.
+OCR_SYSTEM = """Sen Türkçe kantar fişlerini okuyan bir OCR motorusun. Görevin: fotoğraftaki METNİ harfi harfine çıkarmak.
 
-MUTLAK KURAL — HALÜSİNASYON YASAĞI:
-- Görmediğin, okuyamadığın, bulanık olan, emin olmadığın hiçbir değeri UYDURMA.
-- Önceki fişlerden hiçbir bilgi hatırlama — her fotoğraf bağımsızdır.
-- Bir alanı tam olarak okuyamıyorsan o alanı null bırak. ASLA tahmin etme, ASLA örnek değer koyma.
-- Fotoğraf bulanık/küçük/okunmazsa → tüm alanları null bırak, sadece {"plaka":null,"fis_no":null,"net_tartim_kg":null,"fire_kg":null,"tarih":null,"firma":null,"irsaliye_no":null,"kantar_no":null,"malzemeler":{}} döndür.
+ANA KURAL — OKU, AMA UYDURMA:
+1. Gördüğün her şeyi DİKKATLİCE OKU. Harfler/rakamlar bulanık olsa bile ayırt edebiliyorsan değeri yaz.
+2. Bir alanda HİÇBİR şey göremiyorsan SADECE O ZAMAN null bırak.
+3. Önceki fişlerden bilgi HATIRLAMA. Her fotoğraf bağımsızdır.
+4. "34BEG354", "1234567" gibi tipik/örnek değerler UYDURMA. Sadece fişten okuduğunu yaz.
+
+VARSAYILAN DAVRANIŞ:
+Profesyonel bir OCR motoru fişin %80'ini okur. Sen de en az o kadarını okumaya çalış.
+"Bulanık" diye topyekûn null bırakmak YANLIŞTIR. Görebildiğin her alanı doldur.
 
 ÇIKTI FORMATI:
 Yanıtın SADECE '{' ile başlamalı ve '}' ile bitmelidir. Açıklama, başlık veya markdown YOK."""
 
-OCR_PROMPT = """Bu bir Türkiye hurda/geri dönüşüm sektörüne ait kantar fişi fotoğrafı.
+OCR_PROMPT = """Aşağıdaki Türkiye hurda/geri dönüşüm sektörüne ait kantar fişini oku.
 
-JSON şeması:
-{"plaka":"araç plakası VEYA null","fis_no":"fiş no VEYA null","net_tartim_kg":SAYI_VEYA_null,"fire_kg":SAYI_VEYA_0,"tarih":"GG.AA.YYYY VEYA null","firma":"şirket adı VEYA null","irsaliye_no":null,"kantar_no":null,"malzemeler":{}}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-HALÜSİNASYON YASAĞI — TEKRAR
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Eğer foto bulanık, çok küçük veya silik ise, alanı okuyamıyorsan → null bırak.
-"34BEG354" gibi bir plaka GÖRMEDIN ama uyduramazsın. "1234567" gibi fiş numarası uyduramazsın.
-Emin değilsen null. Halüsinasyon, sistemin tamamını bozar.
+JSON şeması (alanları gerçekten okuyamadığın yerlerde null kullan):
+{"plaka":"araç plakası","fis_no":"fiş no","net_tartim_kg":SAYI,"fire_kg":SAYI_YA_DA_0,"tarih":"GG.AA.YYYY","firma":"şirket adı","irsaliye_no":null,"kantar_no":null,"malzemeler":{}}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-FİRMA
+FİRMA (tedarikçi/satıcı)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Öncelik sırası:
-1. Fişte "Firma:", "Firma Adı:", "Tedarikçi:", "Gönderen:" etiketli satır VARSA → o satırdaki şirket adını yaz
-2. Böyle bir alan YOKSA → fişin başlığındaki (en üstteki) şirket adını yaz
-3. Okuyamıyorsan → null
+1. "Firma:", "Firma Adı:", "Tedarikçi:", "Gönderen:" etiketli satır VARSA → o satırdaki adı al
+2. Böyle bir alan YOKSA → en üstteki başlık şirket adını al
 
-ÖNEMLİ:
-- "Nakliye Firması:", "Taşıyıcı:", "Şoför:", "Ad Soyad:" → bunlar firma DEĞİL, alma
-- Üstteki başlık kantarın/fabrikanın adıdır — "Firma:" alanı varsa başlığı değil onu yaz
+DİKKAT:
+- "Nakliye Firması:", "Taşıyıcı:", "Şoför:", "Ad Soyad:", "Operator:" → bunlar firma DEĞİL
+- Fişte birden fazla şirket görüyorsan "Firma:" / "Tedarikçi:" etiketli olanı öncele
+- Türkçe karakterler önemli: ŞŞ ÜÜ ÖÖ ÇÇ İİ GĞ — bunları da doğru aktar
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 PLAKA
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-- Fişte "Araç Plaka", "Plaka", "Araç-Dorse Plaka" gibi bir alan ara
+- "Araç Plaka", "Plaka", "Araç-Dorse Plaka" etiketli alanı bul
 - İki plaka tire/boşlukla ayrılmışsa (örn: "37 LK 081 - 34 BSE 559") → SADECE İLKİNİ al: 37LK081
-- Okuyamıyorsan → null. Asla bir önceki fişin plakasını yazma, asla tahmin etme.
-- Boşluk ve tire OLMADAN büyük harf → 37LK081, 06FH8714, 34BSE559
+- Format: boşluk/tire OLMADAN büyük harf → 37LK081, 06FH8714, 34BSE559
+- Tek tek karakter okuyabiliyorsan plakayı yaz; göremezsen null
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 AĞIRLIK
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-- net_tartim_kg: fişte "Net Tartım", "Net", "BRÜT - TARA" satırındaki sayı
-- fire_kg: "Fire", "Tenzil", "Fire/Tenzil" satırı — yoksa 0
-- Net değer fişte AÇIKÇA yazılı olmalı. Tahminle hesaplama yapma.
-- Okuyamıyorsan → null
+- net_tartim_kg: "Net Tartım", "Net", "BRÜT - TARA" satırındaki sayı
+- Eğer fişte ayrı ayrı "BRÜT: 33000" ve "DARA: 17850" görüyorsan, NET satırını da BİLE oku;
+  yazılmadıysa BRÜT - DARA hesabıyla bulabilirsin (15150 gibi)
+- fire_kg: "Fire", "Tenzil" satırı — yoksa 0
+- Tam sayı, nokta/virgül yok → 15150 ✓   15.150 ✗
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+FİŞ NO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+- "Fiş No", "No", "Sıra No" veya "Id." etiketli satırdaki numara
+- Tipik formatlar: 130002187968, 9495, 1356
+- Okuyamıyorsan null — örnek/standart numara uydurma
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+TARİH
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+- "Tarih", "Geliş Tarihi", "Giriş Tarihi" alanından oku
+- Format: GG.AA.YYYY → 12.03.2026
+- Saat varsa atla, sadece tarih
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 MALZEMELER
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-- Malzeme listesi GÖRÜYORSAN her satırı oku: {"KARMA": 15150, "DKP": 3200}
-- Liste YOKSA boş bırak: {}
+- Mal cinsi listesi varsa oku: {"KARMA": 15150, "DKP": 3200}
+- Liste yoksa veya tek malzeme varsa boş bırak: {}
 - "Fire", "Tenzil" satırlarını malzeme olarak EKLEME
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-FORMAT KURALLARI
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-PLAKA: boşluk ve tire OLMADAN büyük harf → 37LK081
-KG: tam sayı, nokta/virgül yok → 15150 ✓   15.150 ✗
-TARİH: GG.AA.YYYY → 12.03.2026"""
+ÖNEMLİ: Görebildiğin alanları DOLDUR. "Emin değilim" diye topyekûn null bırakma — bu sistemi bozar.
+Sadece tek bir karakter dahi okuyamadığın alanları null bırak."""
 
 
 def _fotograf_to_base64(fotograf_yolu: str) -> tuple[str, str, dict]:
@@ -186,12 +194,13 @@ def _claude_fis_oku_once(fotograf_yolu: str, temperature: float = 0.0) -> FisVer
     """Tek OCR denemesi."""
     foto_base64, media_type, foto_meta = _fotograf_to_base64(fotograf_yolu)
 
-    # Düşük kalite fotoğraflarda Claude'a ek uyarı gönder
+    # Düşük kalite fotoğraflarda DİKKATLİ OKU mesajı (paranoya yaratmadan)
     ek_uyari = ""
     if foto_meta.get("dusuk_kalite"):
         ek_uyari = (
-            "\n\n⚠️ DİKKAT: Bu fotoğraf düşük çözünürlüklü. Eğer alanları net okuyamıyorsan, "
-            "ASLA tahmin yapma — tüm okuyamadıklarını null bırak."
+            "\n\nNot: Bu fotoğraf nispeten düşük çözünürlüklü. "
+            "Yine de tüm görebildiğin değerleri DİKKATLİCE oku ve doldur. "
+            "Sadece tek karakter dahi göremediğin alanları null bırak."
         )
 
     response = _client.messages.create(

@@ -302,6 +302,8 @@ def _cari_listesi_api(tenant_id=None) -> list:
     cid   = creds["company_id"]
     cariler = []
     page = 1
+    # Debug: account_type dağılımını izle
+    tip_sayilari: dict = {}
     while page <= 100:
         sonuc = parasut_get(
             f"/{cid}/contacts",
@@ -318,6 +320,11 @@ def _cari_listesi_api(tenant_id=None) -> list:
                 bakiye = float(bakiye_raw) if bakiye_raw is not None and bakiye_raw != "" else 0.0
             except (ValueError, TypeError):
                 bakiye = 0.0
+            # Paraşüt'ten dönen account_type değeri: customer / supplier
+            # (Paraşüt UI'da bir cari her iki listede de görünebilir, ama API'de
+            #  account_type tek bir değer döner.)
+            raw_tip = attr.get("account_type")
+            tip_sayilari[raw_tip] = tip_sayilari.get(raw_tip, 0) + 1
             cariler.append({
                 "id":             c["id"],
                 "ad":             attr.get("name", "-"),
@@ -327,13 +334,16 @@ def _cari_listesi_api(tenant_id=None) -> list:
                 "vergi_no":       attr.get("tax_number", "-"),
                 "adres":          attr.get("address", "-"),
                 "vergi_dairesi":  attr.get("tax_office", "-"),
-                "account_type":   attr.get("account_type", "customer"),
+                "account_type":   raw_tip or "customer",
             })
         if len(data) < 25:
             break
         page += 1
         time.sleep(0.1)
-    logger.info(f"Paraşüt'ten {len(cariler)} cari çekildi (tenant={tid}, {page - 1} sayfa)")
+    logger.info(
+        f"Paraşüt'ten {len(cariler)} cari çekildi (tenant={tid}, {page - 1} sayfa) | "
+        f"account_type dağılımı: {tip_sayilari}"
+    )
     return cariler
 
 

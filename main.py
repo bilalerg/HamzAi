@@ -1969,6 +1969,51 @@ def kullanim_ozeti_endpoint(user_id: str, request: Request):
 
 # ── ADMIN ────────────────────────────────────────────────────────────
 
+@app.get("/admin/cari-debug")
+def cari_debug(request: Request):
+    """Paraşüt'ten cariler ham attribute'larıyla — UI'a girmeden bakmak için."""
+    if not _admin_kontrol(request):
+        return JSONResponse({"hata": "Yetkisiz erişim"}, status_code=401)
+    try:
+        from app.parasut.client import parasut_get
+        from app.core.config import PARASUT_COMPANY_ID
+        ozet = []
+        page = 1
+        tip_sayilari = {}
+        while page <= 10:
+            sonuc = parasut_get(
+                f"/{PARASUT_COMPANY_ID}/contacts",
+                params={"page[size]": 25, "page[number]": page},
+            )
+            data = sonuc.get("data", [])
+            if not data:
+                break
+            for c in data:
+                attr = c.get("attributes", {})
+                raw_tip = attr.get("account_type")
+                tip_sayilari[str(raw_tip)] = tip_sayilari.get(str(raw_tip), 0) + 1
+                ozet.append({
+                    "id":           c["id"],
+                    "ad":           attr.get("name", "-"),
+                    "account_type": raw_tip,
+                    "balance":      attr.get("balance"),
+                    "tax_number":   attr.get("tax_number"),
+                    "contact_type": attr.get("contact_type"),
+                    # tüm raw attribute anahtarlarını da göster — gizli alan var mı?
+                    "raw_keys":     sorted(attr.keys()),
+                })
+            if len(data) < 25:
+                break
+            page += 1
+        return JSONResponse({
+            "toplam": len(ozet),
+            "tip_dagilimi": tip_sayilari,
+            "cariler": ozet,
+        })
+    except Exception as e:
+        return JSONResponse({"hata": _guvenli_hata(e)}, status_code=500)
+
+
 @app.get("/admin/irsaliye-debug/{irsaliye_id}")
 def irsaliye_debug(irsaliye_id: str, request: Request):
     if not _admin_kontrol(request):
