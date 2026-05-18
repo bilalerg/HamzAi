@@ -15,7 +15,9 @@ from app.core.logger import logger
 
 _client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
-OCR_MODEL      = "claude-sonnet-4-20250514"
+import os as _os
+# OCR modeli — env'den override edilebilir (örn. claude-opus-4-...)
+OCR_MODEL      = _os.getenv("OCR_MODEL", "claude-sonnet-4-20250514")
 OCR_MAX_TOKENS = 2048  # chain-of-thought için artırıldı
 OCR_MAX_RETRY  = 2  # Başarısız OCR'da kaç kez tekrar denensin
 
@@ -66,20 +68,34 @@ UYDURMA YASAĞI:
 
 OCR_PROMPT = """Bu fişi 2 aşamada oku.
 
+⚠️ KRİTİK LAYOUT UYARISI:
+Türk kantar fişleri tipik olarak SOL kolonda ETİKET (örn: "Plaka :", "Firma :")
+ve SAĞ kolonda DEĞER (örn: "37 LK 081", "YEŞIL IZABE") içerir.
+Etiket ve değer arasında 5-15 karakter BOŞLUK olabilir — aldanma, aynı satırdaki
+sağ taraftaki yazıyı OKU. Etiket soluk görünse bile sağdaki değer okunaklıdır.
+
 ═══ AŞAMA 1 — LAYOUT TASVİRİ ═══
-Aşağıdaki sırada GÖZLEM YAP (sadece gerçekten gördüklerini yaz):
+Aşağıdaki sırada GÖZLEM YAP — her satır için sol kolon (etiket) + sağ kolon (değer)
+yapısını dikkate al. Eğer etiket soluk ama sağ tarafta yazı varsa o yazıyı oku:
 
 a) ÜST BAŞLIK: Fişin en tepesinde hangi şirket adı yazıyor? (Bu KANTARIN/alıcı fabrikanın adıdır)
-b) "Firma:", "Firma Adı:", "Tedarikçi:", "Gönderen:" ETİKETLİ bir satır var mı? Varsa karşısında ne yazıyor? (Bu TEDARIKÇİnin adıdır — JSON'a bu girer)
-c) "Nakliye Firması:" veya "Taşıyıcı:" varsa: ne yazıyor? (bu firma DEĞİL, sadece kaydet)
-d) "Ad Soyad:" var mı? Karşısında ne yazıyor? (bu da firma DEĞİL — şoför adı)
-e) PLAKA: "Plaka", "Araç-Dorse Plaka", "Araç Plaka" etiketli satırda hangi plaka(lar) yazılı? (örn: "37 LK 081 - 34 BSE 559" iki plaka var)
+b) "Firma :" SATIRI: Bu satırın SAĞ TARAFINDA ne yazıyor? (Genelde fişin üst-orta kısmında)
+   Örnek: "Firma : YEŞIL IZABE GERİ DÖNÜŞÜM NAK" → değer="YEŞIL IZABE GERİ DÖNÜŞÜM NAK"
+c) "Nakliye Firması:" SATIRI: sağ tarafında ne yazıyor? (firma DEĞİL, sadece kaydet)
+d) "Ad Soyad:" SATIRI: sağ tarafında ne yazıyor? (firma DEĞİL — şoför)
+e) PLAKA SATIRI: "Araç-Dorse Plaka :" veya "Plaka :" etiketinin SAĞ TARAFINDA ne yazıyor?
+   Örnek: "Araç - Dorse Plaka : 37 LK 081 - 34 BSE 559" → değer="37 LK 081 - 34 BSE 559"
+   ⚠️ Plaka tipik biçim: 2 rakam + 1-3 harf + 2-4 rakam (örn: 37LK081, 06FH8714)
 f) BRÜT değeri: kaç kg?
 g) DARA değeri: kaç kg?
 h) NET değeri: kaç kg? (fişte NET satırı varsa o değer, yoksa BRÜT-DARA hesabı)
 i) Tarih: "Geliş Tarihi", "Tarih" alanı? (GG.AA.YYYY)
-j) Fiş ID veya Fiş No: "Id.", "Fiş No", "No" etiketli alan? Hangi sayı yazıyor?
+j) Fiş ID veya Fiş No: "Id.", "Fiş No", "No" etiketli alan? Genelde fişin ALT kısmında
+   küçük yazıyla yazılı (örn: "Id.130002187968")
 k) Mal Cinsi: ne yazıyor?
+
+⚠️ Bir alan için "görülmüyor" yazma hakkın var, ama önce DİKKATLİCE bak.
+Sol kolon etiketi flu olsa bile sağ kolondaki değer çoğu zaman okunaklıdır.
 
 ═══ AŞAMA 2 — JSON ═══
 Yukarıdaki AŞAMA 1 gözleminize göre JSON'u doldur.
@@ -132,35 +148,43 @@ def _fotograf_to_base64(fotograf_yolu: str) -> tuple[str, str, dict]:
             if img.mode in ("RGBA", "P"):
                 img = img.convert("RGB")
             orig_w, orig_h = img.size
-            # 1. Çok küçük gelen fotoğrafları upscale et
-            if max(orig_w, orig_h) < 1000:
-                oran = 1500 / max(orig_w, orig_h)
+            # 1. Çok küçük gelen fotoğrafları AGRESİF upscale et — Claude vision
+            #    yüksek çözünürlükte etiketli alanları çok daha iyi okuyor.
+            #    Hedef: en az 2200px (uzun kenar)
+            if max(orig_w, orig_h) < 2000:
+                oran = 2400 / max(orig_w, orig_h)
                 yeni_boyut = (int(orig_w * oran), int(orig_h * oran))
                 img = img.resize(yeni_boyut, Image.LANCZOS)
-                logger.info(f"Küçük fotoğraf upscale edildi: {orig_w}x{orig_h} → {img.size}")
+                logger.info(f"Fotoğraf upscale edildi: {orig_w}x{orig_h} → {img.size}")
             else:
-                img.thumbnail((1500, 1500), Image.LANCZOS)
+                img.thumbnail((2400, 2400), Image.LANCZOS)
 
-            # 2. Unsharp mask — kenarları belirginleştirir (OCR için kritik)
+            # 2. Unsharp mask — daha agresif (etiket/değer ayrımı için)
             try:
-                img = img.filter(ImageFilter.UnsharpMask(radius=1.5, percent=120, threshold=2))
+                img = img.filter(ImageFilter.UnsharpMask(radius=2, percent=180, threshold=2))
             except Exception as fe:
                 logger.warning(f"UnsharpMask atlandı: {fe}")
 
-            # 3. Kontrast artır
+            # 3. Kontrast +50% (etiket görünürlüğü için)
             try:
-                img = ImageEnhance.Contrast(img).enhance(1.25)
+                img = ImageEnhance.Contrast(img).enhance(1.5)
             except Exception as ce:
                 logger.warning(f"Contrast enhance atlandı: {ce}")
 
-            # 4. Sharpness artır
+            # 4. Sharpness +100%
             try:
-                img = ImageEnhance.Sharpness(img).enhance(1.5)
+                img = ImageEnhance.Sharpness(img).enhance(2.0)
             except Exception as se:
                 logger.warning(f"Sharpness enhance atlandı: {se}")
 
+            # 5. Brightness küçük artış — soluk metinler için
+            try:
+                img = ImageEnhance.Brightness(img).enhance(1.05)
+            except Exception as be:
+                logger.warning(f"Brightness enhance atlandı: {be}")
+
             buffer = _io.BytesIO()
-            img.save(buffer, format="JPEG", quality=92)
+            img.save(buffer, format="JPEG", quality=95)
             data = base64.b64encode(buffer.getvalue()).decode("utf-8")
             meta["width"]  = img.size[0]
             meta["height"] = img.size[1]
