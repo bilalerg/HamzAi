@@ -586,9 +586,12 @@ def fatura_detay_getir(fatura_id: str, tenant_id=None) -> dict:
     creds = _tenant_credentials(tid)
     cid   = creds["company_id"]
     try:
+        # NOT: Tahsilat silme için Paraşüt **transaction** id'sini ister
+        # (payment.id değil). Bu yüzden include=payments.transaction ile
+        # çekip ödeme satırına transaction_id'yi de iliştiriyoruz.
         sonuc    = parasut_get(
             f"/{cid}/sales_invoices/{fatura_id}",
-            params={"include": "contact,details,details.product,payments"},
+            params={"include": "contact,details,details.product,payments,payments.transaction"},
             tenant_id=tid,
         )
         data     = sonuc.get("data", {})
@@ -616,10 +619,15 @@ def fatura_detay_getir(fatura_id: str, tenant_id=None) -> dict:
         for inc in included:
             if inc.get("type") == "payments" and inc["id"] in payment_ids:
                 a = inc.get("attributes", {})
+                # payment → transaction ilişkisi (silme için gerekli)
+                tx_rel = inc.get("relationships", {}).get("transaction", {}).get("data") or {}
+                tx_id  = tx_rel.get("id") if isinstance(tx_rel, dict) else None
                 tahsilatlar.append({
-                    "tarih":    a.get("date", "-"),
-                    "tutar":    float(a.get("amount", 0)),
-                    "aciklama": a.get("description", "-"),
+                    "id":              inc["id"],
+                    "transaction_id":  tx_id,
+                    "tarih":           a.get("date", "-"),
+                    "tutar":           float(a.get("amount", 0)),
+                    "aciklama":        a.get("description", "-"),
                 })
         irsaliye_ids = [d["id"] for d in data.get("relationships", {}).get("shipment_documents", {}).get("data", [])]
         try:
@@ -713,6 +721,11 @@ def hesap_ozeti_getir(tenant_id=None) -> dict:
 
 
 def islem_gecmisi_getir(cari_id: str, baslangic: str = None, bitis: str = None, tenant_id=None) -> dict:
+    """
+    Carinin işlem geçmişi — hem satış (sales_invoices) hem alış (purchase_bills)
+    + bağlı ödemeler. Müşteri/Tedarikçi ayrımı yapmadan iki kanaldan da çekilir;
+    cari hangisiyse onlar dolu döner. Hurda sektöründe çoğu cari "both" tipinde.
+    """
     tid   = _resolve_tid(tenant_id)
     creds = _tenant_credentials(tid)
     cid   = creds["company_id"]
@@ -721,6 +734,8 @@ def islem_gecmisi_getir(cari_id: str, baslangic: str = None, bitis: str = None, 
         bakiye = cari.get("bakiye", 0.0)
         islemler = []
         eklenen_tahsilat_ids = set()
+
+        # ── 1) SATIŞ FATURALARI + TAHSİLATLAR ──────────────────────────
         page = 1
         while page <= 50:
             fatura_sonuc = parasut_get(
@@ -774,6 +789,79 @@ def islem_gecmisi_getir(cari_id: str, baslangic: str = None, bitis: str = None, 
                 break
             page += 1
 
+        # ── 2) ALIŞ FATURALARI + ÖDEMELER (tedarikçi geçmişi) ──────────
+        page = 1
+        eklenen_odeme_ids = set()
+        while page <= 50:
+            try:
+                pb_sonuc = parasut_get(
+                    f"/{cid}/purchase_bills",
+                    params={"filter[supplier_id]": cari_id, "include": "payments",
+                            "page[size]": 25, "page[number]": page, "sort": "-issue_date"},
+                    tenant_id=tid,
+                )
+            except Exception as e:
+                # Bazı eski Paraşüt instansları filter[supplier_id] yerine
+                # filter[contact_id] istiyor — fallback dene
+                logger.warning(f"purchase_bills filter[supplier_id] başarısız, fallback: {e}")
+                try:
+                    pb_sonuc = parasut_get(
+                        f"/{cid}/purchase_bills",
+                        params={"filter[contact_id]": cari_id, "include": "payments",
+                                "page[size]": 25, "page[number]": page, "sort": "-issue_date"},
+                        tenant_id=tid,
+                    )
+                except Exception:
+                    pb_sonuc = {"data": [], "included": []}
+            alis_faturalar = pb_sonuc.get("data", [])
+            pb_included    = pb_sonuc.get("included", [])
+            pb_payment_map = {it["id"]: it for it in pb_included if it.get("type") == "payments"}
+
+            for f in alis_faturalar:
+                attr  = f.get("attributes", {})
+                tarih = attr.get("issue_date", "-")
+                if baslangic and tarih < baslangic:
+                    continue
+                if bitis and tarih > bitis:
+                    continue
+                try:
+                    tutar = float(attr.get("gross_total") or 0)
+                except (ValueError, TypeError):
+                    tutar = 0.0
+                islemler.append({
+                    "id": f.get("id"), "tarih": tarih, "tur": "purchase_bill",
+                    "aciklama": attr.get("description") or "Alış Faturası",
+                    # Alış faturası bizim için borç (-)
+                    "tutar": -tutar, "durum": attr.get("payment_status", "-"),
+                    "kalan": float(attr.get("remaining") or 0),
+                })
+                for pid in [d["id"] for d in f.get("relationships", {}).get("payments", {}).get("data", [])]:
+                    if pid in eklenen_odeme_ids:
+                        continue
+                    p = pb_payment_map.get(pid)
+                    if not p:
+                        continue
+                    eklenen_odeme_ids.add(pid)
+                    pattr  = p.get("attributes", {})
+                    ptarih = pattr.get("date", "-")
+                    if baslangic and ptarih < baslangic:
+                        continue
+                    if bitis and ptarih > bitis:
+                        continue
+                    try:
+                        ptutar = float(pattr.get("amount") or 0)
+                    except (ValueError, TypeError):
+                        ptutar = 0.0
+                    islemler.append({
+                        "id": pid, "tarih": ptarih, "tur": "supplier_payment",
+                        "aciklama": pattr.get("notes") or pattr.get("description") or "Tedarikçi ödemesi",
+                        # Tedarikçiye ödeme bizim için para çıkışı (+)
+                        "tutar": ptutar, "durum": "paid", "kalan": 0,
+                    })
+            if len(alis_faturalar) < 25:
+                break
+            page += 1
+
         islemler.sort(key=lambda x: x.get("tarih", ""), reverse=True)
         logger.info(f"İşlem geçmişi: cari_id={cari_id} toplam={len(islemler)} işlem (tenant={tid})")
         return {"cari_id": cari_id, "cari_adi": cari.get("ad", "-"), "bakiye": bakiye, "islemler": islemler}
@@ -790,12 +878,19 @@ def cari_olustur(
         vergi_dairesi: str = None,
         adres: str = None,
         tenant_id=None,
+        tip: str = "customer",
 ) -> dict:
+    """
+    Yeni cari oluşturur.
+    tip: 'customer' (müşteri), 'supplier' (tedarikçi), 'customer_supplier' (her ikisi)
+    """
     tid   = _resolve_tid(tenant_id)
     creds = _tenant_credentials(tid)
     cid   = creds["company_id"]
+    # Güvenli varsayılan — geçersiz değer gelirse customer'a düş
+    tip_temiz = tip if tip in ("customer", "supplier", "customer_supplier") else "customer"
     try:
-        attributes = {"name": firma_adi, "contact_type": "company", "account_type": "customer"}
+        attributes = {"name": firma_adi, "contact_type": "company", "account_type": tip_temiz}
         if email:         attributes["email"] = email
         if telefon:       attributes["phone"] = telefon
         if vergi_no:      attributes["tax_number"] = vergi_no
@@ -813,6 +908,49 @@ def cari_olustur(
 
 
 # ── KASA HESABI ───────────────────────────────────────────────────────
+
+def cari_guncelle(
+        cari_id: str,
+        firma_adi: str = None,
+        email: str = None,
+        telefon: str = None,
+        vergi_no: str = None,
+        vergi_dairesi: str = None,
+        adres: str = None,
+        tip: str = None,
+        tenant_id=None,
+) -> dict:
+    """
+    Mevcut cariyi günceller (PUT /contacts/{id}).
+    Sadece dolu gelen alanlar gönderilir; diğerleri korunur.
+    """
+    tid   = _resolve_tid(tenant_id)
+    creds = _tenant_credentials(tid)
+    cid   = creds["company_id"]
+    try:
+        attrs = {}
+        if firma_adi:     attrs["name"]         = firma_adi
+        if email:         attrs["email"]        = email
+        if telefon:       attrs["phone"]        = telefon
+        if vergi_no:      attrs["tax_number"]   = vergi_no
+        if vergi_dairesi: attrs["tax_office"]   = vergi_dairesi
+        if adres:         attrs["address"]      = adres
+        if tip and tip in ("customer", "supplier", "customer_supplier"):
+            attrs["account_type"] = tip
+        if not attrs:
+            return {"basarili": False, "hata": "Güncellenecek alan yok"}
+        istek = {"data": {"id": str(cari_id), "type": "contacts", "attributes": attrs}}
+        sonuc = parasut_put(f"/{cid}/contacts/{cari_id}", istek, tenant_id=tid)
+        logger.info(f"Cari güncellendi: {cari_id} alanlar={list(attrs.keys())} (tenant={tid})")
+        try:
+            cari_cache_yenile(tenant_id=tid)
+        except Exception:
+            pass
+        return {"basarili": True, "id": cari_id, "veri": sonuc.get("data", {}).get("attributes", {})}
+    except Exception as e:
+        logger.error(f"Cari güncelleme hatası: {e}")
+        return {"basarili": False, "hata": str(e)}
+
 
 def _kasa_hesabi_bul(tenant_id=None) -> str | None:
     tid   = _resolve_tid(tenant_id)
@@ -870,6 +1008,48 @@ def fatura_tahsilat_ekle(
         return {"basarili": True, "id": odeme_id, "fatura_id": fatura_id, "tutar": tutar, "tarih": bugun}
     except Exception as e:
         logger.error(f"Fatura tahsilat hatası: {e}")
+        return {"basarili": False, "hata": str(e)}
+
+
+def tahsilat_sil(odeme_id: str, tenant_id=None, transaction_id: str = None) -> dict:
+    """
+    Paraşüt'te bir tahsilatı/ödemeyi siler.
+
+    Paraşüt dokümantasyonuna göre tahsilatı silmek = tahsilatı oluşturan
+    PARA AKIŞ İŞLEMİNİ (transaction) silmek demektir. Yani DELETE
+    /transactions/{transaction_id} kullanılır — payment id DEĞİL.
+
+    transaction_id verilirse direkt onunla siler.
+    Verilmezse: payment id'sinden transaction id'sini bulmak gerekir
+    (caller tarafından sağlanmalı). Geriye uyumluluk için son çare olarak
+    payment id ile silmeyi de dener.
+    """
+    tid   = _resolve_tid(tenant_id)
+    creds = _tenant_credentials(tid)
+    cid   = creds["company_id"]
+    try:
+        if transaction_id:
+            parasut_delete(f"/{cid}/transactions/{transaction_id}", tenant_id=tid)
+            logger.info(f"Tahsilat silindi (transaction_id={transaction_id}) (tenant={tid})")
+        else:
+            # Geriye uyumluluk: önce transactions, sonra payments dene
+            try:
+                parasut_delete(f"/{cid}/transactions/{odeme_id}", tenant_id=tid)
+                logger.info(f"Tahsilat silindi (legacy, id={odeme_id} → transactions) (tenant={tid})")
+            except Exception as e:
+                logger.warning(f"/transactions/{odeme_id} silinemedi, /payments deneniyor: {e}")
+                parasut_delete(f"/{cid}/payments/{odeme_id}", tenant_id=tid)
+                logger.info(f"Tahsilat silindi (legacy, id={odeme_id} → payments) (tenant={tid})")
+        try:
+            cari_cache_yenile(tenant_id=tid)
+        except Exception:
+            pass
+        return {"basarili": True, "id": odeme_id, "transaction_id": transaction_id}
+    except Exception as e:
+        logger.error(f"Tahsilat silme hatası: {e}")
+        return {"basarili": False, "hata": str(e)}
+
+
         return {"basarili": False, "hata": str(e)}
 
 
@@ -1266,36 +1446,61 @@ def alıs_faturasi_odeme_ekle(
 
 
 def stok_hareketleri_getir(urun_id: str = None, limit: int = 50, tenant_id=None) -> list:
-    """Stok giriş/çıkış hareketlerini döner. urun_id ile filtrelenebilir."""
+    """
+    Stok giriş/çıkış hareketlerini döner. urun_id ile filtrelenebilir.
+    include=product,contact — ürün adı + cari adı doğrudan Paraşüt'ten gelir;
+    böylece main.py'de DB'ye join atmaya gerek kalmaz (firma değeri 'firma'
+    alanına yazılır, fallback olarak shipment_document üzerinden DB'den de
+    çekilebilir).
+    """
     tid   = _resolve_tid(tenant_id)
     creds = _tenant_credentials(tid)
     cid   = creds["company_id"]
     try:
-        params = {"page[size]": min(limit, 25), "sort": "-date", "include": "product"}
+        params = {"page[size]": min(limit, 25), "sort": "-date", "include": "product,contact"}
         if urun_id:
             params["filter[product_id]"] = urun_id
-        sonuc    = parasut_get(f"/{cid}/stock_movements", params=params, tenant_id=tid)
+        try:
+            sonuc = parasut_get(f"/{cid}/stock_movements", params=params, tenant_id=tid)
+        except Exception as e:
+            # include=contact desteklenmezse fallback (eski davranış)
+            logger.warning(f"stock_movements include=contact başarısız, product'a düşülüyor: {e}")
+            params["include"] = "product"
+            sonuc = parasut_get(f"/{cid}/stock_movements", params=params, tenant_id=tid)
+        included = sonuc.get("included", [])
         # Ürün adlarını included'dan al
         urun_map = {
             inc["id"]: inc.get("attributes", {}).get("name", "-")
-            for inc in sonuc.get("included", [])
+            for inc in included
             if inc.get("type") == "products"
+        }
+        # Cari adlarını included'dan al
+        contact_map = {
+            inc["id"]: inc.get("attributes", {}).get("name", "-")
+            for inc in included
+            if inc.get("type") == "contacts"
         }
         hareketler = []
         for h in sonuc.get("data", []):
             attr = h.get("attributes", {})
+            rels = h.get("relationships", {})
             # Ürün adını ilişkiden bul
-            urun_rel  = h.get("relationships", {}).get("product", {}).get("data") or {}
+            urun_rel  = rels.get("product", {}).get("data") or {}
             urun_id_r = urun_rel.get("id")
             urun_adi  = urun_map.get(urun_id_r) if urun_id_r else None
+            # Cari adını ilişkiden bul (varsa)
+            contact_rel = rels.get("contact", {}).get("data") or {}
+            contact_id  = contact_rel.get("id") if isinstance(contact_rel, dict) else None
+            firma_adi   = contact_map.get(contact_id) if contact_id else ""
             aciklama  = attr.get("description") or "-"   # "{plaka} — {malzeme} — {kg} kg"
-            # Shipment document ID → main.py'de DB'den firma çekmek için
-            sd_rel    = h.get("relationships", {}).get("shipment_document", {}).get("data") or {}
+            # Shipment document ID → fallback olarak DB'den firma çekmek için
+            sd_rel    = rels.get("shipment_document", {}).get("data") or {}
             sd_id     = sd_rel.get("id")
             hareketler.append({
                 "id":          h["id"],
                 "tarih":       (attr.get("date") or attr.get("created_at") or "-")[:10],
                 "miktar":      float(attr.get("quantity", 0) or 0),
+                "firma":       firma_adi or "",
                 "urun":        urun_adi or "-",
                 "aciklama":    aciklama,
                 "giris_mi":    attr.get("inflow", False),
@@ -1498,12 +1703,21 @@ def satis_faturasi_arsivle(fatura_id: str, tenant_id=None) -> dict:
 
 
 def satis_faturasi_arsivden_cikar(fatura_id: str, tenant_id=None) -> dict:
-    """Arşivdeki satış faturasını aktife alır."""
+    """
+    Arşivdeki satış faturasını aktife alır.
+    Paraşüt V4 dokümantasyonu 'unarchive' action'ı kullanıyor.
+    Eski API 'recover_from_archive' ile çalışıyordu — geriye uyumluluk için
+    önce yenisini, başarısızsa eskisini deniyoruz.
+    """
     tid   = _resolve_tid(tenant_id)
     creds = _tenant_credentials(tid)
     cid   = creds["company_id"]
     try:
-        parasut_patch(f"/{cid}/sales_invoices/{fatura_id}/recover_from_archive", tenant_id=tid)
+        try:
+            parasut_patch(f"/{cid}/sales_invoices/{fatura_id}/unarchive", tenant_id=tid)
+        except Exception as e:
+            logger.warning(f"unarchive başarısız, recover_from_archive deneniyor: {e}")
+            parasut_patch(f"/{cid}/sales_invoices/{fatura_id}/recover_from_archive", tenant_id=tid)
         logger.info(f"Satış faturası arşivden çıkarıldı: {fatura_id} (tenant={tid})")
         return {"basarili": True, "fatura_id": fatura_id, "durum": "aktif"}
     except Exception as e:
@@ -1710,11 +1924,16 @@ def alis_faturasi_arsivle(fatura_id: str, tenant_id=None) -> dict:
 
 
 def alis_faturasi_arsivden_cikar(fatura_id: str, tenant_id=None) -> dict:
+    """V4 'unarchive' önce, geriye uyumlu 'recover_from_archive' fallback."""
     tid   = _resolve_tid(tenant_id)
     creds = _tenant_credentials(tid)
     cid   = creds["company_id"]
     try:
-        parasut_patch(f"/{cid}/purchase_bills/{fatura_id}/recover_from_archive", tenant_id=tid)
+        try:
+            parasut_patch(f"/{cid}/purchase_bills/{fatura_id}/unarchive", tenant_id=tid)
+        except Exception as e:
+            logger.warning(f"unarchive başarısız, recover_from_archive deneniyor: {e}")
+            parasut_patch(f"/{cid}/purchase_bills/{fatura_id}/recover_from_archive", tenant_id=tid)
         logger.info(f"Alış faturası arşivden çıkarıldı: {fatura_id} (tenant={tid})")
         return {"basarili": True, "fatura_id": fatura_id, "durum": "aktif"}
     except Exception as e:
@@ -1759,7 +1978,7 @@ def alis_faturasi_detay_getir(fatura_id: str, tenant_id=None) -> dict:
     try:
         sonuc    = parasut_get(
             f"/{cid}/purchase_bills/{fatura_id}",
-            params={"include": "supplier,details,details.product,payments"},
+            params={"include": "supplier,details,details.product,payments,payments.transaction"},
             tenant_id=tid,
         )
         data     = sonuc.get("data", {})
@@ -1789,10 +2008,14 @@ def alis_faturasi_detay_getir(fatura_id: str, tenant_id=None) -> dict:
         for inc in included:
             if inc.get("type") == "payments" and inc["id"] in payment_ids:
                 a = inc.get("attributes", {})
+                tx_rel = inc.get("relationships", {}).get("transaction", {}).get("data") or {}
+                tx_id  = tx_rel.get("id") if isinstance(tx_rel, dict) else None
                 odemeler.append({
-                    "tarih":    a.get("date", "-"),
-                    "tutar":    float(a.get("amount", 0) or 0),
-                    "aciklama": a.get("description", "-"),
+                    "id":             inc["id"],
+                    "transaction_id": tx_id,
+                    "tarih":          a.get("date", "-"),
+                    "tutar":          float(a.get("amount", 0) or 0),
+                    "aciklama":       a.get("description", "-"),
                 })
 
         try:
@@ -2114,6 +2337,21 @@ async def async_tahsilat_ekle(
         aciklama: str = None, tarih: str = None, tenant_id=None
 ) -> dict:
     return await asyncio.to_thread(tahsilat_ekle, cari_adi, tutar, aciklama, tarih, tenant_id)
+
+
+async def async_tahsilat_sil(odeme_id: str, tenant_id=None, transaction_id: str = None) -> dict:
+    return await asyncio.to_thread(tahsilat_sil, odeme_id, tenant_id, transaction_id)
+
+
+async def async_cari_guncelle(
+        cari_id: str, firma_adi: str = None, email: str = None,
+        telefon: str = None, vergi_no: str = None, vergi_dairesi: str = None,
+        adres: str = None, tip: str = None, tenant_id=None,
+) -> dict:
+    return await asyncio.to_thread(
+        cari_guncelle, cari_id, firma_adi, email, telefon,
+        vergi_no, vergi_dairesi, adres, tip, tenant_id,
+    )
 
 
 async def async_cari_faturalari_getir(

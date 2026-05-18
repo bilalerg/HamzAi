@@ -81,8 +81,25 @@ BASE_URL = os.getenv("BASE_URL", "")
 # ── CORS ───────────────────────────────────────────────────────────
 # Üretimde izin verilen origin'leri .env'de virgülle ayırarak tanımlayın.
 # Örnek: ALLOWED_ORIGINS=https://profaix.com,https://chat.profaix.com
+#
+# GÜVENLİK: Production'da ALLOWED_ORIGINS boş bırakılırsa "*" kullanmak
+# yerine güvenli default (profaix.com aileleri) kullanılır. "*" ile
+# allow_credentials=True birleştiğinde tarayıcı zaten reddeder, ama yine de
+# kapalı tutalım.
 _raw_origins    = os.getenv("ALLOWED_ORIGINS", "")
-ALLOWED_ORIGINS: list = [o.strip() for o in _raw_origins.split(",") if o.strip()] if _raw_origins else ["*"]
+_default_origins = [
+    "https://profaix.com",
+    "https://www.profaix.com",
+    "https://chat.profaix.com",
+    "https://app.profaix.com",
+    "https://profaix-api.onrender.com",
+]
+if _raw_origins:
+    ALLOWED_ORIGINS: list = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+elif os.getenv("ENV", "development") == "production":
+    ALLOWED_ORIGINS: list = _default_origins
+else:
+    ALLOWED_ORIGINS: list = ["*"]
 
 # ── DOĞRULAMA ──────────────────────────────────────────────────────────
 _GUVENSIZ_DEFAULTS = {

@@ -709,12 +709,14 @@ async def upload_fis(request: Request, background_tasks: BackgroundTasks,
 
         # Cari listesi async çekiliyor — event loop bloklanmıyor
         # Kantar fişi = gelen mal = tedarikçi → sadece supplier + both göster
+        # Not: cache'lenmiş tam liste üzerinden filtreliyoruz; tüm carilere
+        # ait account_type bilgisi zaten cache'de var, ek API çağrısı yapılmaz.
         from app.parasut.client import async_cari_listesi_getir
         cariler       = await async_cari_listesi_getir(tenant_id=tenant_id)
-        firma_listesi = [
+        firma_listesi = sorted({
             c["ad"] for c in cariler
             if c.get("account_type", "customer") in ("supplier", "both", "customer_supplier")
-        ]
+        })
 
         return JSONResponse({
             "cevap": cevap, "bekliyor": "firma_sec", "ticket_id": ticket.id,
@@ -847,7 +849,13 @@ async def firma_sec(request: Request, background_tasks: BackgroundTasks):
 # ── CARİLER ───────────────────────────────────────────────────────────
 
 @app.get("/api/cariler")
-async def cariler_getir(request: Request, background_tasks: BackgroundTasks, refresh: bool = False):
+async def cariler_getir(request: Request, background_tasks: BackgroundTasks,
+                        refresh: bool = False, tip: str = None):
+    """
+    Cari listesi.
+    ?tip=customer / supplier / both filtresi ile sunucu tarafında süzme.
+    'both' → customer + customer_supplier dahil edilir.
+    """
     aktif_user = mevcut_kullanici(request)
     tenant_id  = _tenant_id_from_user(aktif_user)
     if aktif_user:
@@ -857,6 +865,14 @@ async def cariler_getir(request: Request, background_tasks: BackgroundTasks, ref
     try:
         from app.parasut.client import async_cari_listesi_getir, async_cari_cache_yenile
         cariler = await async_cari_cache_yenile(tenant_id=tenant_id) if refresh else await async_cari_listesi_getir(tenant_id=tenant_id)
+        # Tip filtresi — UI tarafındaki dropdown filtrelerini sunucuya çekiyoruz
+        tip_norm = (tip or "").strip().lower()
+        if tip_norm in ("customer", "musteri", "müşteri"):
+            cariler = [c for c in cariler
+                       if c.get("account_type", "customer") in ("customer", "both", "customer_supplier")]
+        elif tip_norm in ("supplier", "tedarikci", "tedarikçi"):
+            cariler = [c for c in cariler
+                       if c.get("account_type", "customer") in ("supplier", "both", "customer_supplier")]
         sonuc   = [{"id": c["id"], "ad": c["ad"], "bakiye": c.get("bakiye", 0), "tip": c.get("account_type", "customer")} for c in cariler]
         sonuc.sort(key=lambda x: x["bakiye"], reverse=True)
         return JSONResponse({"cariler": sonuc, "toplam": len(sonuc)})
@@ -1071,6 +1087,42 @@ async def tahsilat_ekle_endpoint(request: Request, background_tasks: BackgroundT
 
 # ── YENİ CARİ ────────────────────────────────────────────────────────
 
+@app.post("/api/tahsilat-sil")
+async def tahsilat_sil_endpoint(request: Request, background_tasks: BackgroundTasks):
+    """
+    Bir tahsilat/ödeme kaydını Paraşüt'ten siler.
+    Body: {odeme_id, transaction_id?}
+    Paraşüt dökümantasyonu: tahsilat silmek için transaction_id gerekli.
+    Frontend fatura detayından gelirken her ikisini de gönderir.
+    """
+    aktif_user = mevcut_kullanici(request)
+    tenant_id  = _tenant_id_from_user(aktif_user)
+    data       = await request.json()
+    odeme_id        = str(data.get("odeme_id") or "").strip()
+    transaction_id  = str(data.get("transaction_id") or "").strip() or None
+    if not odeme_id and not transaction_id:
+        return JSONResponse({"basarili": False, "hata": "odeme_id veya transaction_id zorunlu"}, status_code=400)
+    try:
+        from app.parasut.client import async_tahsilat_sil
+        sonuc = await async_tahsilat_sil(odeme_id, tenant_id=tenant_id, transaction_id=transaction_id)
+        if sonuc.get("basarili"):
+            if aktif_user:
+                background_tasks.add_task(_billable_kaydet, aktif_user, "TAHSILAT_SILINDI",
+                                          f"odeme={odeme_id}", 1, "parasut",
+                                          {"odeme_id": odeme_id}, f"tahsilat_sil:{odeme_id}")
+            db = SessionLocal()
+            try:
+                _islem_log(db, "TAHSILAT_SILINDI", aciklama=f"Ödeme silindi: {odeme_id}",
+                           request=request, user=aktif_user)
+            finally:
+                db.close()
+            return JSONResponse(sonuc)
+        return JSONResponse(sonuc, status_code=500)
+    except Exception as e:
+        logger.error(f"Tahsilat sil endpoint hatası: {e}")
+        return JSONResponse({"basarili": False, "hata": _guvenli_hata(e)}, status_code=500)
+
+
 @app.post("/api/cari-olustur")
 async def cari_olustur_endpoint(request: Request, background_tasks: BackgroundTasks):
     import asyncio
@@ -1081,6 +1133,15 @@ async def cari_olustur_endpoint(request: Request, background_tasks: BackgroundTa
     vergi_no      = data.get("vergi_no", "").strip() or None
     vergi_dairesi = data.get("vergi_dairesi", "").strip() or None
     adres         = data.get("adres", "").strip() or None
+    tip_raw       = (data.get("tip") or "customer").strip().lower()
+    # UI'dan gelen değerleri Paraşüt'ün beklediği değerlere normalize et
+    _tip_map = {
+        "customer": "customer", "musteri": "customer", "müşteri": "customer",
+        "supplier": "supplier", "tedarikci": "supplier", "tedarikçi": "supplier",
+        "both": "customer_supplier", "her_ikisi": "customer_supplier",
+        "customer_supplier": "customer_supplier",
+    }
+    tip = _tip_map.get(tip_raw, "customer")
 
     if not firma_adi:
         return JSONResponse({"basarili": False, "cevap": "❌ Firma adı gerekli."})
@@ -1089,7 +1150,7 @@ async def cari_olustur_endpoint(request: Request, background_tasks: BackgroundTa
     tenant_id  = _tenant_id_from_user(aktif_user)
     try:
         from app.parasut.client import cari_olustur
-        sonuc = await asyncio.to_thread(cari_olustur, firma_adi, email, telefon, vergi_no, vergi_dairesi, adres, tenant_id)
+        sonuc = await asyncio.to_thread(cari_olustur, firma_adi, email, telefon, vergi_no, vergi_dairesi, adres, tenant_id, tip)
         if sonuc.get("basarili"):
             if aktif_user:
                 background_tasks.add_task(_usage_kaydet, aktif_user["id"], aktif_user["username"],
@@ -1116,6 +1177,66 @@ async def cari_olustur_endpoint(request: Request, background_tasks: BackgroundTa
     except Exception as e:
         logger.error(f"Cari oluştur hatası: {e}")
         return JSONResponse({"basarili": False, "cevap": f"❌ Hata: {_guvenli_hata(e)}"})
+
+
+@app.post("/api/cari-guncelle")
+async def cari_guncelle_endpoint(request: Request, background_tasks: BackgroundTasks):
+    """
+    Mevcut bir cariyi günceller.
+    Body: {cari_id veya cari_adi, firma_adi?, email?, telefon?, vergi_no?, vergi_dairesi?, adres?, tip?}
+    """
+    aktif_user = mevcut_kullanici(request)
+    tenant_id  = _tenant_id_from_user(aktif_user)
+    data       = await request.json()
+    cari_id    = str(data.get("cari_id") or "").strip() or None
+    cari_adi_kaynak = str(data.get("cari_adi") or "").strip()
+
+    if not cari_id and not cari_adi_kaynak:
+        return JSONResponse({"basarili": False, "hata": "cari_id veya cari_adi zorunlu"}, status_code=400)
+
+    try:
+        from app.parasut.client import async_cari_guncelle, async_cari_id_bul
+        if not cari_id:
+            cari_id = await async_cari_id_bul(cari_adi_kaynak, tenant_id=tenant_id)
+            if not cari_id:
+                return JSONResponse({"basarili": False, "hata": f"'{cari_adi_kaynak}' bulunamadı"}, status_code=404)
+
+        tip_raw = (data.get("tip") or "").strip().lower()
+        _tip_map = {
+            "customer": "customer", "musteri": "customer", "müşteri": "customer",
+            "supplier": "supplier", "tedarikci": "supplier", "tedarikçi": "supplier",
+            "both": "customer_supplier", "her_ikisi": "customer_supplier",
+            "customer_supplier": "customer_supplier",
+        }
+        tip = _tip_map.get(tip_raw) if tip_raw else None
+
+        sonuc = await async_cari_guncelle(
+            cari_id=str(cari_id),
+            firma_adi=(data.get("firma_adi") or "").strip() or None,
+            email=(data.get("email") or "").strip() or None,
+            telefon=(data.get("telefon") or "").strip() or None,
+            vergi_no=(data.get("vergi_no") or "").strip() or None,
+            vergi_dairesi=(data.get("vergi_dairesi") or "").strip() or None,
+            adres=(data.get("adres") or "").strip() or None,
+            tip=tip,
+            tenant_id=tenant_id,
+        )
+        if sonuc.get("basarili"):
+            if aktif_user:
+                background_tasks.add_task(_billable_kaydet, aktif_user, "CARI_GUNCELLENDI",
+                                          f"cari_id={cari_id}", 1, "parasut",
+                                          {"cari_id": cari_id}, None)
+            db = SessionLocal()
+            try:
+                _islem_log(db, "CARI_GUNCELLENDI", cari_adi=cari_adi_kaynak or str(cari_id),
+                           aciklama=f"Güncellenen: {cari_id}", request=request, user=aktif_user)
+            finally:
+                db.close()
+            return JSONResponse(sonuc)
+        return JSONResponse(sonuc, status_code=500)
+    except Exception as e:
+        logger.error(f"Cari güncelle endpoint hatası: {e}")
+        return JSONResponse({"basarili": False, "hata": _guvenli_hata(e)}, status_code=500)
 
 
 # ── BEKLEYENİRSALİYELER ──────────────────────────────────────────────
@@ -1881,20 +2002,27 @@ async def stok_hareketleri_endpoint(request: Request, urun_id: str = None, limit
     try:
         hareketler = await async_stok_hareketleri_getir(urun_id=urun_id, limit=limit, tenant_id=tenant_id)
 
-        # Shipment document ID'lerinden firma adlarını DB'den çek
-        irsaliye_ids = [h["irsaliye_id"] for h in hareketler if h.get("irsaliye_id")]
-        if irsaliye_ids:
+        # Paraşüt include=contact ile firma adı zaten gelir. Yine de
+        # contact ilişkisi boş olabilen hareketler için (eski kayıtlar /
+        # contact filtresinin desteklemediği durumlar) DB üzerinden
+        # shipment_document → WeighTicket.firma ile fallback yapılır.
+        eksik_irs_ids = [
+            h["irsaliye_id"] for h in hareketler
+            if h.get("irsaliye_id") and not h.get("firma")
+        ]
+        if eksik_irs_ids:
             db = SessionLocal()
             try:
                 kayitlar = (
                     db.query(Waybill.parasut_irsaliye_id, WeighTicket.firma)
                     .join(WeighTicket, Waybill.ticket_id == WeighTicket.id)
-                    .filter(Waybill.parasut_irsaliye_id.in_(irsaliye_ids))
+                    .filter(Waybill.parasut_irsaliye_id.in_(eksik_irs_ids))
                     .all()
                 )
                 firma_map = {r.parasut_irsaliye_id: r.firma for r in kayitlar}
                 for h in hareketler:
-                    h["firma"] = firma_map.get(h.get("irsaliye_id"), "")
+                    if not h.get("firma"):
+                        h["firma"] = firma_map.get(h.get("irsaliye_id"), "")
             finally:
                 db.close()
 
