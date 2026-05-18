@@ -40,12 +40,33 @@ def plaka_kontrol_et(plaka: str, ticket_id: int, db, fis_no: str = None) -> Plak
     plaka = plaka.upper().strip()
 
     # ── ADIM 1: FİŞ NO DUPLICATE KONTROLÜ ──────────────────────────────
-    # Fiş no her fişe özgündür — aynı fiş no tekrar gelirse duplicate
+    # Fiş no her fişe özgündür — aynı fiş no tekrar gelirse duplicate.
+    #
+    # ÖNEMLİ: Sadece "gerçekten Paraşüt'e gitmiş" statuslar duplicate sayılır.
+    # Kullanıcı OCR'dan sonra "✕ İptal" basarsa WeighTicket OCR_TAMAMLANDI'da
+    # DB'de duruyor — bunu duplicate saymak yanlış. Aynı şekilde IPTAL/HATA
+    # statusundakiler de yeni denemeyi engellemez.
+    #
+    # Duplicate sayılanlar:
+    #   IRSALIYE_OLUSTURULUYOR / IRSALIYE_TAMAMLANDI / FABRIKA_BEKLENIYOR
+    #   FABRIKA_ITIRAZI / FATURA_KESILIYOR / TAMAMLANDI
+    # Duplicate sayılmayanlar:
+    #   ALINDI / OCR_TAMAMLANDI / OCR_DOGRULAMA_BEKLIYOR /
+    #   PLAKA_KONTROL_BEKLENIYOR / IPTAL / HATA
+    AKTIF_DUPLICATE_STATUSLARI = (
+        TicketStatus.IRSALIYE_OLUSTURULUYOR,
+        TicketStatus.IRSALIYE_TAMAMLANDI,
+        TicketStatus.FABRIKA_BEKLENIYOR,
+        TicketStatus.FABRIKA_ITIRAZI,
+        TicketStatus.FATURA_KESILIYOR,
+        TicketStatus.TAMAMLANDI,
+    )
     if fis_no:
         fis_no = str(fis_no).strip()
         mevcut_fis = db.query(WeighTicket).filter(
             WeighTicket.fis_no == fis_no,
-            WeighTicket.id != ticket_id  # Kendisini sayma
+            WeighTicket.id != ticket_id,
+            WeighTicket.status.in_(AKTIF_DUPLICATE_STATUSLARI),
         ).first()
 
         if mevcut_fis:

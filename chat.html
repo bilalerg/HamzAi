@@ -2452,7 +2452,18 @@
         iptalHizliBtn.className = 'btn-cancel';
         iptalHizliBtn.style.cssText = 'padding:7px 12px;border-radius:8px;font-size:12px;cursor:pointer;';
         iptalHizliBtn.textContent = '✕';
-        iptalHizliBtn.onclick = function() { addMessage('❌ Fiş işlemi iptal edildi.', 'bot'); };
+        iptalHizliBtn.onclick = async function() {
+          onayHizliBtn.disabled = true; duzleBtn.disabled = true; iptalHizliBtn.disabled = true;
+          // Backend'e iptal bilgisi gönder — duplicate kontrolünde dikkate alınmasın
+          try {
+            await fetch('/api/fis-iptal', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({ ticket_id: data.ticket_id }),
+            });
+          } catch (e) { /* sessizce geç */ }
+          addMessage('❌ Fiş işlemi iptal edildi.', 'bot');
+        };
 
         onayHizliBtn.onclick = function() {
           const firma = secilenFirma || ddInp.value.trim();

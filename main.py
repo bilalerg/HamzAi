@@ -743,6 +743,52 @@ async def upload_fis(request: Request, background_tasks: BackgroundTasks,
 
 # ── FİRMA SEÇ → İRSALİYE OLUŞTUR ────────────────────────────────────
 
+@app.post("/api/fis-iptal")
+async def fis_iptal(request: Request, background_tasks: BackgroundTasks):
+    """
+    OCR sonrası kullanıcı '✕ İptal' bastığında çağrılır.
+    İlgili WeighTicket'i IPTAL statusuna alır — duplicate kontrolünde
+    artık dikkate alınmaz, kullanıcı aynı fişi yeniden yükleyebilir.
+    Body: {ticket_id}
+    """
+    aktif_user = mevcut_kullanici(request)
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse({"basarili": False, "hata": "Geçersiz JSON"}, status_code=400)
+    ticket_id = data.get("ticket_id")
+    if not ticket_id:
+        return JSONResponse({"basarili": False, "hata": "ticket_id zorunlu"}, status_code=400)
+    db = SessionLocal()
+    try:
+        from app.core.database import WeighTicket, TicketStatus
+        ticket = db.query(WeighTicket).filter(WeighTicket.id == int(ticket_id)).first()
+        if not ticket:
+            return JSONResponse({"basarili": False, "hata": "Fiş bulunamadı"}, status_code=404)
+        # Sadece henüz Paraşüt'e gitmemiş kayıtlar iptal edilebilir
+        if ticket.status not in (
+            TicketStatus.ALINDI, TicketStatus.OCR_TAMAMLANDI,
+            TicketStatus.OCR_DOGRULAMA_BEKLIYOR, TicketStatus.PLAKA_KONTROL_BEKLENIYOR,
+            TicketStatus.HATA,
+        ):
+            return JSONResponse({
+                "basarili": False,
+                "hata": "Bu fiş zaten Paraşüt'e gönderilmiş, iptal edilemez."
+            }, status_code=409)
+        ticket.status = TicketStatus.IPTAL
+        db.commit()
+        _islem_log(db, "FIS_IPTAL", plaka=ticket.plaka,
+                   aciklama=f"Fiş No: {ticket.fis_no or '-'} kullanıcı tarafından iptal edildi",
+                   request=request, user=aktif_user)
+        logger.info(f"Fiş iptal edildi: ticket_id={ticket_id} plaka={ticket.plaka}")
+        return JSONResponse({"basarili": True})
+    except Exception as e:
+        logger.error(f"Fiş iptal hatası: {e}")
+        return JSONResponse({"basarili": False, "hata": _guvenli_hata(e)}, status_code=500)
+    finally:
+        db.close()
+
+
 @app.post("/api/firma-sec")
 async def firma_sec(request: Request, background_tasks: BackgroundTasks):
     data          = await request.json()
