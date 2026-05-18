@@ -296,20 +296,18 @@ def parasut_patch(endpoint: str, veri: dict = None, tenant_id=None) -> dict:
 
 # ── CARİ CACHE ────────────────────────────────────────────────────────
 
-def _cari_listesi_api(tenant_id=None) -> list:
-    tid   = _resolve_tid(tenant_id)
-    creds = _tenant_credentials(tid)
-    cid   = creds["company_id"]
+def _cari_sayfa_cek(cid: str, tid: str, tip_filtresi: str = None) -> list:
+    """
+    Paraşüt'ten tek bir tipte (customer / supplier) tüm carileri sayfalı çeker.
+    tip_filtresi None ise filtre uygulanmaz (eski davranış).
+    """
     cariler = []
     page = 1
-    # Debug: account_type dağılımını izle
-    tip_sayilari: dict = {}
     while page <= 100:
-        sonuc = parasut_get(
-            f"/{cid}/contacts",
-            params={"page[size]": 25, "page[number]": page},
-            tenant_id=tid,
-        )
+        params = {"page[size]": 25, "page[number]": page}
+        if tip_filtresi:
+            params["filter[account_type]"] = tip_filtresi
+        sonuc = parasut_get(f"/{cid}/contacts", params=params, tenant_id=tid)
         data = sonuc.get("data", [])
         if not data:
             break
@@ -320,11 +318,6 @@ def _cari_listesi_api(tenant_id=None) -> list:
                 bakiye = float(bakiye_raw) if bakiye_raw is not None and bakiye_raw != "" else 0.0
             except (ValueError, TypeError):
                 bakiye = 0.0
-            # Paraşüt'ten dönen account_type değeri: customer / supplier
-            # (Paraşüt UI'da bir cari her iki listede de görünebilir, ama API'de
-            #  account_type tek bir değer döner.)
-            raw_tip = attr.get("account_type")
-            tip_sayilari[raw_tip] = tip_sayilari.get(raw_tip, 0) + 1
             cariler.append({
                 "id":             c["id"],
                 "ad":             attr.get("name", "-"),
@@ -334,15 +327,56 @@ def _cari_listesi_api(tenant_id=None) -> list:
                 "vergi_no":       attr.get("tax_number", "-"),
                 "adres":          attr.get("address", "-"),
                 "vergi_dairesi":  attr.get("tax_office", "-"),
-                "account_type":   raw_tip or "customer",
+                "_raw_account_type": attr.get("account_type"),
             })
         if len(data) < 25:
             break
         page += 1
         time.sleep(0.1)
+    return cariler
+
+
+def _cari_listesi_api(tenant_id=None) -> list:
+    """
+    Cari listesini Paraşüt'ten çeker.
+
+    KRİTİK: Paraşüt'te bir cari hem müşteri hem tedarikçi listesinde
+    görünebilir. Tek listeyle çekersek (filter olmadan) bir rolü kaybederiz.
+    Bu yüzden iki ayrı sorgu atıp ID üzerinden merge ediyoruz:
+      - filter[account_type]=customer  → müşteri listesi
+      - filter[account_type]=supplier → tedarikçi listesi
+      - iki listede de aynı ID varsa → account_type='customer_supplier'
+    """
+    tid   = _resolve_tid(tenant_id)
+    creds = _tenant_credentials(tid)
+    cid   = creds["company_id"]
+
+    # İki ayrı liste — Paraşüt'ün filter[account_type] desteği ile
+    musteriler = _cari_sayfa_cek(cid, tid, tip_filtresi="customer")
+    tedarikciler = _cari_sayfa_cek(cid, tid, tip_filtresi="supplier")
+
+    # ID bazlı merge — aynı ID iki listede de varsa 'customer_supplier'
+    birlesik: dict = {}
+    for c in musteriler:
+        birlesik[c["id"]] = dict(c, account_type="customer")
+    for c in tedarikciler:
+        if c["id"] in birlesik:
+            birlesik[c["id"]]["account_type"] = "customer_supplier"
+        else:
+            birlesik[c["id"]] = dict(c, account_type="supplier")
+
+    # _raw_account_type alanını temizle (debug için kullandık, dışarı sızmasın)
+    for c in birlesik.values():
+        c.pop("_raw_account_type", None)
+
+    cariler = list(birlesik.values())
+    dagilim = {}
+    for c in cariler:
+        dagilim[c["account_type"]] = dagilim.get(c["account_type"], 0) + 1
     logger.info(
-        f"Paraşüt'ten {len(cariler)} cari çekildi (tenant={tid}, {page - 1} sayfa) | "
-        f"account_type dağılımı: {tip_sayilari}"
+        f"Paraşüt'ten {len(cariler)} cari çekildi (tenant={tid}) | "
+        f"müşteri sayfa: {len(musteriler)}, tedarikçi sayfa: {len(tedarikciler)} | "
+        f"merged dağılım: {dagilim}"
     )
     return cariler
 
