@@ -1761,9 +1761,24 @@
       kaydetBtn.textContent = 'Kaydediliyor…';
       try {
         const body = { fatura_id: String(faturaId), tip: faturaTipi };
-        if (aciklamaInp.value.trim() !== (mevcut.aciklama || '')) body.aciklama = aciklamaInp.value.trim();
+        // Değişiklik tespiti — hiçbir alan değişmediyse boşa fetch atma
+        const yeniAciklama = aciklamaInp.value.trim();
+        const eskiAciklama = (mevcut.aciklama || '').trim();
+        if (yeniAciklama !== eskiAciklama) body.aciklama = yeniAciklama;
         if (tarihInp.value && tarihInp.value !== toIsoTarih(mevcut.tarih)) body.issue_date = tarihInp.value;
         if (vadeInp.value && vadeInp.value !== toIsoTarih(mevcut.vade))   body.due_date   = vadeInp.value;
+
+        // En az bir field gerçekten değişti mi?
+        const degisenAlanlar = Object.keys(body).filter(function(k) {
+          return k !== 'fatura_id' && k !== 'tip';
+        });
+        if (degisenAlanlar.length === 0) {
+          addMessage('ℹ️ Değişiklik yapmadınız, fatura aynı kaldı.', 'bot');
+          kaydetBtn.disabled = false; iptalBtn.disabled = false;
+          kaydetBtn.textContent = 'Kaydet';
+          return;
+        }
+
         const res = await fetch('/api/fatura-guncelle', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
