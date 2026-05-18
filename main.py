@@ -1312,9 +1312,13 @@ async def bekleyen_irsaliyeler(request: Request, background_tasks: BackgroundTas
         from app.core.database import Waybill, TicketStatus
         from datetime import date
 
-        # Tarih filtresi — default bu ayın başından bugüne
+        # Tarih filtresi — default son 12 ay (eski irsaliyeler de
+        # faturalanabilir; "bu ayın 1'i" çok dar bir varsayılan idi ve
+        # birkaç ay önce kesilmiş bekleyen irsaliyelerin görünmemesine
+        # sebep oluyordu)
+        from datetime import timedelta as _td
         bugun     = date.today()
-        baslangic = request.query_params.get("baslangic", bugun.replace(day=1).strftime("%Y-%m-%d"))
+        baslangic = request.query_params.get("baslangic", (bugun - _td(days=365)).strftime("%Y-%m-%d"))
         bitis     = request.query_params.get("bitis", bugun.strftime("%Y-%m-%d"))
         sayfa     = int(request.query_params.get("sayfa", 1))
         sayfa_basi = min(int(request.query_params.get("sayfa_basi", 25)), 25)

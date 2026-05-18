@@ -3837,62 +3837,104 @@
 
   async function topluFaturaGoster() {
     billablePanelTikla('toplu_fatura');
-    showTyping();
-    try {
-      const res = await fetch('/api/bekleyen-irsaliyeler');
-      const data = await res.json();
-      removeTyping();
 
-      if (!data.irsaliyeler || data.irsaliyeler.length === 0) {
-        addMessage('📋 Sistemde bekleyen irsaliye yok.', 'bot');
-        return;
-      }
-
-      // Carileri grupla
-      const cariMap = {};
-      data.irsaliyeler.forEach(function(irs) {
-        if (!cariMap[irs.cari_adi]) cariMap[irs.cari_adi] = [];
-        cariMap[irs.cari_adi].push(irs);
-      });
-
-      // Dropdown için cari listesi
-      const cariListesi = Object.keys(cariMap).map(function(ad) {
-        return { ad: ad, bakiye: 0, adet: cariMap[ad].length };
-      });
-
-      const wrap = document.createElement('div');
-      const baslik = document.createElement('div');
-      baslik.style.cssText = 'font-size:13px;font-weight:500;color:var(--text);margin-bottom:10px;';
-      baslik.textContent = '🧾 Toplu Fatura';
-      wrap.appendChild(baslik);
-      const topluInfo = document.createElement('div');
-      topluInfo.style.cssText = 'font-size:12px;color:var(--muted);margin-bottom:10px;padding:8px 12px;background:var(--accent-lt);border-radius:8px;border-left:3px solid var(--accent);';
-      topluInfo.textContent = 'Toplu fatura kesmek istediğiniz müşteriyi seçin. Birden fazla irsaliyeyi tek faturada birleştirebilirsiniz.';
-      wrap.appendChild(topluInfo);
-
-      const { wrap: ddWrap } = cariSecimDropdown(cariListesi, function(c) {
-        ddWrap.querySelector('input').disabled = true;
-        topluFaturaIrsaliyeSeç(c.ad, cariMap[c.ad], wrap);
-      }, 'Cari adı yazın...');
-
-      // Dropdown item'larına irsaliye adeti ekle
-      const origRender = ddWrap._renderDropdown;
-      wrap.appendChild(ddWrap);
-
-      const iptalBtn = document.createElement('button');
-      iptalBtn.className = 'btn-cancel';
-      iptalBtn.style.marginTop = '8px';
-      iptalBtn.textContent = '✕ İptal';
-      iptalBtn.onclick = function() { addMessage('❌ İptal edildi.', 'bot'); };
-      wrap.appendChild(iptalBtn);
-
-      addMessage('', 'bot', wrap);
-      sohbetPanelKaydet('toplu_fatura', {});
-      setTimeout(function() { ddWrap.querySelector('input').focus(); }, 100);
-    } catch {
-      removeTyping();
-      addMessage('❌ İrsaliyeler yüklenemedi.', 'bot');
+    // Default tarih aralığı: yılbaşı → bugün (geniş, kullanıcı daraltabilir)
+    const _bugun = new Date();
+    const _yilbasi = new Date(_bugun.getFullYear(), 0, 1);
+    function _toYMD(d) {
+      const y = d.getFullYear();
+      const m = String(d.getMonth()+1).padStart(2, '0');
+      const g = String(d.getDate()).padStart(2, '0');
+      return y + '-' + m + '-' + g;
     }
+
+    const wrap = document.createElement('div');
+    const baslik = document.createElement('div');
+    baslik.style.cssText = 'font-size:13px;font-weight:500;color:var(--text);margin-bottom:10px;';
+    baslik.textContent = '🧾 Toplu Fatura';
+    wrap.appendChild(baslik);
+
+    // Tarih aralığı satırı (bekleyenIrsaliyeleriGoster ile aynı UX)
+    const tarihRow = document.createElement('div');
+    tarihRow.style.cssText = 'display:flex;gap:6px;align-items:center;margin-bottom:10px;flex-wrap:wrap;';
+    const inpBas = document.createElement('input');
+    inpBas.type = 'date';
+    inpBas.value = _toYMD(_yilbasi);
+    inpBas.style.cssText = 'padding:6px 8px;border:1px solid var(--border);border-radius:7px;font-size:12px;';
+    const inpBit = document.createElement('input');
+    inpBit.type = 'date';
+    inpBit.value = _toYMD(_bugun);
+    inpBit.style.cssText = 'padding:6px 8px;border:1px solid var(--border);border-radius:7px;font-size:12px;';
+    const tireSpan = document.createElement('span');
+    tireSpan.style.cssText = 'color:var(--muted);font-size:12px;';
+    tireSpan.textContent = '—';
+    tarihRow.appendChild(inpBas);
+    tarihRow.appendChild(tireSpan);
+    tarihRow.appendChild(inpBit);
+    wrap.appendChild(tarihRow);
+
+    const topluInfo = document.createElement('div');
+    topluInfo.style.cssText = 'font-size:12px;color:var(--muted);margin-bottom:10px;padding:8px 12px;background:var(--accent-lt);border-radius:8px;border-left:3px solid var(--accent);';
+    topluInfo.textContent = 'Toplu fatura kesmek istediğiniz müşteriyi seçin. Birden fazla irsaliyeyi tek faturada birleştirebilirsiniz.';
+    wrap.appendChild(topluInfo);
+
+    const contentDiv = document.createElement('div');
+    wrap.appendChild(contentDiv);
+
+    const iptalBtn = document.createElement('button');
+    iptalBtn.className = 'btn-cancel';
+    iptalBtn.style.marginTop = '8px';
+    iptalBtn.textContent = '✕ İptal';
+    iptalBtn.onclick = function() { addMessage('❌ İptal edildi.', 'bot'); };
+    wrap.appendChild(iptalBtn);
+
+    addMessage('', 'bot', wrap);
+    sohbetPanelKaydet('toplu_fatura', {});
+
+    async function _yukle() {
+      contentDiv.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:8px;">⏳ İrsaliyeler yükleniyor…</div>';
+      try {
+        const qs = '?baslangic=' + inpBas.value + '&bitis=' + inpBit.value + '&sayfa_basi=25';
+        const res = await fetch('/api/bekleyen-irsaliyeler' + qs);
+        const data = await res.json();
+
+        contentDiv.innerHTML = '';
+
+        if (!data.irsaliyeler || data.irsaliyeler.length === 0) {
+          contentDiv.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:8px;">📋 Bu tarih aralığında bekleyen irsaliye yok. Aralığı genişletin.</div>';
+          return;
+        }
+
+        // Cari bazlı grupla
+        const cariMap = {};
+        data.irsaliyeler.forEach(function(irs) {
+          if (!cariMap[irs.cari_adi]) cariMap[irs.cari_adi] = [];
+          cariMap[irs.cari_adi].push(irs);
+        });
+
+        const cariListesi = Object.keys(cariMap).map(function(ad) {
+          return { ad: ad, bakiye: 0, adet: cariMap[ad].length };
+        });
+
+        const ozet = document.createElement('div');
+        ozet.style.cssText = 'font-size:11px;color:var(--muted);margin-bottom:8px;';
+        ozet.textContent = data.toplam + ' irsaliye, ' + cariListesi.length + ' cari';
+        contentDiv.appendChild(ozet);
+
+        const { wrap: ddWrap } = cariSecimDropdown(cariListesi, function(c) {
+          ddWrap.querySelector('input').disabled = true;
+          topluFaturaIrsaliyeSeç(c.ad, cariMap[c.ad], wrap);
+        }, 'Cari adı yazın...');
+        contentDiv.appendChild(ddWrap);
+        setTimeout(function() { ddWrap.querySelector('input').focus(); }, 100);
+      } catch (e) {
+        contentDiv.innerHTML = '<div style="font-size:12px;color:#dc2626;padding:8px;">❌ İrsaliyeler yüklenemedi.</div>';
+      }
+    }
+
+    inpBas.onchange = _yukle;
+    inpBit.onchange = _yukle;
+    _yukle();
   }
 
   function topluFaturaIrsaliyeSeç(cariAdi, irsaliyeler, wrapParent) {
