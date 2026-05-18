@@ -1969,6 +1969,56 @@ def satis_faturasi_arsivden_cikar(fatura_id: str, tenant_id=None) -> dict:
         return {"basarili": False, "hata": str(e)}
 
 
+# Paraşüt sales_invoices PUT için kabul edilen attribute alanları
+_SALES_INVOICE_ATTRIBUTES = {
+    "description", "issue_date", "due_date", "currency",
+    "invoice_no", "invoice_series",
+    "exchange_rate", "withholding_rate", "vat_withholding_code",
+    "invoice_discount_type", "invoice_discount", "invoice_discount_amount",
+    "billing_address", "billing_phone", "billing_fax",
+    "tax_office", "tax_number", "city", "district", "country",
+    "order_no", "order_date",
+    "shipment_addres", "shipment_included",
+    "cash_sale", "is_abroad", "payer_tax_number",
+}
+
+# Paraşüt purchase_bills PUT için kabul edilen attribute alanları
+_PURCHASE_BILL_ATTRIBUTES = {
+    "description", "issue_date", "due_date", "currency",
+    "invoice_no", "invoice_series",
+    "exchange_rate", "withholding_rate", "vat_withholding_code",
+    "invoice_discount_type", "invoice_discount", "invoice_discount_amount",
+    "order_no", "order_date",
+    "billing_address", "billing_phone", "billing_fax",
+    "tax_office", "tax_number", "city", "district", "country",
+    "cash_sale", "payer_tax_number",
+}
+
+
+def _attrs_ve_rels_hazirla(alanlar: dict, attr_whitelist: set) -> tuple[dict, dict]:
+    """
+    Generic helper: gelen `alanlar` dict'inden attribute ve relationship'leri ayırır.
+    İlişki anahtarları: contact_id, category_id, tag_ids, supplier_id.
+    """
+    attrs = {}
+    for k, v in (alanlar or {}).items():
+        if v is None or v == "":
+            continue
+        if k in attr_whitelist:
+            attrs[k] = v
+    rels = {}
+    if alanlar.get("contact_id"):
+        rels["contact"] = {"data": {"type": "contacts", "id": str(alanlar["contact_id"])}}
+    if alanlar.get("supplier_id"):
+        rels["supplier"] = {"data": {"type": "contacts", "id": str(alanlar["supplier_id"])}}
+    if alanlar.get("category_id"):
+        rels["category"] = {"data": {"type": "item_categories", "id": str(alanlar["category_id"])}}
+    tag_ids = alanlar.get("tag_ids")
+    if isinstance(tag_ids, (list, tuple)) and tag_ids:
+        rels["tags"] = {"data": [{"type": "tags", "id": str(tid)} for tid in tag_ids]}
+    return attrs, rels
+
+
 def satis_faturasi_guncelle(
         fatura_id: str,
         aciklama: str = None,
@@ -1976,25 +2026,40 @@ def satis_faturasi_guncelle(
         due_date: str = None,
         currency: str = None,
         tenant_id=None,
+        **diger_alanlar,
 ) -> dict:
     """
-    Satış faturasının üst bilgilerini günceller (description / issue_date / due_date / currency).
-    Detayları (kalem) değiştirmek için faturayı iptal edip yeniden oluştur.
+    Satış faturası üst bilgilerini günceller. Paraşüt V4 sales_invoices PUT
+    endpoint'inin kabul ettiği TÜM alanları destekler.
+    Yaygın alanlar parametre olarak alınır; diğerleri **diger_alanlar ile.
+
+    İlişkiler (geçilirse relationships'e dönüşür):
+      - contact_id  → müşteriyi değiştirir
+      - category_id → kategori atar
+      - tag_ids     → liste, etiketler atanır
     """
     tid   = _resolve_tid(tenant_id)
     creds = _tenant_credentials(tid)
     cid   = creds["company_id"]
     try:
-        attrs = {}
-        if aciklama is not None:   attrs["description"] = aciklama
-        if issue_date is not None: attrs["issue_date"]  = issue_date
-        if due_date is not None:   attrs["due_date"]    = due_date
-        if currency is not None:   attrs["currency"]    = currency
-        if not attrs:
+        alanlar = dict(diger_alanlar)
+        if aciklama   is not None: alanlar["description"] = aciklama
+        if issue_date is not None: alanlar["issue_date"]  = issue_date
+        if due_date   is not None: alanlar["due_date"]    = due_date
+        if currency   is not None: alanlar["currency"]    = currency
+
+        attrs, rels = _attrs_ve_rels_hazirla(alanlar, _SALES_INVOICE_ATTRIBUTES)
+        if not attrs and not rels:
             return {"basarili": False, "hata": "Güncellenecek alan belirtilmedi"}
-        istek = {"data": {"id": str(fatura_id), "type": "sales_invoices", "attributes": attrs}}
-        sonuc = parasut_put(f"/{cid}/sales_invoices/{fatura_id}", istek, tenant_id=tid)
-        logger.info(f"Satış faturası güncellendi: {fatura_id} alanlar={list(attrs.keys())} (tenant={tid})")
+
+        data = {"id": str(fatura_id), "type": "sales_invoices", "attributes": attrs}
+        if rels:
+            data["relationships"] = rels
+        sonuc = parasut_put(f"/{cid}/sales_invoices/{fatura_id}", {"data": data}, tenant_id=tid)
+        logger.info(
+            f"Satış faturası güncellendi: {fatura_id} "
+            f"attrs={list(attrs.keys())} rels={list(rels.keys())} (tenant={tid})"
+        )
         return {"basarili": True, "fatura_id": fatura_id, "veri": sonuc.get("data", {}).get("attributes", {})}
     except Exception as e:
         logger.error(f"Satış faturası güncelleme hatası: {e}")
@@ -2192,22 +2257,44 @@ def alis_faturasi_guncelle(
         due_date: str = None,
         currency: str = None,
         tenant_id=None,
+        **diger_alanlar,
 ) -> dict:
-    """Alış faturası üst bilgilerini günceller."""
+    """
+    Alış faturası üst bilgilerini günceller. Paraşüt V4 purchase_bills PUT
+    endpoint'inin kabul ettiği TÜM alanları destekler.
+
+    İlişkiler:
+      - supplier_id → tedarikçiyi değiştirir
+      - category_id → kategori atar
+      - tag_ids     → etiketler
+    """
     tid   = _resolve_tid(tenant_id)
     creds = _tenant_credentials(tid)
     cid   = creds["company_id"]
     try:
-        attrs = {}
-        if aciklama is not None:   attrs["description"] = aciklama
-        if issue_date is not None: attrs["issue_date"]  = issue_date
-        if due_date is not None:   attrs["due_date"]    = due_date
-        if currency is not None:   attrs["currency"]    = currency
-        if not attrs:
+        alanlar = dict(diger_alanlar)
+        if aciklama   is not None: alanlar["description"] = aciklama
+        if issue_date is not None: alanlar["issue_date"]  = issue_date
+        if due_date   is not None: alanlar["due_date"]    = due_date
+        if currency   is not None: alanlar["currency"]    = currency
+
+        # Frontend bazen contact_id gönderebilir; purchase_bill için bu
+        # aslında supplier_id'dir — otomatik dönüşüm yap
+        if "contact_id" in alanlar and "supplier_id" not in alanlar:
+            alanlar["supplier_id"] = alanlar.pop("contact_id")
+
+        attrs, rels = _attrs_ve_rels_hazirla(alanlar, _PURCHASE_BILL_ATTRIBUTES)
+        if not attrs and not rels:
             return {"basarili": False, "hata": "Güncellenecek alan belirtilmedi"}
-        istek = {"data": {"id": str(fatura_id), "type": "purchase_bills", "attributes": attrs}}
-        sonuc = parasut_put(f"/{cid}/purchase_bills/{fatura_id}", istek, tenant_id=tid)
-        logger.info(f"Alış faturası güncellendi: {fatura_id} alanlar={list(attrs.keys())} (tenant={tid})")
+
+        data = {"id": str(fatura_id), "type": "purchase_bills", "attributes": attrs}
+        if rels:
+            data["relationships"] = rels
+        sonuc = parasut_put(f"/{cid}/purchase_bills/{fatura_id}", {"data": data}, tenant_id=tid)
+        logger.info(
+            f"Alış faturası güncellendi: {fatura_id} "
+            f"attrs={list(attrs.keys())} rels={list(rels.keys())} (tenant={tid})"
+        )
         return {"basarili": True, "fatura_id": fatura_id, "veri": sonuc.get("data", {}).get("attributes", {})}
     except Exception as e:
         logger.error(f"Alış faturası güncelleme hatası: {e}")
@@ -2240,11 +2327,18 @@ def fatura_guncelle_universal(
         due_date: str = None,
         currency: str = None,
         tenant_id=None,
+        **diger_alanlar,
 ) -> dict:
-    """Tip-aware fatura güncelle (PUT)."""
+    """Tip-aware fatura güncelle (PUT). Tüm Paraşüt alanlarını destekler."""
     if tip == "supplier":
-        return alis_faturasi_guncelle(fatura_id, aciklama, issue_date, due_date, currency, tenant_id)
-    return satis_faturasi_guncelle(fatura_id, aciklama, issue_date, due_date, currency, tenant_id)
+        return alis_faturasi_guncelle(
+            fatura_id, aciklama, issue_date, due_date, currency, tenant_id,
+            **diger_alanlar,
+        )
+    return satis_faturasi_guncelle(
+        fatura_id, aciklama, issue_date, due_date, currency, tenant_id,
+        **diger_alanlar,
+    )
 
 
 def alis_faturasi_detay_getir(fatura_id: str, tenant_id=None) -> dict:
@@ -2675,9 +2769,15 @@ async def async_fatura_guncelle_universal(
         fatura_id: str, tip: str = "customer",
         aciklama: str = None, issue_date: str = None,
         due_date: str = None, currency: str = None, tenant_id=None,
+        **diger_alanlar,
 ) -> dict:
+    import functools as _ft
     return await asyncio.to_thread(
-        fatura_guncelle_universal, fatura_id, tip, aciklama, issue_date, due_date, currency, tenant_id
+        _ft.partial(
+            fatura_guncelle_universal, fatura_id, tip, aciklama,
+            issue_date, due_date, currency, tenant_id,
+            **diger_alanlar,
+        )
     )
 
 

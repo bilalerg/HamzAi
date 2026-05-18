@@ -2318,9 +2318,21 @@ async def fatura_iptal_endpoint(request: Request, background_tasks: BackgroundTa
 async def fatura_guncelle_endpoint(request: Request, background_tasks: BackgroundTasks):
     """
     Satış veya alış faturası üst bilgilerini günceller.
-    Body: {fatura_id, tip?, aciklama?, issue_date?, due_date?}
+    Body: {fatura_id, tip?, ... Paraşüt'ün izin verdiği tüm alanlar ...}
       tip='customer' (default) → sales_invoices PUT
       tip='supplier'           → purchase_bills PUT
+    Desteklenen alanlar (hepsi opsiyonel):
+      Temel:    aciklama, issue_date, due_date, currency
+      Resmi:    invoice_no, invoice_series, exchange_rate
+      Vergi:    withholding_rate, vat_withholding_code
+      İskonto:  invoice_discount_type, invoice_discount, invoice_discount_amount
+      Adres:    billing_address, billing_phone, billing_fax,
+                tax_office, tax_number, city, district, country
+      Sipariş:  order_no, order_date
+      Kargo:    shipment_addres, shipment_included  (sadece sales)
+      Bayraklar: cash_sale, is_abroad, payer_tax_number
+      İlişki:   contact_id (sales) / supplier_id (purchase),
+                category_id, tag_ids (liste)
     """
     aktif_user = mevcut_kullanici(request)
     tenant_id  = _tenant_id_from_user(aktif_user)
@@ -2329,23 +2341,53 @@ async def fatura_guncelle_endpoint(request: Request, background_tasks: Backgroun
     tip        = (data.get("tip") or "customer").strip().lower()
     if tip not in ("customer", "supplier"):
         tip = "customer"
-    aciklama   = data.get("aciklama")
-    issue_date = data.get("issue_date") or data.get("tarih")
-    due_date   = data.get("due_date") or data.get("vade")
     if not fatura_id:
         return JSONResponse({"hata": "fatura_id zorunlu"}, status_code=400)
 
+    # Body'den gelen alanları toparla — sadece tanınanları geçir
+    IZINLI_ALANLAR = {
+        # attribute alanları (hem sales hem purchase)
+        "description", "issue_date", "due_date", "currency",
+        "invoice_no", "invoice_series", "exchange_rate",
+        "withholding_rate", "vat_withholding_code",
+        "invoice_discount_type", "invoice_discount", "invoice_discount_amount",
+        "billing_address", "billing_phone", "billing_fax",
+        "tax_office", "tax_number", "city", "district", "country",
+        "order_no", "order_date",
+        "shipment_addres", "shipment_included",
+        "cash_sale", "is_abroad", "payer_tax_number",
+        # ilişkiler
+        "contact_id", "supplier_id", "category_id", "tag_ids",
+    }
+    diger_alanlar = {}
+    for k, v in data.items():
+        if k in IZINLI_ALANLAR and v not in (None, ""):
+            diger_alanlar[k] = v
+
+    # Backward-compat alias'lar
+    aciklama   = data.get("aciklama") or diger_alanlar.pop("description", None)
+    issue_date = (data.get("issue_date") or data.get("tarih")
+                  or diger_alanlar.pop("issue_date", None))
+    due_date   = (data.get("due_date") or data.get("vade")
+                  or diger_alanlar.pop("due_date", None))
+    currency   = data.get("currency") or diger_alanlar.pop("currency", None)
+
     from app.parasut.client import async_fatura_guncelle_universal
     sonuc = await async_fatura_guncelle_universal(
-        fatura_id=fatura_id, tip=tip, aciklama=aciklama,
-        issue_date=issue_date, due_date=due_date,
+        fatura_id=fatura_id, tip=tip,
+        aciklama=aciklama, issue_date=issue_date,
+        due_date=due_date, currency=currency,
         tenant_id=tenant_id,
+        **diger_alanlar,
     )
     if sonuc.get("basarili"):
         if aktif_user:
+            ozet = list(diger_alanlar.keys()) + (["description"] if aciklama else []) + \
+                   (["issue_date"] if issue_date else []) + (["due_date"] if due_date else []) + \
+                   (["currency"] if currency else [])
             background_tasks.add_task(_billable_kaydet, aktif_user, "FATURA_GUNCELLENDI",
-                                      f"fatura={fatura_id} tip={tip}", 1, "parasut",
-                                      {"fatura_id": fatura_id, "tip": tip}, None)
+                                      f"fatura={fatura_id} tip={tip} alanlar={ozet}", 1, "parasut",
+                                      {"fatura_id": fatura_id, "tip": tip, "alanlar": ozet}, None)
         return JSONResponse(sonuc)
     return JSONResponse(sonuc, status_code=500)
 

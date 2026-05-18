@@ -1882,8 +1882,16 @@
 
     const bilgi = document.createElement('div');
     bilgi.style.cssText = 'font-size:12px;color:var(--muted);margin-bottom:10px;padding:8px 12px;background:var(--accent-lt);border-radius:8px;border-left:3px solid var(--accent);';
-    bilgi.textContent = 'Sadece açıklama, fatura tarihi ve vade güncellenebilir. Kalemler/tutar değişmez.';
+    bilgi.innerHTML = 'Sadece doldurduğun alanlar Paraşüt\'e gönderilir. Boş bırakılanlar değişmez.<br>⚠️ Kalemler ve tutar değişmez — onun için faturayı iptal et, yeniden kes.';
     wrap.appendChild(bilgi);
+
+    function toIsoTarih(t) {
+      if (!t || t === '-') return '';
+      const m = String(t).match(/^(\d{2})\.(\d{2})\.(\d{4})/);
+      if (m) return m[3] + '-' + m[2] + '-' + m[1];
+      if (/^\d{4}-\d{2}-\d{2}/.test(String(t))) return String(t).substring(0, 10);
+      return '';
+    }
 
     function satir(label, el) {
       const d = document.createElement('div');
@@ -1896,34 +1904,207 @@
       return d;
     }
 
-    function toIsoTarih(t) {
-      if (!t || t === '-') return '';
-      // "27.03.2026" → "2026-03-27"
-      const m = String(t).match(/^(\d{2})\.(\d{2})\.(\d{4})/);
-      if (m) return m[3] + '-' + m[2] + '-' + m[1];
-      // already iso?
-      if (/^\d{4}-\d{2}-\d{2}/.test(String(t))) return String(t).substring(0, 10);
-      return '';
+    // ── COLLAPSIBLE BÖLÜM HELPER ─────────────────────────────────
+    function bolumOlustur(baslik, icerik, acik) {
+      const sec = document.createElement('div');
+      sec.style.cssText = 'border:1px solid var(--border);border-radius:9px;margin-bottom:8px;overflow:hidden;';
+
+      const head = document.createElement('button');
+      head.type = 'button';
+      head.style.cssText = 'width:100%;display:flex;align-items:center;justify-content:space-between;padding:9px 12px;background:var(--bg);border:none;cursor:pointer;font-size:12px;font-weight:600;color:var(--text);text-align:left;';
+      const titleEl = document.createElement('span');
+      titleEl.textContent = baslik;
+      const chev = document.createElement('span');
+      chev.style.cssText = 'font-size:10px;color:var(--muted);transition:transform 0.2s;';
+      chev.textContent = '▶';
+      head.appendChild(titleEl);
+      head.appendChild(chev);
+
+      const body = document.createElement('div');
+      body.style.cssText = 'padding:0 12px;max-height:0;overflow:hidden;transition:max-height 0.3s,padding 0.3s;';
+      body.appendChild(icerik);
+
+      head.onclick = function() {
+        if (body.style.maxHeight && body.style.maxHeight !== '0px') {
+          body.style.maxHeight = '0';
+          body.style.padding = '0 12px';
+          chev.style.transform = 'rotate(0deg)';
+        } else {
+          body.style.maxHeight = '600px';
+          body.style.padding = '10px 12px 12px';
+          chev.style.transform = 'rotate(90deg)';
+        }
+      };
+      if (acik) head.onclick();
+      sec.appendChild(head);
+      sec.appendChild(body);
+      return sec;
     }
 
+    // ── 1. TEMEL (default açık) ─────────────────────────────────
+    const temelBody = document.createElement('div');
     const aciklamaInp = document.createElement('input');
     aciklamaInp.type = 'text'; aciklamaInp.className = 'fiyat-input';
-    aciklamaInp.placeholder = 'Açıklama';
     aciklamaInp.value = mevcut.aciklama || '';
-    wrap.appendChild(satir('Açıklama', aciklamaInp));
+    temelBody.appendChild(satir('Açıklama', aciklamaInp));
 
     const tarihInp = document.createElement('input');
     tarihInp.type = 'date'; tarihInp.className = 'fiyat-input';
     tarihInp.style.maxWidth = '160px';
     tarihInp.value = toIsoTarih(mevcut.tarih);
-    wrap.appendChild(satir('Fatura Tarihi', tarihInp));
+    temelBody.appendChild(satir('Fatura Tarihi', tarihInp));
 
     const vadeInp = document.createElement('input');
     vadeInp.type = 'date'; vadeInp.className = 'fiyat-input';
     vadeInp.style.maxWidth = '160px';
     vadeInp.value = toIsoTarih(mevcut.vade);
-    wrap.appendChild(satir('Vade Tarihi', vadeInp));
+    temelBody.appendChild(satir('Vade Tarihi', vadeInp));
 
+    wrap.appendChild(bolumOlustur('📝 Temel Bilgiler', temelBody, true));
+
+    // ── 2. RESMİ BİLGİ (Fatura no, seri, para birimi) ─────────────
+    const resmiBody = document.createElement('div');
+    const invoiceNoInp = document.createElement('input');
+    invoiceNoInp.type = 'text'; invoiceNoInp.className = 'fiyat-input';
+    invoiceNoInp.placeholder = 'Boş bırakılırsa Paraşüt otomatik atar';
+    resmiBody.appendChild(satir('Fatura No', invoiceNoInp));
+
+    const invoiceSeriesInp = document.createElement('input');
+    invoiceSeriesInp.type = 'text'; invoiceSeriesInp.className = 'fiyat-input';
+    invoiceSeriesInp.placeholder = 'Örn: A';
+    resmiBody.appendChild(satir('Fatura Seri', invoiceSeriesInp));
+
+    const currencySel = document.createElement('select');
+    currencySel.className = 'fiyat-input';
+    [['', 'Değiştirme'], ['TRL', 'TRL (₺)'], ['USD', 'USD ($)'], ['EUR', 'EUR (€)'], ['GBP', 'GBP (£)']].forEach(function(c) {
+      const o = document.createElement('option'); o.value = c[0]; o.textContent = c[1];
+      currencySel.appendChild(o);
+    });
+    resmiBody.appendChild(satir('Para Birimi', currencySel));
+
+    const exchangeRateInp = document.createElement('input');
+    exchangeRateInp.type = 'number'; exchangeRateInp.step = '0.0001';
+    exchangeRateInp.className = 'fiyat-input';
+    exchangeRateInp.placeholder = 'Örn: 34.5 (yabancı para için)';
+    resmiBody.appendChild(satir('Döviz Kuru', exchangeRateInp));
+
+    wrap.appendChild(bolumOlustur('🧾 Resmi Bilgi', resmiBody, false));
+
+    // ── 3. VERGİ & STOPAJ ─────────────────────────────────────────
+    const vergiBody = document.createElement('div');
+    const withholdingInp = document.createElement('input');
+    withholdingInp.type = 'number'; withholdingInp.step = '0.01';
+    withholdingInp.className = 'fiyat-input';
+    withholdingInp.placeholder = 'Örn: 5 (% olarak)';
+    vergiBody.appendChild(satir('Stopaj Oranı (%)', withholdingInp));
+
+    const vatWithholdingInp = document.createElement('input');
+    vatWithholdingInp.type = 'text'; vatWithholdingInp.className = 'fiyat-input';
+    vatWithholdingInp.placeholder = 'Örn: KDV 5/10 (Paraşüt kodu)';
+    vergiBody.appendChild(satir('KDV Tevkifat Kodu', vatWithholdingInp));
+
+    wrap.appendChild(bolumOlustur('💼 Vergi & Stopaj', vergiBody, false));
+
+    // ── 4. ADRES & VERGİ NO ───────────────────────────────────────
+    const adresBody = document.createElement('div');
+    const billingAddressInp = document.createElement('input');
+    billingAddressInp.type = 'text'; billingAddressInp.className = 'fiyat-input';
+    billingAddressInp.placeholder = 'Fatura adresi';
+    adresBody.appendChild(satir('Fatura Adresi', billingAddressInp));
+
+    const taxOfficeInp = document.createElement('input');
+    taxOfficeInp.type = 'text'; taxOfficeInp.className = 'fiyat-input';
+    taxOfficeInp.placeholder = 'Vergi dairesi';
+    adresBody.appendChild(satir('Vergi Dairesi', taxOfficeInp));
+
+    const taxNumberInp = document.createElement('input');
+    taxNumberInp.type = 'text'; taxNumberInp.className = 'fiyat-input';
+    taxNumberInp.placeholder = 'VKN/TCKN';
+    adresBody.appendChild(satir('Vergi No', taxNumberInp));
+
+    const cityInp = document.createElement('input');
+    cityInp.type = 'text'; cityInp.className = 'fiyat-input';
+    adresBody.appendChild(satir('Şehir', cityInp));
+
+    const districtInp = document.createElement('input');
+    districtInp.type = 'text'; districtInp.className = 'fiyat-input';
+    adresBody.appendChild(satir('İlçe', districtInp));
+
+    wrap.appendChild(bolumOlustur('🏠 Adres & Vergi Bilgisi', adresBody, false));
+
+    // ── 5. SİPARİŞ ─────────────────────────────────────────────────
+    const siparisBody = document.createElement('div');
+    const orderNoInp = document.createElement('input');
+    orderNoInp.type = 'text'; orderNoInp.className = 'fiyat-input';
+    orderNoInp.placeholder = 'Sipariş referans no';
+    siparisBody.appendChild(satir('Sipariş No', orderNoInp));
+
+    const orderDateInp = document.createElement('input');
+    orderDateInp.type = 'date'; orderDateInp.className = 'fiyat-input';
+    orderDateInp.style.maxWidth = '160px';
+    siparisBody.appendChild(satir('Sipariş Tarihi', orderDateInp));
+
+    wrap.appendChild(bolumOlustur('📦 Sipariş Bilgisi', siparisBody, false));
+
+    // ── 6. CARİ DEĞİŞTİRME (yanlış cariye kesilmişse) ─────────────
+    const cariBody = document.createElement('div');
+    const cariUyari = document.createElement('div');
+    cariUyari.style.cssText = 'font-size:11px;color:#92400e;background:#fffbeb;border:1px solid #fde68a;padding:6px 8px;border-radius:6px;margin-bottom:8px;';
+    cariUyari.textContent = '⚠️ Yalnızca yanlış cariye kesildiğinde kullan. Cariyi değiştirmek bakiye taşır.';
+    cariBody.appendChild(cariUyari);
+
+    let secilenYeniCariId = null;
+    let tumCariler = [];
+    try {
+      const cr = await fetch('/api/cariler');
+      tumCariler = (await cr.json()).cariler || [];
+      // Tipe uygun filtre
+      if (faturaTipi === 'supplier') {
+        tumCariler = tumCariler.filter(function(c) {
+          const t = c.tip || 'customer';
+          return t === 'supplier' || t === 'customer_supplier' || t === 'both';
+        });
+      } else {
+        tumCariler = tumCariler.filter(function(c) {
+          const t = c.tip || 'customer';
+          return t === 'customer' || t === 'customer_supplier' || t === 'both';
+        });
+      }
+    } catch {}
+
+    const { wrap: cariDD } = cariSecimDropdown(tumCariler, function(c) {
+      secilenYeniCariId = c.id;
+    }, faturaTipi === 'supplier' ? 'Yeni tedarikçi seç...' : 'Yeni müşteri seç...');
+    cariBody.appendChild(satir('Yeni ' + (faturaTipi === 'supplier' ? 'Tedarikçi' : 'Müşteri'), cariDD));
+
+    wrap.appendChild(bolumOlustur(
+      faturaTipi === 'supplier' ? '🔄 Tedarikçi Değiştir' : '🔄 Müşteri Değiştir',
+      cariBody, false));
+
+    // ── 7. BAYRAKLAR ────────────────────────────────────────────────
+    const bayrakBody = document.createElement('div');
+    const cashSaleSel = document.createElement('select');
+    cashSaleSel.className = 'fiyat-input';
+    [['', 'Değiştirme'], ['true', 'Peşin satış'], ['false', 'Vadeli']].forEach(function(c) {
+      const o = document.createElement('option'); o.value = c[0]; o.textContent = c[1];
+      cashSaleSel.appendChild(o);
+    });
+    bayrakBody.appendChild(satir('Peşin/Vadeli', cashSaleSel));
+
+    if (faturaTipi === 'customer') {
+      const isAbroadSel = document.createElement('select');
+      isAbroadSel.className = 'fiyat-input';
+      [['', 'Değiştirme'], ['true', 'Yurt dışı'], ['false', 'Yurt içi']].forEach(function(c) {
+        const o = document.createElement('option'); o.value = c[0]; o.textContent = c[1];
+        isAbroadSel.appendChild(o);
+      });
+      bayrakBody.appendChild(satir('Yurt İçi/Dışı', isAbroadSel));
+      bayrakBody._isAbroadSel = isAbroadSel;
+    }
+
+    wrap.appendChild(bolumOlustur('⚙️ Diğer Bayraklar', bayrakBody, false));
+
+    // ── KAYDET / İPTAL ─────────────────────────────────────────────
     const btnRow = document.createElement('div');
     btnRow.style.cssText = 'display:flex;gap:8px;margin-top:12px;';
 
@@ -1937,26 +2118,60 @@
     kaydetBtn.onclick = async function() {
       kaydetBtn.disabled = true; iptalBtn.disabled = true;
       kaydetBtn.textContent = 'Kaydediliyor…';
+
+      const body = { fatura_id: String(faturaId), tip: faturaTipi };
+
+      // Temel
+      const yeniAciklama = aciklamaInp.value.trim();
+      const eskiAciklama = (mevcut.aciklama || '').trim();
+      if (yeniAciklama !== eskiAciklama) body.aciklama = yeniAciklama;
+      if (tarihInp.value && tarihInp.value !== toIsoTarih(mevcut.tarih)) body.issue_date = tarihInp.value;
+      if (vadeInp.value && vadeInp.value !== toIsoTarih(mevcut.vade))   body.due_date   = vadeInp.value;
+
+      // Resmi
+      if (invoiceNoInp.value.trim())     body.invoice_no     = invoiceNoInp.value.trim();
+      if (invoiceSeriesInp.value.trim()) body.invoice_series = invoiceSeriesInp.value.trim();
+      if (currencySel.value)             body.currency       = currencySel.value;
+      if (exchangeRateInp.value)         body.exchange_rate  = parseFloat(exchangeRateInp.value);
+
+      // Vergi
+      if (withholdingInp.value)          body.withholding_rate     = parseFloat(withholdingInp.value);
+      if (vatWithholdingInp.value.trim())body.vat_withholding_code = vatWithholdingInp.value.trim();
+
+      // Adres
+      if (billingAddressInp.value.trim()) body.billing_address = billingAddressInp.value.trim();
+      if (taxOfficeInp.value.trim())      body.tax_office      = taxOfficeInp.value.trim();
+      if (taxNumberInp.value.trim())      body.tax_number      = taxNumberInp.value.trim();
+      if (cityInp.value.trim())           body.city            = cityInp.value.trim();
+      if (districtInp.value.trim())       body.district        = districtInp.value.trim();
+
+      // Sipariş
+      if (orderNoInp.value.trim())   body.order_no   = orderNoInp.value.trim();
+      if (orderDateInp.value)        body.order_date = orderDateInp.value;
+
+      // Cari değiştirme (tipe göre doğru anahtara)
+      if (secilenYeniCariId) {
+        if (faturaTipi === 'supplier') body.supplier_id = String(secilenYeniCariId);
+        else                            body.contact_id  = String(secilenYeniCariId);
+      }
+
+      // Bayraklar
+      if (cashSaleSel.value) body.cash_sale = (cashSaleSel.value === 'true');
+      if (bayrakBody._isAbroadSel && bayrakBody._isAbroadSel.value) {
+        body.is_abroad = (bayrakBody._isAbroadSel.value === 'true');
+      }
+
+      const degisenAlanlar = Object.keys(body).filter(function(k) {
+        return k !== 'fatura_id' && k !== 'tip';
+      });
+      if (degisenAlanlar.length === 0) {
+        addMessage('ℹ️ Değişiklik yapmadınız, fatura aynı kaldı.', 'bot');
+        kaydetBtn.disabled = false; iptalBtn.disabled = false;
+        kaydetBtn.textContent = 'Kaydet';
+        return;
+      }
+
       try {
-        const body = { fatura_id: String(faturaId), tip: faturaTipi };
-        // Değişiklik tespiti — hiçbir alan değişmediyse boşa fetch atma
-        const yeniAciklama = aciklamaInp.value.trim();
-        const eskiAciklama = (mevcut.aciklama || '').trim();
-        if (yeniAciklama !== eskiAciklama) body.aciklama = yeniAciklama;
-        if (tarihInp.value && tarihInp.value !== toIsoTarih(mevcut.tarih)) body.issue_date = tarihInp.value;
-        if (vadeInp.value && vadeInp.value !== toIsoTarih(mevcut.vade))   body.due_date   = vadeInp.value;
-
-        // En az bir field gerçekten değişti mi?
-        const degisenAlanlar = Object.keys(body).filter(function(k) {
-          return k !== 'fatura_id' && k !== 'tip';
-        });
-        if (degisenAlanlar.length === 0) {
-          addMessage('ℹ️ Değişiklik yapmadınız, fatura aynı kaldı.', 'bot');
-          kaydetBtn.disabled = false; iptalBtn.disabled = false;
-          kaydetBtn.textContent = 'Kaydet';
-          return;
-        }
-
         const res = await fetch('/api/fatura-guncelle', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1964,13 +2179,13 @@
         });
         const d = await res.json();
         if (d.basarili) {
-          addMessage('✅ Fatura güncellendi (#' + faturaId + ').', 'bot');
+          addMessage('✅ Fatura güncellendi (#' + faturaId + ') · değişen alanlar: ' + degisenAlanlar.join(', '), 'bot');
         } else {
           addMessage('❌ Güncellenemedi: ' + (d.hata || d.detail || 'Bilinmeyen hata'), 'bot');
           kaydetBtn.disabled = false; iptalBtn.disabled = false;
           kaydetBtn.textContent = 'Kaydet';
         }
-      } catch {
+      } catch (e) {
         addMessage('❌ Güncellenemedi.', 'bot');
         kaydetBtn.disabled = false; iptalBtn.disabled = false;
         kaydetBtn.textContent = 'Kaydet';
