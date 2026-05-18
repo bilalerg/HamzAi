@@ -16,7 +16,7 @@ from app.core.logger import logger
 _client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
 OCR_MODEL      = "claude-sonnet-4-20250514"
-OCR_MAX_TOKENS = 1024
+OCR_MAX_TOKENS = 2048  # chain-of-thought için artırıldı
 OCR_MAX_RETRY  = 2  # Başarısız OCR'da kaç kez tekrar denensin
 
 
@@ -37,101 +37,102 @@ class FisVerisi:
     plaka_uyari:      Optional[str]           = None
 
 
-OCR_SYSTEM = """Sen Türkçe kantar fişlerini okuyan bir OCR motorusun. Görevin: fotoğraftaki METNİ harfi harfine çıkarmak.
+OCR_SYSTEM = """Sen Türkiye hurda/geri dönüşüm sektörüne ait kantar fişlerini okuyan profesyonel bir OCR motorusun.
 
-ANA KURAL — OKU, AMA UYDURMA:
-1. Gördüğün her şeyi DİKKATLİCE OKU. Harfler/rakamlar bulanık olsa bile ayırt edebiliyorsan değeri yaz.
-2. Bir alanda HİÇBİR şey göremiyorsan SADECE O ZAMAN null bırak.
-3. Önceki fişlerden bilgi HATIRLAMA. Her fotoğraf bağımsızdır.
-4. "34BEG354", "1234567" gibi tipik/örnek değerler UYDURMA. Sadece fişten okuduğunu yaz.
+ÇOK ÖNEMLİ: 2 AŞAMALI ÇIKTI VERECEKSİN.
 
-VARSAYILAN DAVRANIŞ:
-Profesyonel bir OCR motoru fişin %80'ini okur. Sen de en az o kadarını okumaya çalış.
-"Bulanık" diye topyekûn null bırakmak YANLIŞTIR. Görebildiğin her alanı doldur.
+═══ AŞAMA 1 — TASVİR ═══
+Önce fişin görsel layout'unu açıkla. Sadece GERÇEKTEN GÖRDÜĞÜN satırları yaz.
+Her etiket ve karşısındaki değeri yan yana yaz. Bu aşama Markdown DEĞİL, düz metin.
 
-ÇIKTI FORMATI:
-Yanıtın SADECE '{' ile başlamalı ve '}' ile bitmelidir. Açıklama, başlık veya markdown YOK."""
+═══ AŞAMA 2 — JSON ═══
+Aşama 1'deki gözleme göre JSON çıktısı ver.
+Aşama 1'de görmediğin değeri ASLA JSON'a koyma — null bırak.
 
-OCR_PROMPT = """Aşağıdaki Türkiye hurda/geri dönüşüm sektörüne ait kantar fişini oku.
+ÇIKTI FORMATI (KESİN):
+LAYOUT:
+- [üst başlık]: [değer]
+- [etiket]: [değer]
+- ...
 
-JSON şeması (alanları gerçekten okuyamadığın yerlerde null kullan):
-{"plaka":"araç plakası","fis_no":"fiş no","net_tartim_kg":SAYI,"fire_kg":SAYI_YA_DA_0,"tarih":"GG.AA.YYYY","firma":"şirket adı","irsaliye_no":null,"kantar_no":null,"malzemeler":{}}
+JSON:
+{"plaka":...,"fis_no":...,"net_tartim_kg":...,"fire_kg":...,"tarih":...,"firma":...,"irsaliye_no":...,"kantar_no":...,"malzemeler":{}}
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-FİRMA (tedarikçi/satıcı)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+UYDURMA YASAĞI:
+- Tipik plaka örnekleri ("34BEG354", "06FH8714") veya tipik fiş no'lar ("1234567", "15150") UYDURMA
+- Önceki fişlerden hiçbir bilgi HATIRLAMA — her görsel bağımsız
+- Aşama 1'de tasvir etmediğin alanı Aşama 2'de SADECE null yapabilirsin
+"""
 
-Öncelik sırası:
-1. "Firma:", "Firma Adı:", "Tedarikçi:", "Gönderen:" etiketli satır VARSA → o satırdaki adı al
-2. Böyle bir alan YOKSA → en üstteki başlık şirket adını al
+OCR_PROMPT = """Bu fişi 2 aşamada oku.
 
-DİKKAT:
-- "Nakliye Firması:", "Taşıyıcı:", "Şoför:", "Ad Soyad:", "Operator:" → bunlar firma DEĞİL
-- Fişte birden fazla şirket görüyorsan "Firma:" / "Tedarikçi:" etiketli olanı öncele
-- Türkçe karakterler önemli: ŞŞ ÜÜ ÖÖ ÇÇ İİ GĞ — bunları da doğru aktar
+═══ AŞAMA 1 — LAYOUT TASVİRİ ═══
+Aşağıdaki sırada GÖZLEM YAP (sadece gerçekten gördüklerini yaz):
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-PLAKA
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+a) ÜST BAŞLIK: Fişin en tepesinde hangi şirket adı yazıyor? (Bu KANTARIN/alıcı fabrikanın adıdır)
+b) "Firma:", "Firma Adı:", "Tedarikçi:", "Gönderen:" ETİKETLİ bir satır var mı? Varsa karşısında ne yazıyor? (Bu TEDARIKÇİnin adıdır — JSON'a bu girer)
+c) "Nakliye Firması:" veya "Taşıyıcı:" varsa: ne yazıyor? (bu firma DEĞİL, sadece kaydet)
+d) "Ad Soyad:" var mı? Karşısında ne yazıyor? (bu da firma DEĞİL — şoför adı)
+e) PLAKA: "Plaka", "Araç-Dorse Plaka", "Araç Plaka" etiketli satırda hangi plaka(lar) yazılı? (örn: "37 LK 081 - 34 BSE 559" iki plaka var)
+f) BRÜT değeri: kaç kg?
+g) DARA değeri: kaç kg?
+h) NET değeri: kaç kg? (fişte NET satırı varsa o değer, yoksa BRÜT-DARA hesabı)
+i) Tarih: "Geliş Tarihi", "Tarih" alanı? (GG.AA.YYYY)
+j) Fiş ID veya Fiş No: "Id.", "Fiş No", "No" etiketli alan? Hangi sayı yazıyor?
+k) Mal Cinsi: ne yazıyor?
 
-- "Araç Plaka", "Plaka", "Araç-Dorse Plaka" etiketli alanı bul
-- İki plaka tire/boşlukla ayrılmışsa (örn: "37 LK 081 - 34 BSE 559") → SADECE İLKİNİ al: 37LK081
-- Format: boşluk/tire OLMADAN büyük harf → 37LK081, 06FH8714, 34BSE559
-- Tek tek karakter okuyabiliyorsan plakayı yaz; göremezsen null
+═══ AŞAMA 2 — JSON ═══
+Yukarıdaki AŞAMA 1 gözleminize göre JSON'u doldur.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-AĞIRLIK
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Kurallar:
+- plaka: Aşama 1-e'de İLK plakayı al, boşluk/tire sil, büyük harf yap → "37LK081"
+- fis_no: Aşama 1-j'deki numara
+- firma: Aşama 1-b'deki TEDARIKÇİ adı (Firma: etiketli). YOKSA → Aşama 1-a'daki üst başlık
+  ⚠️ Nakliye Firması (1-c) veya Ad Soyad (1-d) ASLA firma değildir
+- net_tartim_kg: Aşama 1-h'deki NET değer (tam sayı, virgül/nokta yok)
+- fire_kg: "Fire" veya "Tenzil" satırı yoksa 0
+- tarih: Aşama 1-i'den, GG.AA.YYYY formatı
+- malzemeler: Mal Cinsi tek satırsa {}, çoklu liste varsa {"isim": kg, ...}
 
-- net_tartim_kg: "Net Tartım", "Net", "BRÜT - TARA" satırındaki sayı
-- Eğer fişte ayrı ayrı "BRÜT: 33000" ve "DARA: 17850" görüyorsan, NET satırını da BİLE oku;
-  yazılmadıysa BRÜT - DARA hesabıyla bulabilirsin (15150 gibi)
-- fire_kg: "Fire", "Tenzil" satırı — yoksa 0
-- Tam sayı, nokta/virgül yok → 15150 ✓   15.150 ✗
+ÇIKTI ÖRNEĞİ (yapın bu formatta, başka şey eklemeyin):
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-FİŞ NO
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+LAYOUT:
+- ÜST BAŞLIK: KAPTAN DEMİR ÇELİK END.A.Ş
+- Firma: YEŞIL IZABE GERİ DÖNÜŞÜM NAK
+- Nakliye Firması: İMAJ DENIZ
+- Ad Soyad: MEHMET ÖZDEMİR
+- Plaka: 37 LK 081 - 34 BSE 559
+- BRÜT: 33000 Kg
+- DARA: 17850 Kg
+- NET: 15150 Kg
+- Tarih: 12.03.2026
+- Id.: 130002187968
+- Mal Cinsi: YERLİ HURDA
 
-- "Fiş No", "No", "Sıra No" veya "Id." etiketli satırdaki numara
-- Tipik formatlar: 130002187968, 9495, 1356
-- Okuyamıyorsan null — örnek/standart numara uydurma
+JSON:
+{"plaka":"37LK081","fis_no":"130002187968","net_tartim_kg":15150,"fire_kg":0,"tarih":"12.03.2026","firma":"YEŞIL IZABE GERİ DÖNÜŞÜM NAK","irsaliye_no":null,"kantar_no":null,"malzemeler":{}}
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-TARİH
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-- "Tarih", "Geliş Tarihi", "Giriş Tarihi" alanından oku
-- Format: GG.AA.YYYY → 12.03.2026
-- Saat varsa atla, sadece tarih
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-MALZEMELER
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-- Mal cinsi listesi varsa oku: {"KARMA": 15150, "DKP": 3200}
-- Liste yoksa veya tek malzeme varsa boş bırak: {}
-- "Fire", "Tenzil" satırlarını malzeme olarak EKLEME
-
-ÖNEMLİ: Görebildiğin alanları DOLDUR. "Emin değilim" diye topyekûn null bırakma — bu sistemi bozar.
-Sadece tek bir karakter dahi okuyamadığın alanları null bırak."""
+ŞİMDİ asıl fişe geçelim. Aynı formatta cevap ver."""
 
 
 def _fotograf_to_base64(fotograf_yolu: str) -> tuple[str, str, dict]:
     """
-    Fotoğrafı base64'e çevirir.
-    Üçüncü dönüş: kalite metaverileri ({width, height, kb, dusuk_kalite}).
+    Fotoğrafı base64'e çevirir + Claude'un daha iyi okuyabilmesi için
+    pre-processing uygular:
+      1. Küçük fotoğrafları upscale (LANCZOS)
+      2. UNSHARP MASK ile keskinleştirme
+      3. Kontrast +25%
+      4. Sharpness +50%
     """
     meta = {"width": 0, "height": 0, "kb": 0, "dusuk_kalite": False}
     try:
-        from PIL import Image
+        from PIL import Image, ImageEnhance, ImageFilter
         import io as _io
         with Image.open(fotograf_yolu) as img:
             if img.mode in ("RGBA", "P"):
                 img = img.convert("RGB")
             orig_w, orig_h = img.size
-            # Çok küçük gelen fotoğrafları upscale et (Claude detayları daha iyi okusun).
-            # thumbnail upscale yapmaz, manuel resize gerekiyor.
+            # 1. Çok küçük gelen fotoğrafları upscale et
             if max(orig_w, orig_h) < 1000:
                 oran = 1500 / max(orig_w, orig_h)
                 yeni_boyut = (int(orig_w * oran), int(orig_h * oran))
@@ -139,18 +140,37 @@ def _fotograf_to_base64(fotograf_yolu: str) -> tuple[str, str, dict]:
                 logger.info(f"Küçük fotoğraf upscale edildi: {orig_w}x{orig_h} → {img.size}")
             else:
                 img.thumbnail((1500, 1500), Image.LANCZOS)
+
+            # 2. Unsharp mask — kenarları belirginleştirir (OCR için kritik)
+            try:
+                img = img.filter(ImageFilter.UnsharpMask(radius=1.5, percent=120, threshold=2))
+            except Exception as fe:
+                logger.warning(f"UnsharpMask atlandı: {fe}")
+
+            # 3. Kontrast artır
+            try:
+                img = ImageEnhance.Contrast(img).enhance(1.25)
+            except Exception as ce:
+                logger.warning(f"Contrast enhance atlandı: {ce}")
+
+            # 4. Sharpness artır
+            try:
+                img = ImageEnhance.Sharpness(img).enhance(1.5)
+            except Exception as se:
+                logger.warning(f"Sharpness enhance atlandı: {se}")
+
             buffer = _io.BytesIO()
-            img.save(buffer, format="JPEG", quality=90)
+            img.save(buffer, format="JPEG", quality=92)
             data = base64.b64encode(buffer.getvalue()).decode("utf-8")
             meta["width"]  = img.size[0]
             meta["height"] = img.size[1]
             meta["kb"]     = len(data) // 1024
-            # Original çok küçükse veya base64 boyutu çok düşükse kalite uyarısı
             if max(orig_w, orig_h) < 800 or meta["kb"] < 60:
                 meta["dusuk_kalite"] = True
             logger.info(
-                f"Fotoğraf boyutlandırıldı: orig=({orig_w}x{orig_h}) "
+                f"Fotoğraf hazırlandı: orig=({orig_w}x{orig_h}) "
                 f"final={img.size} | {meta['kb']}KB base64 | "
+                f"preprocessing=unsharp+contrast+sharpness | "
                 f"düşük_kalite={meta['dusuk_kalite']}"
             )
         return data, "image/jpeg", meta
@@ -165,14 +185,35 @@ def _fotograf_to_base64(fotograf_yolu: str) -> tuple[str, str, dict]:
 
 
 def _parse_json(metin: str) -> dict:
+    """Chain-of-thought formatlı yanıttan JSON kısmını çıkarır."""
     metin = metin.strip()
+    # Önce "JSON:" markeri sonrası kısma bak — chain-of-thought formatı
+    json_marker = re.search(r"JSON\s*:\s*\n?(\{.*?\})\s*$", metin, re.DOTALL)
+    if json_marker:
+        return json.loads(json_marker.group(1))
+    # Code fence (```json {...} ```)
     fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", metin, re.DOTALL)
     if fence:
         return json.loads(fence.group(1))
+    # Son çare: en sondaki { ... }
+    obj_matches = list(re.finditer(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", metin, re.DOTALL))
+    if obj_matches:
+        # En son JSON bloğunu al (chain-of-thought'ta JSON en sonda)
+        return json.loads(obj_matches[-1].group())
+    # Greedy son çare
     obj = re.search(r"\{.*\}", metin, re.DOTALL)
     if obj:
         return json.loads(obj.group())
     raise ValueError(f"JSON bulunamadı: {metin[:100]}")
+
+
+def _layout_kisminı_cikar(metin: str) -> str:
+    """Chain-of-thought yanıttan LAYOUT kısmını çıkarır (doğrulama için)."""
+    metin = metin.strip()
+    layout_match = re.search(r"LAYOUT\s*:\s*\n?(.*?)\n\s*JSON\s*:", metin, re.DOTALL | re.IGNORECASE)
+    if layout_match:
+        return layout_match.group(1).strip()
+    return ""
 
 
 def _parse_kg(deger) -> int:
@@ -224,6 +265,7 @@ def _claude_fis_oku_once(fotograf_yolu: str, temperature: float = 0.0) -> FisVer
     logger.info(f"OCR ham cevap: {claude_cevap}")
 
     veri = _parse_json(claude_cevap)
+    layout_text = _layout_kisminı_cikar(claude_cevap)
 
     # Kritik alanların tamamı null → fotoğraf okunamadı
     plaka_raw  = veri.get("plaka")
@@ -233,6 +275,33 @@ def _claude_fis_oku_once(fotograf_yolu: str, temperature: float = 0.0) -> FisVer
         raise ValueError(
             "Fişteki bilgiler okunamadı. Fotoğrafı daha net çekip tekrar deneyin."
         )
+
+    # ── HALÜSİNASYON DOĞRULAMA: Plaka layout tasvirinde geçiyor mu? ──
+    # Eğer LAYOUT bölümünde plaka'nın karakterleri yoksa, Claude büyük
+    # ihtimalle uyduruyor. Plakayı null'a düşür ve kullanıcı uyarısı ekle.
+    plaka_uydurma_uyari = None
+    if plaka_raw and layout_text:
+        plaka_normalized = re.sub(r'[\s\-]', '', str(plaka_raw)).upper()
+        # Plakanın "anlamlı" bir alt parçası (en az 4 karakter) layout'ta geçmeli
+        layout_upper = layout_text.upper().replace(" ", "").replace("-", "")
+        if len(plaka_normalized) >= 6:
+            # En az 4 ardışık karakter LAYOUT'ta var mı?
+            bulundu = False
+            for baslangic in range(len(plaka_normalized) - 3):
+                if plaka_normalized[baslangic:baslangic+4] in layout_upper:
+                    bulundu = True
+                    break
+            if not bulundu:
+                logger.warning(
+                    f"⚠️ HALÜSİNASYON ŞÜPHESİ: plaka='{plaka_normalized}' "
+                    f"LAYOUT tasvirinde GEÇMİYOR — null'a düşürüldü"
+                )
+                plaka_uydurma_uyari = (
+                    f"⚠️ Plaka okunamadı ('{plaka_raw}' tespit edildi ama doğrulanamadı). "
+                    f"Lütfen kontrol edip Düzenle'den girin."
+                )
+                plaka_raw = None
+                veri["plaka"] = None
 
     net_tartim  = _parse_kg(veri.get("net_tartim_kg"))
     fire        = _parse_kg(veri.get("fire_kg"))
@@ -268,7 +337,9 @@ def _claude_fis_oku_once(fotograf_yolu: str, temperature: float = 0.0) -> FisVer
         logger.warning(f"⚠️ GEÇERSİZ PLAKA FORMATI: '{temiz_plaka}'")
 
     plaka_uyari = None
-    if temiz_plaka and not plaka_gecerli:
+    if plaka_uydurma_uyari:
+        plaka_uyari = plaka_uydurma_uyari
+    elif temiz_plaka and not plaka_gecerli:
         plaka_uyari = f"⚠️ Plaka '{temiz_plaka}' geçersiz format — lütfen kontrol edin."
 
     logger.info(f"OCR sonuç — plaka={temiz_plaka} tartım={net_tartim}kg fire={fire}kg net={net_agirlik}kg firma={veri.get('firma')}")
