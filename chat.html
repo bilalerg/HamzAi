@@ -1217,7 +1217,63 @@
 
   // ── ÖDEME EKLE (alış faturası) ────────────────────────────────────
 
-  async function odemeFormGoster() {
+  async function odemeFormGoster(mod) {
+    // mod yoksa kullanıcıya akış seç
+    if (!mod) {
+      const wrap = document.createElement('div');
+      const baslik = document.createElement('div');
+      baslik.style.cssText = 'font-size:13px;font-weight:500;color:var(--text);margin-bottom:8px;';
+      baslik.textContent = '💸 Ödeme Ekle';
+      wrap.appendChild(baslik);
+      const info = document.createElement('div');
+      info.style.cssText = 'font-size:12px;color:var(--muted);margin-bottom:10px;padding:8px 12px;background:var(--accent-lt);border-radius:8px;border-left:3px solid var(--accent);';
+      info.textContent = 'Hangi şekilde ödeme yapacaksınız?';
+      wrap.appendChild(info);
+
+      const btnRow = document.createElement('div');
+      btnRow.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;';
+
+      const faturaBtn = document.createElement('button');
+      faturaBtn.style.cssText = 'flex:1;min-width:140px;padding:10px 14px;border-radius:9px;font-size:13px;font-weight:600;cursor:pointer;background:var(--accent,#bf5b2a);color:#fff;border:none;';
+      faturaBtn.textContent = '📄 Açık faturaya ödeme';
+      faturaBtn.onclick = function() {
+        Array.from(btnRow.querySelectorAll('button')).forEach(function(b){ b.disabled=true; });
+        odemeFormGoster('fatura');
+      };
+
+      const cariBtn = document.createElement('button');
+      cariBtn.style.cssText = 'flex:1;min-width:140px;padding:10px 14px;border-radius:9px;font-size:13px;font-weight:600;cursor:pointer;background:transparent;color:var(--text);border:1.5px solid var(--border);';
+      cariBtn.textContent = '🏢 Cari hesabına direkt';
+      cariBtn.onclick = function() {
+        Array.from(btnRow.querySelectorAll('button')).forEach(function(b){ b.disabled=true; });
+        odemeFormGoster('cari');
+      };
+
+      btnRow.appendChild(faturaBtn);
+      btnRow.appendChild(cariBtn);
+      wrap.appendChild(btnRow);
+
+      const iptalBtn = document.createElement('button');
+      iptalBtn.className = 'btn-cancel';
+      iptalBtn.style.cssText = 'margin-top:8px;font-size:12px;';
+      iptalBtn.textContent = '✕ İptal';
+      iptalBtn.onclick = function() {
+        Array.from(btnRow.querySelectorAll('button')).forEach(function(b){ b.disabled=true; });
+        iptalBtn.disabled = true;
+        addMessage('❌ İptal edildi.', 'bot');
+      };
+      wrap.appendChild(iptalBtn);
+      addMessage('', 'bot', wrap);
+      return;
+    }
+
+    // ── CARİ HESABA DİREKT ÖDEME MODU ─────────────────────────────
+    if (mod === 'cari') {
+      await odemeCariBazliFormGoster();
+      return;
+    }
+
+    // ── FATURA BAZLI ÖDEME (mevcut akış) ──────────────────────────
     billablePanelTikla('odeme_ekle');
     showTyping();
     let hesaplar = [], faturalar = [];
@@ -1343,6 +1399,128 @@
     wrap.appendChild(btnRow);
     addMessage('', 'bot', wrap);
     sohbetPanelKaydet('odeme_ekle', {});
+  }
+
+  // ── CARİ HESABA DİREKT ÖDEME (fatura bağı yok) ────────────────────
+  async function odemeCariBazliFormGoster() {
+    billablePanelTikla('odeme_ekle', { mod: 'cari' });
+    showTyping();
+    let hesaplar = [], cariler = [];
+    try {
+      const [hr, cr] = await Promise.all([
+        fetch('/api/hesaplar'),
+        fetch('/api/cariler?tip=supplier')
+      ]);
+      hesaplar = (await hr.json()).hesaplar || [];
+      cariler  = (await cr.json()).cariler || [];
+    } catch {}
+    removeTyping();
+
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'font-size:13px;';
+
+    const baslik = document.createElement('div');
+    baslik.style.cssText = 'font-weight:500;margin-bottom:10px;';
+    baslik.textContent = '🏢 Cari Hesabına Ödeme (Tedarikçi)';
+    wrap.appendChild(baslik);
+
+    const info = document.createElement('div');
+    info.style.cssText = 'font-size:12px;color:var(--muted);margin-bottom:10px;padding:8px 12px;background:var(--accent-lt);border-radius:8px;border-left:3px solid var(--accent);';
+    info.textContent = 'Fatura olmadan tedarikçi cari hesabına direkt ödeme. (Avans / borç kapatma)';
+    wrap.appendChild(info);
+
+    function satir(label, el) {
+      const d = document.createElement('div');
+      d.style.cssText = 'margin-bottom:8px;';
+      const l = document.createElement('div');
+      l.style.cssText = 'font-size:11px;color:var(--muted);margin-bottom:3px;';
+      l.textContent = label;
+      d.appendChild(l);
+      d.appendChild(el);
+      return d;
+    }
+
+    const { wrap: ddWrap } = cariSecimDropdown(cariler, function(c) {
+      ddWrap._secilen = c;
+    }, 'Tedarikçi adı yazın...');
+    wrap.appendChild(satir('Tedarikçi *', ddWrap));
+
+    const tutarInp = document.createElement('input');
+    tutarInp.type = 'text'; tutarInp.className = 'fiyat-input';
+    tutarInp.placeholder = 'Örn: 15000';
+    wrap.appendChild(satir('Tutar (₺) *', tutarInp));
+
+    const kasaSel = document.createElement('select');
+    kasaSel.className = 'fiyat-input';
+    const bosH = document.createElement('option'); bosH.value = ''; bosH.textContent = 'Kasa/Banka (opsiyonel)';
+    kasaSel.appendChild(bosH);
+    hesaplar.forEach(function(h) {
+      const o = document.createElement('option'); o.value = h.id; o.textContent = h.name;
+      kasaSel.appendChild(o);
+    });
+    wrap.appendChild(satir('Hesap', kasaSel));
+
+    const tarihInp = document.createElement('input');
+    tarihInp.type = 'date'; tarihInp.className = 'fiyat-input';
+    tarihInp.style.maxWidth = '160px';
+    tarihInp.value = new Date().toISOString().split('T')[0];
+    wrap.appendChild(satir('Tarih', tarihInp));
+
+    const notlarInp = document.createElement('input');
+    notlarInp.type = 'text'; notlarInp.className = 'fiyat-input';
+    notlarInp.placeholder = 'Açıklama (opsiyonel)';
+    wrap.appendChild(satir('Açıklama', notlarInp));
+
+    const btnRow = document.createElement('div');
+    btnRow.style.cssText = 'display:flex;gap:8px;margin-top:12px;';
+
+    const kaydetBtn = document.createElement('button');
+    kaydetBtn.className = 'btn-primary'; kaydetBtn.textContent = 'Kaydet';
+
+    const iptalBtn = document.createElement('button');
+    iptalBtn.className = 'btn-cancel'; iptalBtn.textContent = '✕ İptal';
+    iptalBtn.onclick = function() { addMessage('❌ Ödeme iptal edildi.', 'bot'); };
+
+    kaydetBtn.onclick = async function() {
+      const inp = ddWrap.querySelector('input');
+      const cariAdi = inp ? inp.value.trim() : '';
+      const tutar = parseFiyat(tutarInp.value);
+      if (!cariAdi) { inp.style.borderColor = '#e53e3e'; return; }
+      if (!tutar || tutar <= 0) { tutarInp.style.borderColor = '#e53e3e'; return; }
+      kaydetBtn.disabled = true; iptalBtn.disabled = true;
+      kaydetBtn.textContent = 'Kaydediliyor…';
+      try {
+        const body = { cari_adi: cariAdi, tutar: tutar, tarih: tarihInp.value };
+        if (kasaSel.value) body.kasa_id = kasaSel.value;
+        if (notlarInp.value.trim()) body.aciklama = notlarInp.value.trim();
+        const res = await fetch('/api/cari-odeme', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const d = await res.json();
+        if (d.basarili) {
+          addMessage(d.cevap || ('✅ Ödeme kaydedildi: ' + cariAdi + ' — ' + tutar.toLocaleString('tr-TR') + ' ₺'), 'bot');
+        } else {
+          addMessage('❌ Kaydedilemedi: ' + (d.hata || 'Bilinmeyen hata'), 'bot');
+          kaydetBtn.disabled = false; iptalBtn.disabled = false;
+          kaydetBtn.textContent = 'Kaydet';
+        }
+      } catch (e) {
+        addMessage('❌ Kaydedilemedi.', 'bot');
+        kaydetBtn.disabled = false; iptalBtn.disabled = false;
+        kaydetBtn.textContent = 'Kaydet';
+      }
+    };
+
+    btnRow.appendChild(kaydetBtn);
+    btnRow.appendChild(iptalBtn);
+    wrap.appendChild(btnRow);
+    addMessage('', 'bot', wrap);
+    setTimeout(function() {
+      const inp = ddWrap.querySelector('input');
+      if (inp) inp.focus();
+    }, 100);
   }
 
   // ── PARA TRANSFERİ ────────────────────────────────────────────────

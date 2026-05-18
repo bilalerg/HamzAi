@@ -1172,6 +1172,108 @@ def tahsilat_sil(odeme_id: str, tenant_id=None, transaction_id: str = None) -> d
         return {"basarili": False, "hata": str(e)}
 
 
+def cari_bazli_tahsilat(
+        cari_id: str,
+        tutar: float,
+        aciklama: str = None,
+        tarih: str = None,
+        kasa_id: str = None,
+        tenant_id=None,
+) -> dict:
+    """
+    Fatura olmadan doğrudan müşteri cari hesabına tahsilat ekler.
+    Paraşüt: POST /contacts/{id}/contact_debit_transactions
+    Bu yöntem avans, ön ödeme, açık fatura bulunmayan durumlar için kullanılır.
+    """
+    tid   = _resolve_tid(tenant_id)
+    creds = _tenant_credentials(tid)
+    cid   = creds["company_id"]
+    try:
+        from datetime import datetime
+        bugun    = tarih or datetime.now().strftime("%Y-%m-%d")
+        hesap_id = kasa_id or _kasa_hesabi_bul(tenant_id=tid)
+        if not hesap_id:
+            return {"basarili": False, "hata": "Kasa/banka hesabı bulunamadı."}
+        istek = {"data": {"type": "transactions", "attributes": {
+            "description": aciklama or "Cari hesap tahsilatı",
+            "date":        bugun,
+            "amount":      tutar,
+            "account_id":  int(hesap_id),
+        }}}
+        try:
+            sonuc = parasut_post(
+                f"/{cid}/contacts/{cari_id}/contact_debit_transactions",
+                istek, tenant_id=tid,
+            )
+        except Exception:
+            # bazı Paraşüt instance'larında amount string bekleyebilir
+            istek["data"]["attributes"]["amount"] = str(tutar)
+            sonuc = parasut_post(
+                f"/{cid}/contacts/{cari_id}/contact_debit_transactions",
+                istek, tenant_id=tid,
+            )
+        tx_id = sonuc.get("data", {}).get("id")
+        logger.info(f"Cari bazlı tahsilat: cari_id={cari_id} tutar={tutar:,.0f} TL tx={tx_id} (tenant={tid})")
+        try:
+            cari_cache_yenile(tenant_id=tid)
+        except Exception:
+            pass
+        return {"basarili": True, "id": tx_id, "cari_id": cari_id, "tutar": tutar, "tarih": bugun}
+    except Exception as e:
+        logger.error(f"Cari bazlı tahsilat hatası: {e}")
+        return {"basarili": False, "hata": str(e)}
+
+
+def cari_bazli_odeme(
+        cari_id: str,
+        tutar: float,
+        aciklama: str = None,
+        tarih: str = None,
+        kasa_id: str = None,
+        tenant_id=None,
+) -> dict:
+    """
+    Fatura olmadan doğrudan tedarikçi cari hesabına ödeme ekler.
+    Paraşüt: POST /contacts/{id}/contact_credit_transactions
+    """
+    tid   = _resolve_tid(tenant_id)
+    creds = _tenant_credentials(tid)
+    cid   = creds["company_id"]
+    try:
+        from datetime import datetime
+        bugun    = tarih or datetime.now().strftime("%Y-%m-%d")
+        hesap_id = kasa_id or _kasa_hesabi_bul(tenant_id=tid)
+        if not hesap_id:
+            return {"basarili": False, "hata": "Kasa/banka hesabı bulunamadı."}
+        istek = {"data": {"type": "transactions", "attributes": {
+            "description": aciklama or "Cari hesap ödemesi",
+            "date":        bugun,
+            "amount":      tutar,
+            "account_id":  int(hesap_id),
+        }}}
+        try:
+            sonuc = parasut_post(
+                f"/{cid}/contacts/{cari_id}/contact_credit_transactions",
+                istek, tenant_id=tid,
+            )
+        except Exception:
+            istek["data"]["attributes"]["amount"] = str(tutar)
+            sonuc = parasut_post(
+                f"/{cid}/contacts/{cari_id}/contact_credit_transactions",
+                istek, tenant_id=tid,
+            )
+        tx_id = sonuc.get("data", {}).get("id")
+        logger.info(f"Cari bazlı ödeme: cari_id={cari_id} tutar={tutar:,.0f} TL tx={tx_id} (tenant={tid})")
+        try:
+            cari_cache_yenile(tenant_id=tid)
+        except Exception:
+            pass
+        return {"basarili": True, "id": tx_id, "cari_id": cari_id, "tutar": tutar, "tarih": bugun}
+    except Exception as e:
+        logger.error(f"Cari bazlı ödeme hatası: {e}")
+        return {"basarili": False, "hata": str(e)}
+
+
 def tahsilat_ekle(
         cari_adi: str,
         tutar: float,
@@ -1186,21 +1288,44 @@ def tahsilat_ekle(
         cari_id = cari_id_bul(cari_adi, tenant_id=tid)
         if not cari_id:
             return {"basarili": False, "hata": f"'{cari_adi}' adlı cari bulunamadı."}
-        sonuc = parasut_get(
-            f"/{cid}/sales_invoices",
-            params={"filter[contact_id]": cari_id, "filter[payment_status]": "overdue",
-                    "page[size]": 25, "sort": "issue_date"},
-            tenant_id=tid,
-        )
+
+        # Açık faturaları topla (overdue + not_due + unscheduled)
         faturalar = []
-        for f in sonuc.get("data", []):
-            attr  = f.get("attributes", {})
-            kalan = float(attr.get("remaining") or attr.get("gross_total") or 0)
-            if kalan > 0:
-                faturalar.append({"id": f["id"], "tarih": attr.get("issue_date", "-"),
-                                   "tutar": float(attr.get("gross_total", 0)), "kalan": kalan})
+        for durum in ("overdue", "not_due", "unscheduled"):
+            try:
+                sonuc = parasut_get(
+                    f"/{cid}/sales_invoices",
+                    params={"filter[contact_id]": cari_id, "filter[payment_status]": durum,
+                            "page[size]": 25, "sort": "issue_date"},
+                    tenant_id=tid,
+                )
+                for f in sonuc.get("data", []):
+                    attr  = f.get("attributes", {})
+                    kalan = float(attr.get("remaining") or attr.get("gross_total") or 0)
+                    if kalan > 0:
+                        faturalar.append({"id": f["id"], "tarih": attr.get("issue_date", "-"),
+                                           "tutar": float(attr.get("gross_total", 0)), "kalan": kalan})
+            except Exception as fetch_err:
+                logger.warning(f"Açık fatura {durum} sorgusu atlandı: {fetch_err}")
+
+        # ── FALLBACK: Açık fatura yoksa cari hesabına direkt tahsilat ──
+        # Paraşüt: contact_debit_transactions ile fatura bağı olmadan tahsilat
         if not faturalar:
-            return {"basarili": False, "hata": f"{cari_adi} için açık fatura bulunamadı."}
+            logger.info(f"{cari_adi} için açık fatura yok → cari bazlı tahsilat'a düşülüyor")
+            cari_sonuc = cari_bazli_tahsilat(
+                cari_id=cari_id, tutar=float(tutar),
+                aciklama=aciklama or f"{cari_adi} cari tahsilatı",
+                tarih=tarih, tenant_id=tid,
+            )
+            if cari_sonuc.get("basarili"):
+                return {
+                    "basarili": True, "cari": cari_adi, "tutar": float(tutar),
+                    "tarih": tarih or "", "odenen_faturalar": [],
+                    "cari_hesap_id": cari_sonuc.get("id"),
+                    "kalan_odenmedi": 0, "basarisiz_fatura": 0,
+                    "yontem": "cari_hesap",
+                }
+            return cari_sonuc
 
         kalan_tutar       = float(tutar)
         odenen_faturalar  = []
@@ -2493,6 +2618,24 @@ async def async_tahsilat_ekle(
 
 async def async_tahsilat_sil(odeme_id: str, tenant_id=None, transaction_id: str = None) -> dict:
     return await asyncio.to_thread(tahsilat_sil, odeme_id, tenant_id, transaction_id)
+
+
+async def async_cari_bazli_tahsilat(
+        cari_id: str, tutar: float, aciklama: str = None,
+        tarih: str = None, kasa_id: str = None, tenant_id=None,
+) -> dict:
+    return await asyncio.to_thread(
+        cari_bazli_tahsilat, cari_id, tutar, aciklama, tarih, kasa_id, tenant_id
+    )
+
+
+async def async_cari_bazli_odeme(
+        cari_id: str, tutar: float, aciklama: str = None,
+        tarih: str = None, kasa_id: str = None, tenant_id=None,
+) -> dict:
+    return await asyncio.to_thread(
+        cari_bazli_odeme, cari_id, tutar, aciklama, tarih, kasa_id, tenant_id
+    )
 
 
 async def async_cari_guncelle(

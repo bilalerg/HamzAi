@@ -1125,19 +1125,22 @@ async def tahsilat_ekle_endpoint(request: Request, background_tasks: BackgroundT
             finally:
                 db.close()
 
-            # Kısmi başarı uyarısı
+            # Kısmi başarı / fallback uyarısı
             uyari = ""
             if sonuc.get("basarisiz_fatura", 0) > 0:
                 uyari = f"\n⚠️ {sonuc['basarisiz_fatura']} faturaya tahsilat eklenemedi, kontrol edin."
             if sonuc.get("kalan_odenmedi", 0) > 0:
                 uyari += f"\n⚠️ {tr_para(sonuc['kalan_odenmedi'],2)} TL ödenemedi."
+            yontem_bilgi = ""
+            if sonuc.get("yontem") == "cari_hesap":
+                yontem_bilgi = "\nℹ️ Açık fatura yoktu → cari hesabına direkt tahsilat olarak kaydedildi (avans)."
 
             return JSONResponse({
                 "basarili": True,
                 "cevap": (f"✅ Tahsilat kaydedildi!\n\n🏢 Cari: {cari_adi}\n"
                           f"💰 Tutar: {tr_para(float(tutar),2)} TL\n"
                           f"📅 Tarih: {datetime.strptime(tarih_str, '%Y-%m-%d').strftime('%d.%m.%Y') if tarih_str else 'Bugün'}\n"
-                          f"Paraşüt'e kaydedildi.{uyari}")
+                          f"Paraşüt'e kaydedildi.{yontem_bilgi}{uyari}")
             })
         else:
             return JSONResponse({"basarili": False,
@@ -2121,6 +2124,66 @@ async def odeme_ekle_endpoint(request: Request, background_tasks: BackgroundTask
                                       f"odeme:{fatura_id}:{int(tutar)}")
         return JSONResponse(sonuc)
     return JSONResponse(sonuc, status_code=500)
+
+
+@app.post("/api/cari-odeme")
+async def cari_odeme_endpoint(request: Request, background_tasks: BackgroundTasks):
+    """
+    Fatura olmadan tedarikçi cari hesabına direkt ödeme.
+    Paraşüt: POST /contacts/{id}/contact_credit_transactions
+    Body: {cari_adi VEYA cari_id, tutar, aciklama?, tarih?, kasa_id?}
+    """
+    aktif_user = mevcut_kullanici(request)
+    tenant_id  = _tenant_id_from_user(aktif_user)
+    data       = await request.json()
+    cari_adi   = (data.get("cari_adi") or "").strip()
+    cari_id    = str(data.get("cari_id") or "").strip() or None
+    tutar      = float(data.get("tutar") or 0)
+    aciklama   = data.get("aciklama")
+    tarih      = data.get("tarih")
+    kasa_id    = data.get("kasa_id")
+
+    if (not cari_id and not cari_adi) or tutar <= 0:
+        return JSONResponse(
+            {"basarili": False, "hata": "cari_adi (veya cari_id) ve tutar > 0 zorunlu"},
+            status_code=400,
+        )
+    try:
+        from app.parasut.client import async_cari_bazli_odeme, async_cari_id_bul
+        if not cari_id:
+            cari_id = await async_cari_id_bul(cari_adi, tenant_id=tenant_id)
+            if not cari_id:
+                return JSONResponse({"basarili": False, "hata": f"'{cari_adi}' bulunamadı"}, status_code=404)
+
+        sonuc = await async_cari_bazli_odeme(
+            cari_id=str(cari_id), tutar=tutar, aciklama=aciklama,
+            tarih=tarih, kasa_id=kasa_id, tenant_id=tenant_id,
+        )
+        if sonuc.get("basarili"):
+            if aktif_user:
+                background_tasks.add_task(_billable_kaydet, aktif_user, "ODEME_EKLENDI",
+                                          f"cari={cari_adi or cari_id} | {int(tutar)} TL", 1, "parasut",
+                                          {"cari_id": cari_id, "tutar": int(tutar), "yontem": "cari_hesap"},
+                                          None)
+            db = SessionLocal()
+            try:
+                _islem_log(db, "ODEME_EKLENDI", cari_adi=cari_adi or str(cari_id),
+                           tutar=int(tutar),
+                           aciklama=f"Cari hesabına direkt ödeme | {aciklama or ''}",
+                           request=request, user=aktif_user)
+            finally:
+                db.close()
+            return JSONResponse({
+                "basarili": True,
+                "id": sonuc.get("id"),
+                "cevap": (f"✅ Ödeme kaydedildi!\n\n🏢 Cari: {cari_adi or cari_id}\n"
+                          f"💰 Tutar: {tr_para(tutar,2)} TL\n"
+                          f"ℹ️ Cari hesabına direkt ödeme olarak kaydedildi.")
+            })
+        return JSONResponse(sonuc, status_code=500)
+    except Exception as e:
+        logger.error(f"Cari ödeme endpoint hatası: {e}")
+        return JSONResponse({"basarili": False, "hata": _guvenli_hata(e)}, status_code=500)
 
 
 @app.get("/api/stok-hareketleri")
