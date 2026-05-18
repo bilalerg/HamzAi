@@ -1059,10 +1059,26 @@ async def tahsilat_ekle_endpoint(request: Request, background_tasks: BackgroundT
     aktif_user = mevcut_kullanici(request)
     tenant_id  = _tenant_id_from_user(aktif_user)
     try:
-        from app.parasut.client import async_tahsilat_ekle, async_cari_id_bul, async_cari_detay_getir
+        from app.parasut.client import async_tahsilat_ekle, async_cari_id_bul, async_cari_detay_getir, async_cari_tipi_bul
         from datetime import datetime
 
         if not onaylandi:
+            # ── Cari tip kontrolü: tedarikçiye tahsilat eklenmez ─────────
+            try:
+                tip = await async_cari_tipi_bul(cari_adi, tenant_id=tenant_id)
+                if tip == "supplier":
+                    return JSONResponse({
+                        "basarili": False, "yanlis_tip": True,
+                        "onerilen_akis": "odeme",
+                        "cevap": (
+                            f"⚠️ '{cari_adi}' bir tedarikçi.\n\n"
+                            f"Tedarikçilere TAHSİLAT değil ÖDEME eklenir.\n"
+                            f"Ödeme ekranına yönlendirilecek."
+                        )
+                    })
+            except Exception as tip_err:
+                logger.warning(f"Cari tip kontrolü atlandı: {tip_err}")
+
             try:
                 cari_id = await async_cari_id_bul(cari_adi, tenant_id=tenant_id)
                 if cari_id:
@@ -1444,15 +1460,26 @@ async def son_fisler(request: Request, background_tasks: BackgroundTasks):
 
 @app.get("/api/fatura-detay/{fatura_id}")
 async def fatura_detay_endpoint(fatura_id: str, request: Request, background_tasks: BackgroundTasks):
+    """
+    Fatura detayı. Tip query param ile satış / alış ayrımı.
+    ?tip=customer → sales_invoices (default)
+    ?tip=supplier → purchase_bills
+    """
     aktif_user = mevcut_kullanici(request)
     tenant_id  = _tenant_id_from_user(aktif_user)
+    tip = (request.query_params.get("tip") or "customer").strip().lower()
+    if tip not in ("customer", "supplier"):
+        tip = "customer"
     if aktif_user:
         background_tasks.add_task(_usage_kaydet, aktif_user["id"], aktif_user["username"],
-                                   "SORGU", f"fatura_detay | id={fatura_id}", 1,
+                                   "SORGU", f"fatura_detay | id={fatura_id} | tip={tip}", 1,
                                    aktif_user.get("profaix_user_id"))
     try:
-        from app.parasut.client import async_fatura_detay_getir
-        return JSONResponse(await async_fatura_detay_getir(fatura_id, tenant_id=tenant_id))
+        from app.parasut.client import async_fatura_detay_universal
+        detay = await async_fatura_detay_universal(fatura_id, tip=tip, tenant_id=tenant_id)
+        if detay:
+            detay["tip"] = tip
+        return JSONResponse(detay)
     except Exception as e:
         return JSONResponse({"hata": _guvenli_hata(e)})
 
@@ -1487,12 +1514,19 @@ async def cari_faturalar_endpoint(cari_adi: str, request: Request, background_ta
         sayfa     = int(request.query_params.get("sayfa", 1))
         limit     = min(int(request.query_params.get("limit", 25)), 25)
         durum     = request.query_params.get("durum")
+        # tip query param: 'customer' (default, sales_invoices),
+        # 'supplier' (purchase_bills), 'both' (her ikisi birleştirilmiş)
+        tip       = (request.query_params.get("tip") or "customer").strip().lower()
+        if tip not in ("customer", "supplier", "both"):
+            tip = "customer"
 
         cari_id = await async_cari_id_bul(cari_adi, tenant_id=tenant_id)
         if not cari_id:
             return JSONResponse({"faturalar": [], "hata": "Cari bulunamadı"})
 
-        sonuc = await async_cari_faturalari_getir(cari_id, limit, sayfa, baslangic, bitis, durum, tenant_id=tenant_id)
+        sonuc = await async_cari_faturalari_getir(
+            cari_id, limit, sayfa, baslangic, bitis, durum, tip, tenant_id=tenant_id
+        )
         return JSONResponse(sonuc)
     except Exception as e:
         return JSONResponse({"faturalar": [], "hata": _guvenli_hata(e)})
@@ -2072,6 +2106,8 @@ async def odeme_ekle_endpoint(request: Request, background_tasks: BackgroundTask
     if not fatura_id or tutar <= 0:
         return JSONResponse({"hata": "fatura_id ve tutar zorunlu"}, status_code=400)
 
+    # Not: Ödeme her zaman purchase_bills payment'e eklenir. Müşteri seçim
+    # kontrolü UI tarafında yapılır (form müşteri fatura seçemez zaten).
     from app.parasut.client import async_alıs_faturasi_odeme_ekle
     sonuc = await async_alıs_faturasi_odeme_ekle(
         fatura_id=fatura_id, tutar=tutar, kasa_id=kasa_id,
@@ -2186,49 +2222,67 @@ async def para_transferi_endpoint(request: Request, background_tasks: Background
 
 @app.post("/api/fatura-iptal")
 async def fatura_iptal_endpoint(request: Request, background_tasks: BackgroundTasks):
-    """Satış faturasını iptal eder."""
+    """
+    Satış veya alış faturasını iptal eder.
+    Body: {fatura_id, tip?}
+      tip='customer' (default) → sales_invoices/{id}/cancel
+      tip='supplier'           → purchase_bills/{id}/cancel
+    """
     aktif_user = mevcut_kullanici(request)
     tenant_id  = _tenant_id_from_user(aktif_user)
     data       = await request.json()
     fatura_id  = (data.get("fatura_id") or "").strip()
+    tip        = (data.get("tip") or "customer").strip().lower()
+    if tip not in ("customer", "supplier"):
+        tip = "customer"
     if not fatura_id:
         return JSONResponse({"hata": "fatura_id zorunlu"}, status_code=400)
 
-    from app.parasut.client import async_satis_faturasi_iptal
-    sonuc = await async_satis_faturasi_iptal(fatura_id, tenant_id=tenant_id)
+    from app.parasut.client import async_fatura_iptal_universal
+    sonuc = await async_fatura_iptal_universal(fatura_id, tip=tip, tenant_id=tenant_id)
     if sonuc.get("basarili"):
         if aktif_user:
-            background_tasks.add_task(_billable_kaydet, aktif_user, "FATURA_IPTAL",
-                                      f"fatura={fatura_id}", 1, "parasut",
-                                      {"fatura_id": fatura_id}, f"fatura_iptal:{fatura_id}")
+            event_type = "ALIS_FATURASI_IPTAL" if tip == "supplier" else "FATURA_IPTAL"
+            background_tasks.add_task(_billable_kaydet, aktif_user, event_type,
+                                      f"fatura={fatura_id} tip={tip}", 1, "parasut",
+                                      {"fatura_id": fatura_id, "tip": tip},
+                                      f"fatura_iptal:{tip}:{fatura_id}")
         return JSONResponse(sonuc)
     return JSONResponse(sonuc, status_code=500)
 
 
 @app.post("/api/fatura-guncelle")
 async def fatura_guncelle_endpoint(request: Request, background_tasks: BackgroundTasks):
-    """Satış faturası üst bilgilerini günceller (description / issue_date / due_date)."""
+    """
+    Satış veya alış faturası üst bilgilerini günceller.
+    Body: {fatura_id, tip?, aciklama?, issue_date?, due_date?}
+      tip='customer' (default) → sales_invoices PUT
+      tip='supplier'           → purchase_bills PUT
+    """
     aktif_user = mevcut_kullanici(request)
     tenant_id  = _tenant_id_from_user(aktif_user)
     data       = await request.json()
     fatura_id  = (data.get("fatura_id") or "").strip()
+    tip        = (data.get("tip") or "customer").strip().lower()
+    if tip not in ("customer", "supplier"):
+        tip = "customer"
     aciklama   = data.get("aciklama")
     issue_date = data.get("issue_date") or data.get("tarih")
     due_date   = data.get("due_date") or data.get("vade")
     if not fatura_id:
         return JSONResponse({"hata": "fatura_id zorunlu"}, status_code=400)
 
-    from app.parasut.client import async_satis_faturasi_guncelle
-    sonuc = await async_satis_faturasi_guncelle(
-        fatura_id=fatura_id, aciklama=aciklama,
+    from app.parasut.client import async_fatura_guncelle_universal
+    sonuc = await async_fatura_guncelle_universal(
+        fatura_id=fatura_id, tip=tip, aciklama=aciklama,
         issue_date=issue_date, due_date=due_date,
         tenant_id=tenant_id,
     )
     if sonuc.get("basarili"):
         if aktif_user:
             background_tasks.add_task(_billable_kaydet, aktif_user, "FATURA_GUNCELLENDI",
-                                      f"fatura={fatura_id}", 1, "parasut",
-                                      {"fatura_id": fatura_id}, None)
+                                      f"fatura={fatura_id} tip={tip}", 1, "parasut",
+                                      {"fatura_id": fatura_id, "tip": tip}, None)
         return JSONResponse(sonuc)
     return JSONResponse(sonuc, status_code=500)
 

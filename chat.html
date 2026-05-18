@@ -1597,20 +1597,32 @@
 
   // ── FATURA İPTAL ─────────────────────────────────────────────────
 
-  async function faturaIptalFormGoster(faturaId) {
-    billablePanelTikla('fatura_iptal', faturaId ? { fatura_id: String(faturaId) } : {});
+  async function faturaIptalFormGoster(faturaId, onTip) {
+    // Tip belirtilmemiş ve faturaId de yoksa önce tip soralım
+    if (!onTip && !faturaId) {
+      tipSecimSor(
+        '❌ Fatura İptal',
+        'Hangi tür faturayı iptal etmek istiyorsunuz?',
+        function(secilenTip) { faturaIptalFormGoster(null, secilenTip); }
+      );
+      return;
+    }
+    onTip = (onTip === 'supplier') ? 'supplier' : 'customer';
+
+    billablePanelTikla('fatura_iptal', faturaId ? { fatura_id: String(faturaId), tip: onTip } : { tip: onTip });
 
     const wrap = document.createElement('div');
     wrap.style.cssText = 'font-size:13px;';
 
     const baslik = document.createElement('div');
     baslik.style.cssText = 'font-weight:500;margin-bottom:10px;color:#dc2626;';
-    baslik.textContent = '❌ Fatura İptal';
+    baslik.textContent = onTip === 'supplier' ? '❌ Alış Faturası İptal' : '❌ Satış Faturası İptal';
     wrap.appendChild(baslik);
 
     const uyari = document.createElement('div');
     uyari.style.cssText = 'font-size:12px;color:#78350f;background:#fffbeb;border:1.5px solid #f59e0b;border-radius:8px;padding:8px 12px;margin-bottom:10px;line-height:1.6;';
-    uyari.innerHTML = '⚠️ <b>Dikkat:</b> İptal edilen fatura Paraşüt\'te geri alınamayabilir. Ödenmiş faturalar önce tahsilatı silinmeden iptal edilemez.';
+    const _odemeSozcuk = onTip === 'supplier' ? 'ödemesi' : 'tahsilatı';
+    uyari.innerHTML = '⚠️ <b>Dikkat:</b> İptal edilen fatura Paraşüt\'te geri alınamayabilir. Ödenmiş faturalar önce ' + _odemeSozcuk + ' silinmeden iptal edilemez.';
     wrap.appendChild(uyari);
 
     function satir(label, el) {
@@ -1628,14 +1640,6 @@
     idInp.type = 'text'; idInp.className = 'fiyat-input'; idInp.placeholder = 'Fatura ID (Paraşüt URL\'den)';
     if (faturaId) idInp.value = String(faturaId);
     wrap.appendChild(satir('Fatura ID *', idInp));
-
-    const tipSel = document.createElement('select');
-    tipSel.className = 'fiyat-input';
-    [['satis', 'Satış Faturası'], ['alis', 'Alış Faturası']].forEach(function(t) {
-      const o = document.createElement('option'); o.value = t[0]; o.textContent = t[1];
-      tipSel.appendChild(o);
-    });
-    wrap.appendChild(satir('Fatura Tipi', tipSel));
 
     const btnRow = document.createElement('div');
     btnRow.style.cssText = 'display:flex;gap:8px;margin-top:12px;';
@@ -1655,11 +1659,11 @@
       iptalEtBtn.disabled = true; vazgecBtn.disabled = true;
       iptalEtBtn.textContent = 'İptal ediliyor…';
       try {
-        const endpoint = tipSel.value === 'alis' ? '/api/alis-faturasi-iptal' : '/api/fatura-iptal';
-        const res = await fetch(endpoint, {
+        // Generic endpoint — backend tipe göre doğru cancel'i çağırır
+        const res = await fetch('/api/fatura-iptal', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (localStorage.getItem('token') || '') },
-          body: JSON.stringify({ fatura_id: fid })
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fatura_id: fid, tip: onTip })
         });
         const d = await res.json();
         if (d.basarili) {
@@ -1680,7 +1684,7 @@
     btnRow.appendChild(vazgecBtn);
     wrap.appendChild(btnRow);
     addMessage('', 'bot', wrap);
-    sohbetPanelKaydet('fatura_iptal', faturaId ? { fatura_id: String(faturaId) } : {});
+    sohbetPanelKaydet('fatura_iptal', faturaId ? { fatura_id: String(faturaId), tip: onTip } : { tip: onTip });
     if (!faturaId) setTimeout(function() { idInp.focus(); }, 100);
   }
 
@@ -1688,12 +1692,14 @@
 
   async function faturaGuncelleFormGoster(faturaId, mevcut) {
     mevcut = mevcut || {};
+    const faturaTipi = (mevcut.tip === 'supplier') ? 'supplier' : 'customer';
     const wrap = document.createElement('div');
     wrap.style.cssText = 'font-size:13px;';
 
     const baslik = document.createElement('div');
     baslik.style.cssText = 'font-weight:500;margin-bottom:10px;';
-    baslik.textContent = '✏️ Fatura #' + faturaId + ' Güncelle';
+    const _tipEt = faturaTipi === 'supplier' ? '📥 Alış' : '🧾 Satış';
+    baslik.textContent = '✏️ ' + _tipEt + ' Faturası #' + faturaId + ' Güncelle';
     wrap.appendChild(baslik);
 
     const bilgi = document.createElement('div');
@@ -1754,13 +1760,13 @@
       kaydetBtn.disabled = true; iptalBtn.disabled = true;
       kaydetBtn.textContent = 'Kaydediliyor…';
       try {
-        const body = { fatura_id: String(faturaId) };
+        const body = { fatura_id: String(faturaId), tip: faturaTipi };
         if (aciklamaInp.value.trim() !== (mevcut.aciklama || '')) body.aciklama = aciklamaInp.value.trim();
         if (tarihInp.value && tarihInp.value !== toIsoTarih(mevcut.tarih)) body.issue_date = tarihInp.value;
         if (vadeInp.value && vadeInp.value !== toIsoTarih(mevcut.vade))   body.due_date   = vadeInp.value;
         const res = await fetch('/api/fatura-guncelle', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (localStorage.getItem('token') || '') },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body)
         });
         const d = await res.json();
@@ -1947,6 +1953,58 @@
   // ── Sol panel grupları (akordeon): aynı anda birden fazla açık olabilir,
   // ama tek bir grubu açtığında diğerlerinin kapanmasını isteyen kullanıcılar
   // için ALT tuşuyla "tek seferde tek açık" davranışı.
+  // ── TİP SEÇİM HELPER ─────────────────────────────────────────────
+  // Fatura sorgu/iptal/güncelle gibi her iki tarafa da çalışan işlemlerde
+  // kullanıcıya 'Müşteri mi Tedarikçi mi?' sorar. Onay sonrası callback
+  // 'customer' veya 'supplier' ile tetiklenir.
+  function tipSecimSor(baslik, aciklama, callback) {
+    const wrap = document.createElement('div');
+    const h = document.createElement('div');
+    h.style.cssText = 'font-size:13px;font-weight:500;color:var(--text);margin-bottom:8px;';
+    h.textContent = baslik || '🔍 İşlem yönü';
+    wrap.appendChild(h);
+
+    if (aciklama) {
+      const info = document.createElement('div');
+      info.style.cssText = 'font-size:12px;color:var(--muted);margin-bottom:10px;padding:8px 12px;background:var(--accent-lt);border-radius:8px;border-left:3px solid var(--accent);';
+      info.textContent = aciklama;
+      wrap.appendChild(info);
+    }
+
+    const btnRow = document.createElement('div');
+    btnRow.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;';
+
+    function btn(label, tip, primary) {
+      const b = document.createElement('button');
+      b.style.cssText = primary
+        ? 'flex:1;min-width:140px;padding:10px 14px;border-radius:9px;font-size:13px;font-weight:600;cursor:pointer;background:var(--accent,#bf5b2a);color:#fff;border:none;'
+        : 'flex:1;min-width:140px;padding:10px 14px;border-radius:9px;font-size:13px;font-weight:600;cursor:pointer;background:transparent;color:var(--text);border:1.5px solid var(--border);';
+      b.textContent = label;
+      b.onclick = function() {
+        // Butonları devre dışı bırak
+        Array.from(btnRow.querySelectorAll('button')).forEach(function(x) { x.disabled = true; });
+        callback(tip);
+      };
+      return b;
+    }
+    btnRow.appendChild(btn('👤 Müşteri (Satış faturası)', 'customer', true));
+    btnRow.appendChild(btn('🏭 Tedarikçi (Alış faturası)', 'supplier', false));
+    wrap.appendChild(btnRow);
+
+    const iptalBtn = document.createElement('button');
+    iptalBtn.className = 'btn-cancel';
+    iptalBtn.style.cssText = 'margin-top:8px;font-size:12px;';
+    iptalBtn.textContent = '✕ İptal';
+    iptalBtn.onclick = function() {
+      Array.from(btnRow.querySelectorAll('button')).forEach(function(x) { x.disabled = true; });
+      iptalBtn.disabled = true;
+      addMessage('❌ İptal edildi.', 'bot');
+    };
+    wrap.appendChild(iptalBtn);
+
+    addMessage('', 'bot', wrap);
+  }
+
   function panelGrupTogle(headBtn) {
     const grup = headBtn.parentElement;
     if (!grup) return;
@@ -3250,6 +3308,22 @@
         });
         const data = await res.json();
 
+        // Backend yanlış tip uyarısı döndü (tedarikçiye tahsilat yapılamaz)
+        if (!data.basarili && data.yanlis_tip) {
+          btn.disabled = false; iptalBtn.disabled = false;
+          btn.textContent = 'Kaydet';
+          addMessage(data.cevap, 'bot');
+          if (data.onerilen_akis === 'odeme') {
+            // Kullanıcıya onay sor → onaylarsa ödeme formuna geç
+            setTimeout(function() {
+              if (confirm(cariAdi + ' bir tedarikçi.\n\nÖdeme ekranına geçilsin mi?')) {
+                odemeFormGoster();
+              }
+            }, 100);
+          }
+          return;
+        }
+
         // Backend fazla tutar uyarisi dondu
         if (!data.basarili && data.fazla_tutar) {
           btn.disabled = false;
@@ -3449,15 +3523,35 @@
 
   // ── FATURA LİSTESİ & DETAY ───────────────────────────────────────
 
-  async function faturaListesiGoster(onMusteri) {
+  async function faturaListesiGoster(onMusteri, tip) {
     billablePanelTikla('fatura_sorgula', onMusteri ? { musteri: onMusteri } : {});
+
+    // Tip belirtilmemişse önce kullanıcıya sor (intent'ten cari adı geldiyse
+    // direkt müşteri varsayalım — eski davranış).
+    if (!tip) {
+      if (onMusteri) {
+        tip = 'customer';
+      } else {
+        tipSecimSor(
+          '🔍 Fatura Sorgula',
+          'Hangi tür faturayı sorgulamak istiyorsunuz?',
+          function(secilenTip) { faturaListesiGoster(null, secilenTip); }
+        );
+        return;
+      }
+    }
+
     showTyping();
     let cariler = [];
     try {
       const tumCariler = await carileriGetir(false, true);
-      // Satış faturaları → sadece müşteriler (customer + both)
+      // Tip'e göre cari filtresi: müşteri faturası → customer + customer_supplier,
+      // tedarikçi alış faturası → supplier + customer_supplier
       cariler = tumCariler.filter(function(c) {
         const t = c.tip || 'customer';
+        if (tip === 'supplier') {
+          return t === 'supplier' || t === 'both' || t === 'customer_supplier';
+        }
         return t === 'customer' || t === 'both' || t === 'customer_supplier';
       });
     } catch {}
@@ -3468,7 +3562,7 @@
       const filtre = onMusteri.toLowerCase();
       const eslesen = cariler.find(function(c) { return c.ad.toLowerCase().includes(filtre); });
       if (eslesen) {
-        cariFaturalariniGetir(eslesen.ad, null);
+        cariFaturalariniGetir(eslesen.ad, null, tip);
         return;
       }
     }
@@ -3476,15 +3570,19 @@
     const wrap = document.createElement('div');
     const baslik = document.createElement('div');
     baslik.style.cssText = 'font-size:13px;font-weight:500;color:var(--text);margin-bottom:10px;';
-    baslik.textContent = '🔍 Fatura Sorgula';
+    baslik.textContent = tip === 'supplier'
+      ? '🏭 Tedarikçi (Alış) Faturaları'
+      : '👤 Müşteri (Satış) Faturaları';
     wrap.appendChild(baslik);
     const faturaInfo = document.createElement('div');
     faturaInfo.style.cssText = 'font-size:12px;color:var(--muted);margin-bottom:10px;padding:8px 12px;background:var(--accent-lt);border-radius:8px;border-left:3px solid var(--accent);';
-    faturaInfo.textContent = 'Faturalarını görüntülemek istediğiniz müşteriyi seçin.';
+    faturaInfo.textContent = tip === 'supplier'
+      ? 'Alış faturalarını görüntülemek istediğiniz tedarikçiyi seçin.'
+      : 'Satış faturalarını görüntülemek istediğiniz müşteriyi seçin.';
     wrap.appendChild(faturaInfo);
 
     const { wrap: ddWrap } = cariSecimDropdown(cariler, function(c) {
-      cariFaturalariniGetir(c.ad, wrap);
+      cariFaturalariniGetir(c.ad, wrap, tip);
     }, 'Cari adı yazın...');
     wrap.appendChild(ddWrap);
 
@@ -3510,7 +3608,8 @@
     }
   }
 
-  async function cariFaturalariniGetir(cariAdi, wrapParent) {
+  async function cariFaturalariniGetir(cariAdi, wrapParent, tip) {
+    tip = tip || 'customer';
     // Filtre formu
     const listWrap = document.createElement('div');
 
@@ -3520,7 +3619,8 @@
 
     const baslikEl = document.createElement('div');
     baslikEl.style.cssText = 'font-size:12px;color:var(--muted);width:100%;margin-bottom:4px;';
-    baslikEl.textContent = cariAdi + ' faturaları:';
+    const _tipEtiket = tip === 'supplier' ? '🏭 Alış' : '👤 Satış';
+    baslikEl.textContent = cariAdi + ' — ' + _tipEtiket + ' faturaları:';
     listWrap.appendChild(baslikEl);
 
     // Tarih aralığı
@@ -3582,7 +3682,7 @@
       faturaListesi.appendChild(yukEl);
 
       try {
-        const params = new URLSearchParams({ sayfa: sayfa, limit: 25 });
+        const params = new URLSearchParams({ sayfa: sayfa, limit: 25, tip: tip });
         if (baslangicInp.value) params.set('baslangic', baslangicInp.value);
         if (bitisInp.value)     params.set('bitis', bitisInp.value);
         if (durumSel.value)     params.set('durum', durumSel.value);
@@ -3636,7 +3736,8 @@
           btn.onclick = function() {
             Array.from(faturaListesi.querySelectorAll('.irsaliye-btn')).forEach(function(b) { b.style.opacity='0.5'; b.disabled=true; });
             btn.style.opacity = '1'; btn.style.background = 'var(--accent-lt)'; btn.disabled = false;
-            faturaDetayGoster(f.id, f.aciklama, cariAdi);
+            // Tip backend'den f.tip ile dönüyor; öncelik liste seçimindeki tip
+            faturaDetayGoster(f.id, f.aciklama, cariAdi, f.tip || tip);
           };
           faturaListesi.appendChild(btn);
         });
@@ -3671,15 +3772,18 @@
     faturalariYukle(1, true);
   }
 
-  async function faturaDetayGoster(faturaId, faturaAdi, cariCtx) {
+  async function faturaDetayGoster(faturaId, faturaAdi, cariCtx, tip) {
     cariCtx = cariCtx || '';
+    tip = (tip === 'supplier') ? 'supplier' : 'customer';
     showTyping();
     try {
-      const res = await fetch('/api/fatura-detay/' + faturaId);
+      const res = await fetch('/api/fatura-detay/' + faturaId + '?tip=' + tip);
       const f = await res.json();
       removeTyping();
+      // Backend response'unda tip alanı varsa ona güven; yoksa parametreyi kullan
+      const faturaTipi = f.tip || tip;
 
-      billablePanelTikla('fatura_detay', { fatura_id: String(faturaId), musteri: cariCtx || '' });
+      billablePanelTikla('fatura_detay', { fatura_id: String(faturaId), musteri: cariCtx || '', tip: faturaTipi });
 
       const detayWrap = document.createElement('div');
 
@@ -3788,12 +3892,16 @@
       const actionRow = document.createElement('div');
       actionRow.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;margin-top:14px;border-top:1px solid var(--border);padding-top:12px;';
 
-      const efBtn = document.createElement('button');
-      efBtn.className = 'btn-primary';
-      efBtn.style.fontSize = '12px';
-      efBtn.textContent = '📤 E-Fatura/E-Arşiv';
-      efBtn.onclick = function() { eFaturaFormGoster(String(faturaId)); };
-      actionRow.appendChild(efBtn);
+      // E-Fatura / E-Arşiv: SADECE satış faturası için anlamlıdır (Paraşüt
+      // resmileştirme akışı sales_invoices üzerinden çalışır).
+      if (faturaTipi !== 'supplier') {
+        const efBtn = document.createElement('button');
+        efBtn.className = 'btn-primary';
+        efBtn.style.fontSize = '12px';
+        efBtn.textContent = '📤 E-Fatura/E-Arşiv';
+        efBtn.onclick = function() { eFaturaFormGoster(String(faturaId)); };
+        actionRow.appendChild(efBtn);
+      }
 
       const guncelleBtn = document.createElement('button');
       guncelleBtn.className = 'btn-cancel';
@@ -3804,28 +3912,33 @@
           aciklama: f.aciklama || '',
           tarih:    f.tarih    || '',
           vade:     f.vade     || '',
+          tip:      faturaTipi,
         });
       };
       actionRow.appendChild(guncelleBtn);
 
       // İptal sadece ödenmemiş faturalar için anlamlı
-      const iptalEdilebilir = (parseFloat(f.kalan || 0) > 0 || (f.tahsilatlar || []).length === 0);
+      // (Tahsilatlar veya ödemeler varsa önce onlar silinmeli)
+      const odemeListesi = f.tahsilatlar || f.odemeler || [];
+      const iptalEdilebilir = (parseFloat(f.kalan || 0) > 0 || odemeListesi.length === 0);
       if (iptalEdilebilir) {
         const iptalBtn = document.createElement('button');
         iptalBtn.className = 'btn-cancel';
         iptalBtn.style.cssText = 'font-size:12px;color:#dc2626;border-color:#fecaca;';
         iptalBtn.textContent = '❌ Faturayı İptal Et';
-        iptalBtn.onclick = function() { faturaIptalFormGoster(String(faturaId)); };
+        iptalBtn.onclick = function() { faturaIptalFormGoster(String(faturaId), faturaTipi); };
         actionRow.appendChild(iptalBtn);
       }
 
       detayWrap.appendChild(actionRow);
 
-      addMessage('🧾 Fatura #' + faturaId, 'bot', detayWrap);
+      const _baslikIcon = faturaTipi === 'supplier' ? '📥 Alış Faturası' : '🧾 Satış Faturası';
+      addMessage(_baslikIcon + ' #' + faturaId, 'bot', detayWrap);
       sohbetPanelKaydet('fatura_detay', {
         fatura_id: String(faturaId),
         aciklama: faturaAdi || '',
-        musteri: cariCtx || ''
+        musteri: cariCtx || '',
+        tip: faturaTipi,
       });
     } catch(e) {
       removeTyping();

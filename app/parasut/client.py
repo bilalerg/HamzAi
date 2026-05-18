@@ -530,6 +530,81 @@ def cari_detay_getir(cari_id: str, tenant_id=None) -> dict:
         return {}
 
 
+def _sales_faturalari_page(cid: str, tid: str, cari_id: str, durum: str, page: int) -> list:
+    """Tek sayfa satış faturası çeker — cari_faturalari_getir için yardımcı."""
+    params = {
+        "filter[contact_id]": cari_id,
+        "page[size]":         25,
+        "page[number]":       page,
+        "sort":               "-issue_date",
+        "include":            "contact",
+    }
+    if durum:
+        params["filter[payment_status]"] = durum
+    sonuc = parasut_get(f"/{cid}/sales_invoices", params=params, tenant_id=tid)
+    return sonuc.get("data", [])
+
+
+def _purchase_faturalari_page(cid: str, tid: str, cari_id: str, page: int) -> list:
+    """Tek sayfa alış faturası çeker. Önce filter[supplier_id], fallback contact_id."""
+    base = {
+        "page[size]":   25,
+        "page[number]": page,
+        "sort":         "-issue_date",
+        "include":      "supplier",
+    }
+    try:
+        params = dict(base, **{"filter[supplier_id]": cari_id})
+        sonuc = parasut_get(f"/{cid}/purchase_bills", params=params, tenant_id=tid)
+        return sonuc.get("data", [])
+    except Exception as e:
+        logger.warning(f"purchase_bills filter[supplier_id] başarısız, contact_id fallback: {e}")
+        try:
+            params = dict(base, **{"filter[contact_id]": cari_id})
+            sonuc = parasut_get(f"/{cid}/purchase_bills", params=params, tenant_id=tid)
+            return sonuc.get("data", [])
+        except Exception:
+            return []
+
+
+def _fatura_dict_olustur(f: dict, tip: str) -> dict:
+    """Tek bir Paraşüt fatura JSON'unu UI'a uygun dict'e çevirir."""
+    attr  = f.get("attributes", {})
+    try:
+        kalan = float(attr.get("remaining") or 0)
+    except (ValueError, TypeError):
+        kalan = 0.0
+    try:
+        tutar = float(attr.get("gross_total") or 0)
+    except (ValueError, TypeError):
+        tutar = 0.0
+    aciklama = attr.get("description") or ""
+    plaka = None
+    plaka_match = re.search(r'\b(\d{2}\s*[A-ZÇŞĞÜÖİ]{1,3}\s*\d{2,4})\b', aciklama)
+    if plaka_match:
+        plaka = plaka_match.group(1).replace(" ", "")
+    irsaliye_ids = [
+        d["id"] for d in f.get("relationships", {}).get("shipment_documents", {}).get("data", [])
+    ]
+    irsaliye_id = None
+    m = re.search(r'[İI]rsaliye\s+(\d{8,})', aciklama)
+    if m:
+        irsaliye_id = m.group(1)
+    return {
+        "id":           f["id"],
+        "tip":          tip,                          # 'customer' (sales) / 'supplier' (purchase)
+        "tarih":        attr.get("issue_date", ""),
+        "vade":         attr.get("due_date", "-"),
+        "tutar":        tutar,
+        "kalan":        kalan,
+        "durum":        attr.get("payment_status", "-"),
+        "aciklama":     aciklama or "-",
+        "plaka":        plaka,
+        "irsaliye_id":  irsaliye_id or (irsaliye_ids[0] if irsaliye_ids else None),
+        "irsaliye_ids": irsaliye_ids,
+    }
+
+
 def cari_faturalari_getir(
         cari_id: str,
         limit: int = 25,
@@ -537,77 +612,75 @@ def cari_faturalari_getir(
         baslangic: str = None,
         bitis: str = None,
         durum: str = None,
+        tip: str = "customer",
         tenant_id=None,
 ) -> dict:
+    """
+    Cari faturalarını listeler.
+    tip:
+      - 'customer'  → sales_invoices (müşteriye kestiğimiz satış faturaları)
+      - 'supplier'  → purchase_bills (tedarikçiden aldığımız alış faturaları)
+      - 'both'      → her ikisini birleştirip tarih sıralı döner
+    """
     tid   = _resolve_tid(tenant_id)
     creds = _tenant_credentials(tid)
     cid   = creds["company_id"]
+    tip_temiz = tip if tip in ("customer", "supplier", "both") else "customer"
     try:
         tum_faturalar = []
-        page = 1
-        while page <= 60:
-            params = {
-                "filter[contact_id]": cari_id,
-                "page[size]":         25,
-                "page[number]":       page,
-                "sort":               "-issue_date",
-                "include":            "contact",
-            }
-            if durum:
-                params["filter[payment_status]"] = durum
 
-            sonuc = parasut_get(f"/{cid}/sales_invoices", params=params, tenant_id=tid)
-            data  = sonuc.get("data", [])
-            if not data:
-                break
-
-            for f in data:
-                attr  = f.get("attributes", {})
-                tarih = attr.get("issue_date", "")
-                if baslangic and tarih < baslangic:
-                    continue
-                if bitis and tarih > bitis:
-                    continue
-                try:
-                    kalan = float(attr.get("remaining") or 0)
-                except (ValueError, TypeError):
-                    kalan = 0.0
-                try:
-                    tutar = float(attr.get("gross_total") or 0)
-                except (ValueError, TypeError):
-                    tutar = 0.0
-                aciklama = attr.get("description") or ""
-                plaka = None
-                plaka_match = re.search(r'\b(\d{2}\s*[A-ZÇŞĞÜÖİ]{1,3}\s*\d{2,4})\b', aciklama)
-                if plaka_match:
-                    plaka = plaka_match.group(1).replace(" ", "")
-                irsaliye_ids = [
-                    d["id"] for d in f.get("relationships", {}).get("shipment_documents", {}).get("data", [])
-                ]
-                irsaliye_id = None
-                m = re.search(r'[İI]rsaliye\s+(\d{8,})', aciklama)
-                if m:
-                    irsaliye_id = m.group(1)
-                tum_faturalar.append({
-                    "id":           f["id"],
-                    "tarih":        tarih,
-                    "vade":         attr.get("due_date", "-"),
-                    "tutar":        tutar,
-                    "kalan":        kalan,
-                    "durum":        attr.get("payment_status", "-"),
-                    "aciklama":     aciklama or "-",
-                    "plaka":        plaka,
-                    "irsaliye_id":  irsaliye_id or (irsaliye_ids[0] if irsaliye_ids else None),
-                    "irsaliye_ids": irsaliye_ids,
-                })
-
-            if baslangic and data:
-                en_eski = data[-1].get("attributes", {}).get("issue_date", "")
-                if en_eski and en_eski < baslangic:
+        # ── SATIŞ FATURALARI (müşteri) ─────────────────────────────────
+        if tip_temiz in ("customer", "both"):
+            page = 1
+            while page <= 60:
+                data = _sales_faturalari_page(cid, tid, cari_id, durum, page)
+                if not data:
                     break
-            if len(data) < 25:
-                break
-            page += 1
+                for f in data:
+                    attr  = f.get("attributes", {})
+                    tarih = attr.get("issue_date", "")
+                    if baslangic and tarih < baslangic:
+                        continue
+                    if bitis and tarih > bitis:
+                        continue
+                    tum_faturalar.append(_fatura_dict_olustur(f, "customer"))
+                if baslangic and data:
+                    en_eski = data[-1].get("attributes", {}).get("issue_date", "")
+                    if en_eski and en_eski < baslangic:
+                        break
+                if len(data) < 25:
+                    break
+                page += 1
+
+        # ── ALIŞ FATURALARI (tedarikçi) ────────────────────────────────
+        if tip_temiz in ("supplier", "both"):
+            page = 1
+            while page <= 60:
+                data = _purchase_faturalari_page(cid, tid, cari_id, page)
+                if not data:
+                    break
+                for f in data:
+                    attr  = f.get("attributes", {})
+                    tarih = attr.get("issue_date", "")
+                    if baslangic and tarih < baslangic:
+                        continue
+                    if bitis and tarih > bitis:
+                        continue
+                    # durum filtresi (purchase_bills için): Python tarafında uygula
+                    if durum and attr.get("payment_status") != durum:
+                        continue
+                    tum_faturalar.append(_fatura_dict_olustur(f, "supplier"))
+                if baslangic and data:
+                    en_eski = data[-1].get("attributes", {}).get("issue_date", "")
+                    if en_eski and en_eski < baslangic:
+                        break
+                if len(data) < 25:
+                    break
+                page += 1
+
+        # tarih sıralaması — birden fazla kaynak birleştiğinde gerekli
+        if tip_temiz == "both":
+            tum_faturalar.sort(key=lambda x: x.get("tarih", ""), reverse=True)
 
         toplam_kayit  = len(tum_faturalar)
         baslangic_idx = (sayfa - 1) * min(limit, 25)
@@ -618,11 +691,13 @@ def cari_faturalari_getir(
             "toplam":            len(sayfa_faturalari),
             "toplam_kayit":      toplam_kayit,
             "sayfa":             sayfa,
+            "tip":               tip_temiz,
             "sonraki_sayfa_var": toplam_kayit > bitis_idx,
         }
     except Exception as e:
         logger.error(f"Cari fatura hatası: {e}")
-        return {"faturalar": [], "toplam": 0, "toplam_kayit": 0, "sayfa": sayfa, "sonraki_sayfa_var": False}
+        return {"faturalar": [], "toplam": 0, "toplam_kayit": 0, "sayfa": sayfa,
+                "tip": tip_temiz, "sonraki_sayfa_var": False}
 
 
 def fatura_detay_getir(fatura_id: str, tenant_id=None) -> dict:
@@ -2014,6 +2089,39 @@ def alis_faturasi_guncelle(
         return {"basarili": False, "hata": str(e)}
 
 
+def fatura_detay_universal(fatura_id: str, tip: str = "customer", tenant_id=None) -> dict:
+    """
+    Tip-aware fatura detay getirici.
+    tip='customer' → satış faturası (sales_invoices show)
+    tip='supplier' → alış faturası (purchase_bills show)
+    """
+    if tip == "supplier":
+        return alis_faturasi_detay_getir(fatura_id, tenant_id=tenant_id)
+    return fatura_detay_getir(fatura_id, tenant_id=tenant_id)
+
+
+def fatura_iptal_universal(fatura_id: str, tip: str = "customer", tenant_id=None) -> dict:
+    """Tip-aware fatura iptal (cancel)."""
+    if tip == "supplier":
+        return alis_faturasi_iptal(fatura_id, tenant_id=tenant_id)
+    return satis_faturasi_iptal(fatura_id, tenant_id=tenant_id)
+
+
+def fatura_guncelle_universal(
+        fatura_id: str,
+        tip: str = "customer",
+        aciklama: str = None,
+        issue_date: str = None,
+        due_date: str = None,
+        currency: str = None,
+        tenant_id=None,
+) -> dict:
+    """Tip-aware fatura güncelle (PUT)."""
+    if tip == "supplier":
+        return alis_faturasi_guncelle(fatura_id, aciklama, issue_date, due_date, currency, tenant_id)
+    return satis_faturasi_guncelle(fatura_id, aciklama, issue_date, due_date, currency, tenant_id)
+
+
 def alis_faturasi_detay_getir(fatura_id: str, tenant_id=None) -> dict:
     """Alış faturası detayını getirir (kalemler + ödemeler dahil)."""
     tid   = _resolve_tid(tenant_id)
@@ -2401,15 +2509,33 @@ async def async_cari_guncelle(
 async def async_cari_faturalari_getir(
         cari_id: str, limit: int = 25, sayfa: int = 1,
         baslangic: str = None, bitis: str = None, durum: str = None,
-        tenant_id=None,
+        tip: str = "customer", tenant_id=None,
 ) -> dict:
     return await asyncio.to_thread(
-        cari_faturalari_getir, cari_id, limit, sayfa, baslangic, bitis, durum, tenant_id
+        cari_faturalari_getir, cari_id, limit, sayfa, baslangic, bitis, durum, tip, tenant_id
     )
 
 
 async def async_fatura_detay_getir(fatura_id: str, tenant_id=None) -> dict:
     return await asyncio.to_thread(fatura_detay_getir, fatura_id, tenant_id)
+
+
+async def async_fatura_detay_universal(fatura_id: str, tip: str = "customer", tenant_id=None) -> dict:
+    return await asyncio.to_thread(fatura_detay_universal, fatura_id, tip, tenant_id)
+
+
+async def async_fatura_iptal_universal(fatura_id: str, tip: str = "customer", tenant_id=None) -> dict:
+    return await asyncio.to_thread(fatura_iptal_universal, fatura_id, tip, tenant_id)
+
+
+async def async_fatura_guncelle_universal(
+        fatura_id: str, tip: str = "customer",
+        aciklama: str = None, issue_date: str = None,
+        due_date: str = None, currency: str = None, tenant_id=None,
+) -> dict:
+    return await asyncio.to_thread(
+        fatura_guncelle_universal, fatura_id, tip, aciklama, issue_date, due_date, currency, tenant_id
+    )
 
 
 async def async_hesap_listesi_getir(tenant_id=None) -> list:
