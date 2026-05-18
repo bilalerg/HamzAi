@@ -37,79 +37,123 @@ class FisVerisi:
     plaka_uyari:      Optional[str]           = None
 
 
-OCR_SYSTEM = "Sen sadece JSON üreten bir API'sin. Yanıtın SADECE '{' ile başlamalı ve '}' ile bitmelidir. Hiçbir açıklama, başlık veya markdown ekleme."
+OCR_SYSTEM = """Sen kantar fişi okuyan bir OCR motorusun. SADECE verilen fotoğraftaki görünen metni okursun.
 
-OCR_PROMPT = """Bu bir Türkiye hurda/geri dönüşüm sektörüne ait kantar fişi fotoğrafı. Sadece JSON döndür.
+MUTLAK KURAL — HALÜSİNASYON YASAĞI:
+- Görmediğin, okuyamadığın, bulanık olan, emin olmadığın hiçbir değeri UYDURMA.
+- Önceki fişlerden hiçbir bilgi hatırlama — her fotoğraf bağımsızdır.
+- Bir alanı tam olarak okuyamıyorsan o alanı null bırak. ASLA tahmin etme, ASLA örnek değer koyma.
+- Fotoğraf bulanık/küçük/okunmazsa → tüm alanları null bırak, sadece {"plaka":null,"fis_no":null,"net_tartim_kg":null,"fire_kg":null,"tarih":null,"firma":null,"irsaliye_no":null,"kantar_no":null,"malzemeler":{}} döndür.
 
-{"plaka":"araç plakası","fis_no":"fiş no","net_tartim_kg":SAYI,"fire_kg":SAYI_YA_DA_0,"tarih":"GG.AA.YYYY","firma":"şirket adı","irsaliye_no":null,"kantar_no":null,"malzemeler":{}}
+ÇIKTI FORMATI:
+Yanıtın SADECE '{' ile başlamalı ve '}' ile bitmelidir. Açıklama, başlık veya markdown YOK."""
+
+OCR_PROMPT = """Bu bir Türkiye hurda/geri dönüşüm sektörüne ait kantar fişi fotoğrafı.
+
+JSON şeması:
+{"plaka":"araç plakası VEYA null","fis_no":"fiş no VEYA null","net_tartim_kg":SAYI_VEYA_null,"fire_kg":SAYI_VEYA_0,"tarih":"GG.AA.YYYY VEYA null","firma":"şirket adı VEYA null","irsaliye_no":null,"kantar_no":null,"malzemeler":{}}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+HALÜSİNASYON YASAĞI — TEKRAR
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Eğer foto bulanık, çok küçük veya silik ise, alanı okuyamıyorsan → null bırak.
+"34BEG354" gibi bir plaka GÖRMEDIN ama uyduramazsın. "1234567" gibi fiş numarası uyduramazsın.
+Emin değilsen null. Halüsinasyon, sistemin tamamını bozar.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 FİRMA
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Öncelik sırası:
-1. Fişte "Firma:", "Firma Adı:", "Tedarikçi:", "Gönderen:" etiketli bir satır VARSA → o satırdaki şirket adını yaz
+1. Fişte "Firma:", "Firma Adı:", "Tedarikçi:", "Gönderen:" etiketli satır VARSA → o satırdaki şirket adını yaz
 2. Böyle bir alan YOKSA → fişin başlığındaki (en üstteki) şirket adını yaz
+3. Okuyamıyorsan → null
 
 ÖNEMLİ:
 - "Nakliye Firması:", "Taşıyıcı:", "Şoför:", "Ad Soyad:" → bunlar firma DEĞİL, alma
 - Üstteki başlık kantarın/fabrikanın adıdır — "Firma:" alanı varsa başlığı değil onu yaz
-- Fişte birden fazla şirket adı varsa: açıkça "Firma:" veya "Tedarikçi:" etiketli olanı seç
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 PLAKA
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 - Fişte "Araç Plaka", "Plaka", "Araç-Dorse Plaka" gibi bir alan ara
-- İki plaka tire veya boşlukla ayrılmış yazılıysa (örn: "37 LK 081 - 34 BSE 559") → SADECE İLKİNİ al: 37LK081
-- Plakayı fişten oku, TAHMIN ETME veya başka bir fişten hatırlama
-- Boşluk ve tire OLMADAN büyük harf → 37LK081, 06FH8714, 34BEG354
+- İki plaka tire/boşlukla ayrılmışsa (örn: "37 LK 081 - 34 BSE 559") → SADECE İLKİNİ al: 37LK081
+- Okuyamıyorsan → null. Asla bir önceki fişin plakasını yazma, asla tahmin etme.
+- Boşluk ve tire OLMADAN büyük harf → 37LK081, 06FH8714, 34BSE559
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 AĞIRLIK
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-- net_tartim_kg: fişte "Net Tartım", "Net", "BRÜT - TARA" gibi hesaplanmış net değer
+- net_tartim_kg: fişte "Net Tartım", "Net", "BRÜT - TARA" satırındaki sayı
 - fire_kg: "Fire", "Tenzil", "Fire/Tenzil" satırı — yoksa 0
-- Malzeme toplamı net_tartim_kg'ı AŞAMAZ (fire ayrı tutulur, malzemeye eklenmez)
+- Net değer fişte AÇIKÇA yazılı olmalı. Tahminle hesaplama yapma.
+- Okuyamıyorsan → null
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 MALZEMELER
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-- Malzeme listesi varsa her satırı oku: {"KARMA": 15150, "DKP": 3200}
+- Malzeme listesi GÖRÜYORSAN her satırı oku: {"KARMA": 15150, "DKP": 3200}
+- Liste YOKSA boş bırak: {}
 - "Fire", "Tenzil" satırlarını malzeme olarak EKLEME
-- Liste yoksa boş bırak: {}
-- Tenzil düşülmüş net miktarları al (varsa)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 FORMAT KURALLARI
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-PLAKA: boşluk ve tire OLMADAN büyük harf → 37LK081, 06FH8714, 34BEG354
+PLAKA: boşluk ve tire OLMADAN büyük harf → 37LK081
 KG: tam sayı, nokta/virgül yok → 15150 ✓   15.150 ✗
-TARİH: GG.AA.YYYY → 02.04.2026"""
+TARİH: GG.AA.YYYY → 12.03.2026"""
 
 
-def _fotograf_to_base64(fotograf_yolu: str) -> tuple[str, str]:
+def _fotograf_to_base64(fotograf_yolu: str) -> tuple[str, str, dict]:
+    """
+    Fotoğrafı base64'e çevirir.
+    Üçüncü dönüş: kalite metaverileri ({width, height, kb, dusuk_kalite}).
+    """
+    meta = {"width": 0, "height": 0, "kb": 0, "dusuk_kalite": False}
     try:
         from PIL import Image
         import io as _io
         with Image.open(fotograf_yolu) as img:
             if img.mode in ("RGBA", "P"):
                 img = img.convert("RGB")
-            img.thumbnail((1500, 1500), Image.LANCZOS)
+            orig_w, orig_h = img.size
+            # Çok küçük gelen fotoğrafları upscale et (Claude detayları daha iyi okusun).
+            # thumbnail upscale yapmaz, manuel resize gerekiyor.
+            if max(orig_w, orig_h) < 1000:
+                oran = 1500 / max(orig_w, orig_h)
+                yeni_boyut = (int(orig_w * oran), int(orig_h * oran))
+                img = img.resize(yeni_boyut, Image.LANCZOS)
+                logger.info(f"Küçük fotoğraf upscale edildi: {orig_w}x{orig_h} → {img.size}")
+            else:
+                img.thumbnail((1500, 1500), Image.LANCZOS)
             buffer = _io.BytesIO()
-            img.save(buffer, format="JPEG", quality=85)
+            img.save(buffer, format="JPEG", quality=90)
             data = base64.b64encode(buffer.getvalue()).decode("utf-8")
-            logger.info(f"Fotoğraf boyutlandırıldı: {img.size} | {len(data)//1024}KB base64")
-        return data, "image/jpeg"
+            meta["width"]  = img.size[0]
+            meta["height"] = img.size[1]
+            meta["kb"]     = len(data) // 1024
+            # Original çok küçükse veya base64 boyutu çok düşükse kalite uyarısı
+            if max(orig_w, orig_h) < 800 or meta["kb"] < 60:
+                meta["dusuk_kalite"] = True
+            logger.info(
+                f"Fotoğraf boyutlandırıldı: orig=({orig_w}x{orig_h}) "
+                f"final={img.size} | {meta['kb']}KB base64 | "
+                f"düşük_kalite={meta['dusuk_kalite']}"
+            )
+        return data, "image/jpeg", meta
     except ImportError:
         with open(fotograf_yolu, "rb") as f:
-            data = base64.standard_b64encode(f.read()).decode("utf-8")
+            raw = f.read()
+            data = base64.standard_b64encode(raw).decode("utf-8")
         uzanti = Path(fotograf_yolu).suffix.lower()
         media_type = "image/jpeg" if uzanti in [".jpg", ".jpeg"] else "image/png"
-        return data, media_type
+        meta["kb"] = len(data) // 1024
+        return data, media_type, meta
 
 
 def _parse_json(metin: str) -> dict:
@@ -140,7 +184,15 @@ def _parse_kg(deger) -> int:
 
 def _claude_fis_oku_once(fotograf_yolu: str, temperature: float = 0.0) -> FisVerisi:
     """Tek OCR denemesi."""
-    foto_base64, media_type = _fotograf_to_base64(fotograf_yolu)
+    foto_base64, media_type, foto_meta = _fotograf_to_base64(fotograf_yolu)
+
+    # Düşük kalite fotoğraflarda Claude'a ek uyarı gönder
+    ek_uyari = ""
+    if foto_meta.get("dusuk_kalite"):
+        ek_uyari = (
+            "\n\n⚠️ DİKKAT: Bu fotoğraf düşük çözünürlüklü. Eğer alanları net okuyamıyorsan, "
+            "ASLA tahmin yapma — tüm okuyamadıklarını null bırak."
+        )
 
     response = _client.messages.create(
         model=OCR_MODEL,
@@ -154,7 +206,7 @@ def _claude_fis_oku_once(fotograf_yolu: str, temperature: float = 0.0) -> FisVer
                     "type": "image",
                     "source": {"type": "base64", "media_type": media_type, "data": foto_base64}
                 },
-                {"type": "text", "text": OCR_PROMPT}
+                {"type": "text", "text": OCR_PROMPT + ek_uyari}
             ]
         }]
     )
@@ -163,6 +215,15 @@ def _claude_fis_oku_once(fotograf_yolu: str, temperature: float = 0.0) -> FisVer
     logger.info(f"OCR ham cevap: {claude_cevap}")
 
     veri = _parse_json(claude_cevap)
+
+    # Kritik alanların tamamı null → fotoğraf okunamadı
+    plaka_raw  = veri.get("plaka")
+    tartim_raw = veri.get("net_tartim_kg")
+    firma_raw  = veri.get("firma")
+    if not plaka_raw and not tartim_raw and not firma_raw:
+        raise ValueError(
+            "Fişteki bilgiler okunamadı. Fotoğrafı daha net çekip tekrar deneyin."
+        )
 
     net_tartim  = _parse_kg(veri.get("net_tartim_kg"))
     fire        = _parse_kg(veri.get("fire_kg"))
@@ -222,19 +283,20 @@ def _claude_fis_oku_once(fotograf_yolu: str, temperature: float = 0.0) -> FisVer
 def claude_fis_oku(fotograf_yolu: str) -> FisVerisi:
     """
     OCR işlemini çalıştırır.
-    Başarısız olursa OCR_MAX_RETRY kez tekrar dener (artan temperature ile).
+    Tüm denemeler temperature=0.0 ile yapılır (deterministik, halüsinasyon riskini azaltır).
     Tüm denemeler başarısız olursa hata döndürür.
     """
     logger.info(f"OCR başlıyor: {fotograf_yolu} | model={OCR_MODEL}")
     son_hata = None
 
     for deneme in range(OCR_MAX_RETRY):
-        # İlk deneme temperature=0.0 (deterministik), sonrakiler biraz higher
-        temperature = 0.0 if deneme == 0 else 0.2
+        # Her zaman temperature=0.0 — halüsinasyon riskini en aza indirir.
+        # Önceki kodda retry'da 0.2'ye çıkıyordu, bu YANLIŞ idi: daha yaratıcı
+        # = daha çok uydurma. Şimdi düzeltildi.
         try:
             if deneme > 0:
-                logger.info(f"OCR yeniden deneniyor ({deneme + 1}/{OCR_MAX_RETRY}), temperature={temperature}")
-            return _claude_fis_oku_once(fotograf_yolu, temperature=temperature)
+                logger.info(f"OCR yeniden deneniyor ({deneme + 1}/{OCR_MAX_RETRY})")
+            return _claude_fis_oku_once(fotograf_yolu, temperature=0.0)
         except Exception as e:
             son_hata = e
             logger.warning(f"OCR deneme {deneme + 1} başarısız: {e}")
@@ -242,8 +304,8 @@ def claude_fis_oku(fotograf_yolu: str) -> FisVerisi:
     logger.error(f"OCR tüm denemeler başarısız: {son_hata}")
     return FisVerisi(
         hata=(
-            "Fişteki ağırlık değeri okunamadı veya sıfır. "
-            "Fotoğrafı daha net çekip tekrar deneyin."
+            f"Fiş okunamadı: {son_hata}. "
+            "Fotoğrafı net ve aydınlık çekip tekrar deneyin."
         )
     )
 
