@@ -1060,10 +1060,15 @@ async def tahsilat_ekle_endpoint(request: Request, background_tasks: BackgroundT
     tenant_id  = _tenant_id_from_user(aktif_user)
     try:
         from app.parasut.client import async_tahsilat_ekle, async_cari_id_bul, async_cari_detay_getir, async_cari_tipi_bul
+        from app.core.tenant import get_tenant_ozellik
         from datetime import datetime
 
-        if not onaylandi:
+        # Osman eski akış (dogru_parasut_akisi=False) → tip kontrolü atlanır
+        dogru_akis = get_tenant_ozellik(tenant_id, "dogru_parasut_akisi", varsayilan=True)
+
+        if not onaylandi and dogru_akis:
             # ── Cari tip kontrolü: tedarikçiye tahsilat eklenmez ─────────
+            #     (Sadece yeni akış tenant'larında — Osman'da atlanır)
             try:
                 tip = await async_cari_tipi_bul(cari_adi, tenant_id=tenant_id)
                 if tip == "supplier":
