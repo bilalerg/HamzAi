@@ -4729,58 +4729,17 @@
       satirEkle('🏛️', 'Vergi Dairesi', data.vergi_dairesi);
       satirEkle('🔢', 'Vergi No', data.vergi_no);
 
-      // ── EYLEM BUTONLARI: Bakiyeye göre akıllı butonlar (Paraşüt UI mantığı) ─
-      //   bakiye = 0       → hem Ödeme hem Tahsilat
-      //   bakiye negatif   → sadece Ödeme (biz borçluyuz)
-      //   bakiye pozitif   → sadece Tahsilat (cari bize borçlu)
-      const bakiyeVal = parseFloat(data.bakiye || 0);
-      const cariAdiTam = data.ad || onMusteri;
-
-      const btnRow = document.createElement('div');
-      btnRow.style.cssText = 'display:flex;gap:6px;margin-top:12px;border-top:1px solid var(--border);padding-top:10px;flex-wrap:wrap;';
-
-      // Ödeme Ekle butonu — bakiye <= 0 olduğunda göster
-      if (bakiyeVal <= 0) {
-        const odemeBtn = document.createElement('button');
-        odemeBtn.className = 'btn-primary';
-        odemeBtn.style.cssText = 'font-size:12px;flex:1;min-width:130px;';
-        odemeBtn.textContent = '💸 Ödeme Ekle';
-        odemeBtn.onclick = function() {
-          // Cari adıyla doğrudan ödeme formunu aç ve cariyi ön-doldur
-          odemeFormGoster('cari');
-          setTimeout(function() {
-            const inp = document.querySelector('.cari-search-input');
-            if (inp) {
-              inp.value = cariAdiTam;
-              inp.dispatchEvent(new Event('input'));
-              inp.focus();
-            }
-          }, 200);
-        };
-        btnRow.appendChild(odemeBtn);
-      }
-
-      // Tahsilat Ekle butonu — bakiye >= 0 olduğunda göster
-      if (bakiyeVal >= 0) {
-        const tahsilatBtn = document.createElement('button');
-        tahsilatBtn.className = 'btn-primary';
-        tahsilatBtn.style.cssText = 'font-size:12px;flex:1;min-width:130px;background:#0ea5e9;';
-        tahsilatBtn.textContent = '💵 Tahsilat Ekle';
-        tahsilatBtn.onclick = function() {
-          tahsilatFormGoster(cariAdiTam);
-        };
-        btnRow.appendChild(tahsilatBtn);
-      }
-
       // ── Düzenle butonu ─────────────────────────────────────────
+      const btnRow = document.createElement('div');
+      btnRow.style.cssText = 'display:flex;gap:6px;margin-top:12px;border-top:1px solid var(--border);padding-top:10px;';
       const duzenleBtn = document.createElement('button');
       duzenleBtn.className = 'btn-cancel';
-      duzenleBtn.style.cssText = 'font-size:12px;flex:1;min-width:130px;';
+      duzenleBtn.style.cssText = 'font-size:12px;flex:1;';
       duzenleBtn.textContent = '✏️ Düzenle';
       duzenleBtn.onclick = function() {
         cariDuzenleFormGoster({
           id:            data.id,
-          ad:            cariAdiTam,
+          ad:            data.ad || onMusteri,
           email:         data.email !== '-' ? data.email : '',
           telefon:       data.telefon !== '-' ? data.telefon : '',
           vergi_no:      data.vergi_no !== '-' ? data.vergi_no : '',
