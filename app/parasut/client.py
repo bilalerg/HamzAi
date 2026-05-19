@@ -1184,11 +1184,21 @@ def cari_bazli_tahsilat(
     Fatura olmadan doğrudan müşteri cari hesabına TAHSİLAT ekler.
     Paraşüt: POST /contacts/{id}/contact_credit_transactions
 
-    NOT — Paraşüt muhasebe mantığı:
-      Müşteriden tahsilat alındığında müşterinin BORCU AZALIR. Bu Paraşüt
-      tarafında carinin ALACAK (credit) tarafına yazılarak yapılır.
-      → contact_credit_transactions = müşterinin alacağı artar = onun
-        bize olan borcu azalır (TAHSİLAT)
+    NOT — Paraşüt'te bakiye yönü:
+      contact_credit_transactions → carinin alacak tarafına yazar → bakiye
+        'alacak' yönünde hareket eder → müşterinin bize olan borcu AZALIR
+      contact_debit_transactions → carinin borç tarafına yazar → bakiye
+        'borç' yönünde hareket eder → bizim ona olan borcumuz azalır
+        (TEDARİKÇİ ödemesi için)
+
+    Yani:
+      - Müşteriden tahsilat   → contact_CREDIT_transactions (bu)
+      - Tedarikçiye ödeme     → contact_DEBIT_transactions (cari_bazli_odeme)
+
+    İlk implementasyon DEBIT kullanıyordu — Paraşüt dokümandaki "Tahsilat:
+    debit_transactions" etiketine güvenmiştik. Gerçek test (ödeme tarafında)
+    etiketin yanıltıcı olduğunu gösterdi; simetri için tahsilat da CREDIT'e
+    çevrildi.
     """
     tid   = _resolve_tid(tenant_id)
     creds = _tenant_credentials(tid)
@@ -1207,18 +1217,17 @@ def cari_bazli_tahsilat(
         }}}
         try:
             sonuc = parasut_post(
-                f"/{cid}/contacts/{cari_id}/contact_debit_transactions",
+                f"/{cid}/contacts/{cari_id}/contact_credit_transactions",
                 istek, tenant_id=tid,
             )
         except Exception:
-            # bazı Paraşüt instance'larında amount string bekleyebilir
             istek["data"]["attributes"]["amount"] = str(tutar)
             sonuc = parasut_post(
-                f"/{cid}/contacts/{cari_id}/contact_debit_transactions",
+                f"/{cid}/contacts/{cari_id}/contact_credit_transactions",
                 istek, tenant_id=tid,
             )
         tx_id = sonuc.get("data", {}).get("id")
-        logger.info(f"Cari bazlı tahsilat: cari_id={cari_id} tutar={tutar:,.0f} TL tx={tx_id} (tenant={tid})")
+        logger.info(f"Cari bazlı tahsilat (credit): cari_id={cari_id} tutar={tutar:,.0f} TL tx={tx_id} (tenant={tid})")
         try:
             cari_cache_yenile(tenant_id=tid)
         except Exception:
