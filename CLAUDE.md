@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Proje Özeti
 
-**HamzAi / Profaix** — Türkçe muhasebe otomasyon ajanı. FastAPI tabanlı, Paraşüt ERP entegrasyonlu, Claude AI destekli web uygulaması. Kantar fişi OCR'ı, irsaliye/fatura otomasyonu ve chat arayüzü içerir.
+**HamzAi / Profaix** — Türkçe muhasebe otomasyon ajanı. FastAPI tabanlı, Paraşüt ERP entegrasyonlu, Claude AI destekli web uygulaması. Kantar fişi OCR'ı, irsaliye/fatura otomasyonu, multi-tenant ve chat arayüzü içerir.
+
+**Hedef sektör:** Hurda metal alım/satım. Hurdacıdan kantar fişi gelir → OCR ile okunur → Paraşüt'e irsaliye + fatura olarak kesilir.
 
 ## Çalıştırma
 
@@ -23,7 +25,7 @@ Uygulama başlarken `validate_config()` çalışır — tüm `.env` değerleri d
 ```
 ANTHROPIC_API_KEY
 DATABASE_URL                    # PostgreSQL (Supabase)
-PARASUT_CLIENT_ID
+PARASUT_CLIENT_ID               # Default tenant credentials (Bilal/admin)
 PARASUT_CLIENT_SECRET
 PARASUT_USERNAME
 PARASUT_PASSWORD
@@ -36,6 +38,7 @@ ADMIN_PASSWORD
 CREDENTIAL_ENCRYPTION_KEY       # Tenant Paraşüt credential şifreleme (Fernet key)
                                  # Üretmek: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
                                  # Boş bırakılırsa credential'lar düz metin saklanır
+OCR_MODEL                       # Opsiyonel — default claude-sonnet-4-20250514
 # Opsiyonel:
 PROFAIX_EMBED_SECRET            # iframe embed akışı için
 REQUIRE_SIGNED_EMBED_AUTH=1
@@ -47,25 +50,26 @@ BASE_URL                        # keep-alive ping (default: https://profaix-api.
 ## Mimari
 
 ```
-main.py                  FastAPI app, tüm route'lar burada (~1700 satır)
+main.py                  FastAPI app, tüm route'lar burada (~2200 satır)
 app/
   core/
     config.py            Tüm env değişkenleri buradan okunur (tek kaynak)
     database.py          SQLAlchemy engine + tüm ORM modeller
     migrations.py        Manuel migration sistemi (startup'ta otomatik çalışır)
+    tenant.py            Multi-tenant credential yönetimi + özellik (feature flag) okuma
     logger.py            Loguru logger (stdout + dosya + errors.log)
   auth.py                JWT üretimi/çözümü, Profaix.com doğrulama,
                          tek-cihaz oturum (ActiveLogin tablosu)
   chatbox/
     llm_handler.py       Claude Haiku ile intent sınıflandırma (tool_use API)
   ocr/
-    reader.py            Claude Sonnet ile kantar fişi OCR (vision API)
+    reader.py            Claude Sonnet ile kantar fişi OCR (vision API + preprocessing)
     plaka_kontrol.py     Plaka doğrulama ve duplicate fiş tespiti
   parasut/
-    client.py            Paraşüt REST API istemcisi (senkron + async wrapper'lar)
+    client.py            Paraşüt REST API istemcisi (~2300 satır, senkron + async wrapper'lar)
     fatura.py            Fatura kesme (duplicate + race condition korumalı)
     irsaliye.py          İrsaliye oluşturma (duplicate + race condition korumalı)
-chat.html                SPA chat arayüzü (~3000 satır, tek dosya)
+chat.html                SPA chat arayüzü (~4400 satır, tek dosya)
 login.html               Local admin giriş sayfası
 ```
 
@@ -80,6 +84,41 @@ login.html               Local admin giriş sayfası
 
 Billing middleware: `/api/billing/` prefix'li endpoint'ler admin token ile de açık.
 
+### Multi-Tenant Mimari — KRİTİK
+
+Her **profaix.com kullanıcısı kendi tenant'ı** olarak çalışır. `tenants` tablosu:
+- `id` (profaix_user_id) — primary key
+- `parasut_*` credentials (Fernet ile şifreli olabilir)
+- `ozellikler` (JSONB) — per-tenant feature flag'leri
+
+`_tenant_id_from_user(user)` → JWT'den profaix_user_id'yi alır, default tenant'a düşmez.
+`_tenant_credentials(tid)` → tenant'ın kendi Paraşüt credentials'ını DB'den çeker.
+
+Her Paraşüt çağrısında `tenant_id` parametre olarak iletilir → token, cache, locks **tenant başına ayrı tutulur** (`client.py` başındaki `_tokens`, `_cari_caches`, `_token_locks`).
+
+### Tenant Özellik (Feature Flag) Sistemi
+
+`tenants.ozellikler` JSONB alanı — şu an kullanılan tek flag:
+
+```json
+{"dogru_parasut_akisi": true}
+```
+
+`get_tenant_ozellik(tenant_id, "dogru_parasut_akisi", varsayilan=True)` ile okunur.
+
+**`dogru_parasut_akisi=False` → Osman eski akışı:**
+- İrsaliye daima `inflow=False` (giden — Osman müşteri-yönlü çalışır)
+- Tüm faturalar daima `sales_invoices` (purchase_bills akışına girmez)
+- Cari tip ayrımı yapılmaz (her cari `customer` varsayılır)
+- `/api/tahsilat` tip kontrolü atlanır (defensive)
+
+**`dogru_parasut_akisi=True` (default — yeni tenant'lar):**
+- Kantar fişi → `inflow=True` (gelen mal, alış)
+- Cari tipi tedarikçiyse → `purchase_bills` (alış faturası)
+- Cari tipi müşteriyse → `sales_invoices` (satış faturası)
+
+Bu flag yeni feature'ları eklerken her zaman **kontrol edilmeli**: `dogru_akis` False ise eski davranışa düşülmeli.
+
 ### Paraşüt Client — KRİTİK
 Tüm fonksiyonlar senkron (`requests`). FastAPI async endpoint'lerinden **mutlaka** `async_*` wrapper kullan:
 
@@ -88,18 +127,70 @@ Tüm fonksiyonlar senkron (`requests`). FastAPI async endpoint'lerinden **mutlak
 cariler = cari_listesi_getir()
 
 # DOĞRU
-cariler = await async_cari_listesi_getir()
+cariler = await async_cari_listesi_getir(tenant_id=tenant_id)
 ```
 
-Mevcut async wrapper'lar (`client.py` sonu):
-`async_cari_listesi_getir`, `async_cari_cache_yenile`, `async_cari_id_bul`,
-`async_parasut_post`, `async_parasut_delete`, `async_tum_bekleyen_irsaliyeleri_getir`,
-`async_hesap_ozeti_getir`, `async_cari_detay_getir`, `async_islem_gecmisi_getir`,
-`async_tahsilat_ekle`, `async_cari_faturalari_getir`, `async_fatura_detay_getir`
+Async wrapper'lar `client.py` sonunda toplu listelenir. Yeni fonksiyon eklenince hem senkron hem async versiyonu yazılmalı.
+
+### Tip-Aware Fatura Akışı
+
+Sistem genelinde **müşteri/tedarikçi ayrımı** Paraşüt V4 dokümana göre yapılır:
+- Müşteri (satış) → `sales_invoices` + `relationships.contact`
+- Tedarikçi (alış) → `purchase_bills` + `relationships.supplier` (filter[supplier_id])
+
+Generic wrapper'lar:
+- `fatura_detay_universal(fatura_id, tip="customer"|"supplier")`
+- `fatura_iptal_universal(fatura_id, tip)`
+- `fatura_guncelle_universal(fatura_id, tip, **alanlar)`
+- `cari_faturalari_getir(cari_id, tip="customer"|"supplier"|"both")`
+
+Endpoint'lerde `?tip=` query param veya body `{tip:...}` ile gelir, default `"customer"` (geriye uyumlu).
+
+UI'da `tipSecimSor(baslik, aciklama, callback)` helper'ı kullanıcıya "Müşteri / Tedarikçi" seçtirir.
+
+### Cari Listesi — İki Sorgulu Merge
+
+Paraşüt'te bir cari hem müşteri hem tedarikçi listesinde görünebilir. Tek sorguda `account_type` tek bir değer döner → diğer rol kaybolur.
+
+`_cari_listesi_api`:
+1. `filter[account_type]=customer` ile çek → müşteri listesi
+2. `filter[account_type]=supplier` ile çek → tedarikçi listesi
+3. ID üzerinden merge → her iki listede varsa `account_type='customer_supplier'`
+
+### Cari Hesap Bazlı Tahsilat/Ödeme — TERS ETİKET UYARISI
+
+Paraşüt V4 dokümanındaki etiketler **YANILTICI** — gerçek davranış kullanıcı testiyle doğrulandı:
+
+| Endpoint | Doküman etiketi | **Gerçek Paraşüt UI davranışı** |
+|---|---|---|
+| `contact_credit_transactions` | "Ödeme" | **"Tahsilat"** olarak yazılır, bakiye NEGATİFE gider |
+| `contact_debit_transactions` | "Tahsilat" | **"Ödeme"** olarak yazılır, bakiye POZİTİFE gider |
+
+Bizim kullanım:
+- `cari_bazli_tahsilat()` → `contact_credit_transactions` (Paraşüt UI'da "Tahsilat" satırı)
+- `cari_bazli_odeme()` → `contact_debit_transactions` (Paraşüt UI'da "Ödeme" satırı)
+
+**Asla değiştirme** — dokümana güvenip ters çevirme; çok uzun debug süreci sonrası bu hâline gelmiştir.
+
+### Bakiye Yönüne Göre UI Filtreleme
+
+Paraşüt UI mantığı: bakiye yönüne göre Ödeme/Tahsilat butonları görünür.
+- Bakiye 0 → ikisi de
+- Bakiye negatif (biz borçluyuz) → sadece Ödeme
+- Bakiye pozitif (cari bize borçlu) → sadece Tahsilat
+
+Profaix tarafında:
+- **Tahsilat formu** (`tahsilatFormGoster`): dropdown'da sadece `bakiye >= 0` cariler
+- **Ödeme formu** (`odemeCariBazliFormGoster`): dropdown'da sadece `bakiye <= 0` cariler
 
 ### LLM Modelleri
-- OCR: `claude-sonnet-4-20250514` (`app/ocr/reader.py`, vision API, retry=2)
+- OCR: `claude-sonnet-4-20250514` (env `OCR_MODEL` ile override edilebilir)
+  - max_tokens=2048, retry=2, temperature=0.0
+  - Chain-of-thought prompt: AŞAMA 1 layout tasviri → AŞAMA 2 JSON
+  - Image preprocessing: UnsharpMask + Contrast +50% + Sharpness +100% + upscale 2400px
+  - Plaka halüsinasyon koruması: LAYOUT tasvirinde plaka geçmiyorsa null'a düşürülür
 - Intent: `claude-haiku-4-5-20251001` (`app/chatbox/llm_handler.py`, tool_use API)
+  - max_tokens=600 (uzun yetenek listesi cevapları için)
 
 ### Intent Sistemi
 `INTENTLER` sözlüğü → `INTENT_ENUM` → tool_use → `intent_tespit` fonksiyonu.
@@ -110,8 +201,10 @@ Mevcut intent'ler:
 `tahsilat_ekle`, `odeme_ekle`, `yeni_cari`, `cari_detay`, `musteri_bakiyeleri`,
 `hesap_ozeti`, `gunluk_ozet`, `son_fisler`, `none`
 
+**Yeni intent eklenmedi — tahsilat_sil intent yok!** Para silme komutu LLM tarafından yanlış sınıflandırılırsa para kaybı; bilinçli olarak sadece manuel buton.
+
 ### Veritabanı Tabloları
-`vehicles`, `weigh_tickets`, `waybills`, `invoices`, `chat_sessions`,
+`tenants`, `vehicles`, `weigh_tickets`, `waybills`, `invoices`, `chat_sessions`,
 `active_logins`, `islem_logs`, `users`, `audit_logs`, `usage_logs`,
 `billable_events`, `hata_logs`, `tahsilat_logs`, `ocr_hata_logs`, `giris_logs`
 
@@ -123,6 +216,11 @@ ALINDI → OCR_TAMAMLANDI → IRSALIYE_OLUSTURULUYOR → FABRIKA_BEKLENIYOR
        → IRSALIYE_TAMAMLANDI → FATURA_KESILIYOR → TAMAMLANDI
        → HATA / IPTAL
 ```
+
+**Duplicate kontrolü** sadece şu statuslar için aktif (plaka_kontrol.py):
+`IRSALIYE_OLUSTURULUYOR`, `IRSALIYE_TAMAMLANDI`, `FABRIKA_BEKLENIYOR`,
+`FABRIKA_ITIRAZI`, `FATURA_KESILIYOR`, `TAMAMLANDI`.
+`OCR_TAMAMLANDI` / `IPTAL` / `HATA` → duplicate sayılmaz (kullanıcı OCR sonrası iptal edebilir).
 
 ### Billing Sistemi
 `BillableEvent` tablosu — her faturalanabilir işlem `event_key` ile idempotent kaydedilir.
@@ -136,7 +234,8 @@ ALINDI → OCR_TAMAMLANDI → IRSALIYE_OLUSTURULUYOR → FABRIKA_BEKLENIYOR
 Tarih filtresi tüm veri Python'da uygulanır. Bunu değiştirme.
 
 Desteklenen filtreler:
-- `filter[contact_id]` ✅
+- `filter[contact_id]` ✅ (sales_invoices)
+- `filter[supplier_id]` ✅ (purchase_bills — contact_id fallback ile)
 - `filter[payment_status]` ✅
 - `filter[issue_date]` ✅ (sadece tam eşleşme)
 - `filter[issue_date_gte/lte]` ❌ desteklenmiyor
@@ -144,7 +243,7 @@ Desteklenen filtreler:
 ### Cari Cache
 `force_refresh=True` her çağrıda tüm carileri Paraşüt'ten çeker, event loop bloklar. Kullanma.
 Cache 15 dakikada bir otomatik yenilenir (`CACHE_SURE=900`).
-Zorunlu yenileme: `await async_cari_cache_yenile()`.
+Zorunlu yenileme: `await async_cari_cache_yenile(tenant_id=tenant_id)`.
 
 ### Duplicate Koruma
 `irsaliye.py` ve `fatura.py`'de `IRSALIYE_OLUSTURULUYOR` / `FATURA_KESILIYOR` status kontrolü var.
@@ -154,21 +253,27 @@ Kaldırma — çift tıklama ve network retry'da para kaybı yaşanır.
 `fatura.py` ve `irsaliye.py`'de cari bulunamazsa işlem sert durdurulur (exception fırlatılır).
 İlk cariyi fallback olarak kullanma — yanlış firmaya fatura kesilir.
 
+### Tahsilat Silme — Transaction ID Kullan
+Paraşüt'te payment silmek için `DELETE /transactions/{id}` kullanılır, **payment ID ile değil**.
+Backend `fatura_detay_getir` yanıtında `payments.transaction` include eder; her ödemenin `transaction_id` alanı vardır.
+Frontend bunu kullanarak silme yapar.
+
 ## Sık Yapılan Değişiklikler
 
 ### Yeni Intent Eklemek
 1. `app/chatbox/llm_handler.py` → `INTENTLER` sözlüğüne ekle, `SISTEM_PROMPTU` güncelle
 2. `main.py` → endpoint yaz (`async def`, `await async_*` kullan)
-3. `chat.html` → `intentHandlers` objesine JS handler ekle
+3. `chat.html` → `INTENT_MAP` ve `intentHandlers` objesine JS handler ekle
 
 ### Yeni Paraşüt Çağrısı Eklemek
-1. `app/parasut/client.py` → senkron fonksiyon yaz
+1. `app/parasut/client.py` → senkron fonksiyon yaz, `tenant_id=None` parametresi al
 2. `client.py` sonuna async wrapper ekle:
    ```python
-   async def async_yeni_fonksiyon(param: str) -> dict:
-       return await asyncio.to_thread(yeni_fonksiyon, param)
+   async def async_yeni_fonksiyon(param: str, tenant_id=None) -> dict:
+       return await asyncio.to_thread(yeni_fonksiyon, param, tenant_id)
    ```
-3. `main.py`'de `await async_yeni_fonksiyon(param)` ile çağır
+3. `main.py`'de `tenant_id = _tenant_id_from_user(aktif_user)` → `await async_yeni_fonksiyon(param, tenant_id=tenant_id)` ile çağır
+4. **Müşteri/tedarikçi ayrımı** gerekiyorsa `dogru_akis` flag'ini kontrol et
 
 ### Yeni DB Tablosu / Kolonu Eklemek
 1. `app/core/database.py` → `Base` miras alan model ekle
@@ -180,6 +285,38 @@ Kaldırma — çift tıklama ve network retry'da para kaybı yaşanır.
    # veya tablo için:
    _tablo_olustur(conn, text("CREATE TABLE IF NOT EXISTS ..."), "tablo_adi")
    ```
+
+### Yeni Tenant Eklemek (Manuel)
+Bir yeni müşteri için Supabase SQL:
+
+```sql
+INSERT INTO tenants (
+    id, ad,
+    parasut_client_id, parasut_client_secret,
+    parasut_username, parasut_password,
+    parasut_company_id, parasut_hurda_product_id,
+    ozellikler, aktif, created_at, updated_at
+) VALUES (
+    'PROFAIX_USER_ID',                       -- profaix.com kullanıcı UUID
+    'Müşteri Firma Adı',
+    'PARASUT_CLIENT_ID',
+    'PARASUT_CLIENT_SECRET',                  -- Fernet ile şifreliyse 'gAAAAA' ile başlar
+    'parasut_username@example.com',
+    'PARASUT_PASSWORD',
+    'PARASUT_COMPANY_ID',
+    'PARASUT_HURDA_PRODUCT_ID',
+    '{"dogru_parasut_akisi": true}',          -- Yeni tenant default; Osman için false
+    1, NOW(), NOW()
+)
+ON CONFLICT (id) DO UPDATE SET
+    parasut_client_id = EXCLUDED.parasut_client_id,
+    parasut_client_secret = EXCLUDED.parasut_client_secret,
+    parasut_username = EXCLUDED.parasut_username,
+    parasut_password = EXCLUDED.parasut_password,
+    parasut_company_id = EXCLUDED.parasut_company_id,
+    ozellikler = EXCLUDED.ozellikler,
+    updated_at = NOW();
+```
 
 ## Endpoint Referansı
 
@@ -204,42 +341,54 @@ DEL  /api/session/{session_id}       Geçmişi sil
 POST /api/chat                       Intent sınıflandırma
 POST /api/upload                     Fiş fotoğrafı yükle (OCR)
 POST /api/firma-sec                  Firma seç → irsaliye oluştur
+POST /api/fis-iptal                  OCR sonrası fiş iptal — {ticket_id}
 
-# Muhasebe
-GET  /api/cariler                    Cari listesi (?refresh=true)
-GET  /api/hesap-ozeti                Özet (?cari=FirmaAdı)
-GET  /api/islem-gecmisi/{cari}       İşlem geçmişi (?baslangic=&bitis=&sayfa=&limit=)
-GET  /api/bekleyen-irsaliyeler       Bekleyenler (?baslangic=&bitis=&sayfa=&sayfa_basi=)
-GET  /api/cari-faturalar/{cari}      Cari faturaları (?baslangic=&bitis=&durum=&sayfa=)
-GET  /api/fatura-detay/{id}          Fatura detayı
-POST /api/fatura-kes                 Tek fatura kes
-POST /api/toplu-fatura-kes           Toplu fatura kes
-POST /api/fatura-iptal               Satış faturasını iptal et — {fatura_id}
-POST /api/fatura-guncelle            Satış faturası üst bilgilerini güncelle — {fatura_id, aciklama?, issue_date?, due_date?}
-POST /api/alis-faturasi-kes          Basit alış faturası kes — {cari_adi, tutar, aciklama?, issue_date?, due_date?, vat_rate?}
-POST /api/alis-faturasi-iptal        Alış faturasını iptal et — {fatura_id}
-GET  /api/alis-faturasi-detay/{id}   Alış faturası detayı (kalemler + ödemeler)
+# Muhasebe — Cari
+GET  /api/cariler                    Cari listesi (?refresh=true&tip=customer|supplier|both)
+GET  /api/cari-bilgi/{cari}          Cari detay (iletişim, adres, vergi, bakiye, tip)
+POST /api/cari-olustur               Yeni cari — {firma_adi, tip, email?, telefon?, ...}
+POST /api/cari-guncelle              Cari güncelle — {cari_id|cari_adi, firma_adi?, tip?, ...}
+
+# Muhasebe — Fatura
+GET  /api/cari-faturalar/{cari}      Cari faturaları (?tip=customer|supplier|both&baslangic=&bitis=&durum=&sayfa=)
+GET  /api/fatura-detay/{id}          Fatura detayı (?tip=customer|supplier)
+POST /api/fatura-kes                 Tek satış faturası kes (irsaliyeden)
+POST /api/toplu-fatura-kes           Toplu satış faturası kes
+POST /api/fatura-iptal               Fatura iptal — {fatura_id, tip?}  (sales/purchase generic)
+POST /api/fatura-guncelle            Fatura güncelle — {fatura_id, tip?, aciklama?, issue_date?, due_date?, currency?, invoice_no?, withholding_rate?, billing_address?, contact_id?, ...} (Paraşüt V4'ün tüm alanları)
+POST /api/alis-faturasi-kes          Basit alış faturası kes — {cari_adi, tutar, ...}
+POST /api/alis-faturasi-iptal        Alış faturası iptal (eski, tip='supplier' ile /api/fatura-iptal de çalışır)
+GET  /api/alis-faturasi-detay/{id}   Alış faturası detayı
 GET  /api/e-fatura-mukellef/{vkn}    VKN e-fatura mükellef sorgusu
-POST /api/e-fatura-kes               Satış faturasını e-fatura/e-arşiv olarak resmileştir — {fatura_id, vkn?, tckn?}
-POST /api/tahsilat                   Tahsilat ekle (satış faturası)
-POST /api/odeme-ekle                 Ödeme ekle (alış faturası) — {fatura_id, tutar, kasa_id?, tarih?, notlar?}
-POST /api/cari-olustur               Yeni cari
+POST /api/e-fatura-kes               Satış faturasını e-fatura/e-arşiv olarak resmileştir
+
+# Muhasebe — Tahsilat / Ödeme
+POST /api/tahsilat                   Tahsilat ekle — açık fatura varsa onlara, yoksa cari hesabına direkt
+POST /api/tahsilat-sil               Tahsilat sil — {odeme_id, transaction_id?}
+POST /api/odeme-ekle                 Ödeme ekle (alış faturasına) — {fatura_id, tutar, kasa_id?, tarih?, notlar?}
+POST /api/cari-odeme                 Tedarikçi cari hesabına direkt ödeme — {cari_adi|cari_id, tutar, ...}
+POST /api/para-transferi             Hesaplar arası transfer
+
+# Muhasebe — Raporlar
+GET  /api/hesap-ozeti                Özet (?cari=FirmaAdı)
+GET  /api/islem-gecmisi/{cari}       İşlem geçmişi (sales + purchase birleştirilmiş)
+GET  /api/bekleyen-irsaliyeler       Bekleyenler (?baslangic=&bitis=) — default son 12 ay
+GET  /api/bekleyen-alis-faturalari   Ödenmemiş alış faturaları
 GET  /api/gunluk-ozet                Günlük özet
 GET  /api/son-fisler                 Son 10 fiş
 GET  /api/hesaplar                   Kasa/banka hesap listesi
 GET  /api/stok-hareketleri           Stok hareketleri (?urun_id=&limit=)
 GET  /api/gelir-gider-raporu         Gelir/gider raporu (?baslangic=&bitis=)
-POST /api/para-transferi             Hesaplar arası transfer — {kaynak_id, hedef_id, tutar, tarih?, aciklama?}
 
 # Billing
-GET  /api/billing/usage/{user_id}    Kullanım istatistikleri (?baslangic=&bitis=&limit=)
+GET  /api/billing/usage/{user_id}    Kullanım istatistikleri
 POST /api/billing/panel-click        Panel tıklama kaydı
-GET  /api/kullanim-ozeti/{user_id}   Kullanım özeti (eski, deprecated)
 
 # Admin (X-Admin-Token header gerekli)
-GET  /admin/islem-loglari            İşlem logları (?limit=&islem_tipi=)
-GET  /admin/konusmalar               Chat geçmişleri (?limit=)
-GET  /admin/accounts-debug           Paraşüt hesapları (bağlantı testi)
+GET  /admin/islem-loglari            İşlem logları
+GET  /admin/konusmalar               Chat geçmişleri
+GET  /admin/accounts-debug           Paraşüt hesapları bağlantı testi
+GET  /admin/cari-debug               Cari listesi raw attribute (debug)
 GET  /admin/irsaliye-debug/{id}      İrsaliye ham verisi
 POST /admin/reset-db                 DB temizle (⚠️ GERİ ALINAMAZ)
 ```
@@ -253,6 +402,112 @@ curl https://[render-url]/health
 # Paraşüt bağlantısı
 curl -H "X-Admin-Token: TOKEN" https://[render-url]/admin/accounts-debug
 
+# Cari raw data
+curl -H "X-Admin-Token: TOKEN" https://[render-url]/admin/cari-debug
+
 # Admin loglar
 curl -H "X-Admin-Token: TOKEN" "https://[render-url]/admin/islem-loglari?limit=10"
 ```
+
+---
+
+## 🚧 ROADMAP — Henüz YAPILMAMIŞ
+
+### FASE 1: Rol & Yetki Sistemi (RBAC) — KRİTİK SONRAKİ ADIM
+
+**Bağlam:** Profaix gerçek müşterilere açılıyor. Her firma içinde **farklı kullanıcı tipleri** olacak:
+- `owner` (firma sahibi) — her şeye erişim
+- `muhasebeci` — fatura, tahsilat, rapor (patron işleri)
+- `sofor` — sadece kantar fişi yükleme (TIR şoförü fotoğraf atıyor)
+- `personel` — sınırlı (bakiye sorgu, rapor görüntüleme)
+
+**Mimari (hibrit):**
+1. **Profaix.com'dan gelen `role`** birincil kaynak (mevcut user API'sinde `"role": "user"` döndürüyor — Profaix.com'da detaylandırılabilir)
+2. **`tenant_users` tablosu** firma içi role override için:
+   ```sql
+   CREATE TABLE tenant_users (
+     profaix_user_id TEXT NOT NULL,
+     tenant_id TEXT NOT NULL,
+     rol VARCHAR(50) NOT NULL,        -- 'owner' / 'muhasebeci' / 'sofor' / 'personel'
+     yetkiler JSONB,                  -- ['fis_yukle', 'fatura_kes', ...] override
+     aktif INTEGER DEFAULT 1,
+     PRIMARY KEY (profaix_user_id, tenant_id)
+   );
+   ```
+3. **Bir kullanıcı farklı tenant'larda farklı role** alabilir (Bilal kendi firmasında owner, Osman'ın firmasında muhasebeci olabilir)
+
+**Yetki Matrisi (default mapping):**
+
+| İşlem | owner | muhasebeci | sofor | personel |
+|---|:-:|:-:|:-:|:-:|
+| Fiş yükleme (OCR) | ✅ | ✅ | ✅ | ❌ |
+| Bekleyen irsaliyeler | ✅ | ✅ | ❌ | ❌ |
+| Fatura kesme | ✅ | ✅ | ❌ | ❌ |
+| Fatura iptal | ✅ | ✅ | ❌ | ❌ |
+| Tahsilat/Ödeme | ✅ | ✅ | ❌ | ❌ |
+| Cari yönet | ✅ | ✅ | ❌ | ❌ |
+| Raporlar | ✅ | ✅ | ❌ | ✅ |
+| E-Fatura | ✅ | ✅ | ❌ | ❌ |
+| Kullanıcı yönetimi | ✅ | ❌ | ❌ | ❌ |
+
+**Uygulama adımları:**
+1. `auth.py` → JWT'ye role bilgisi işle (`/api/me` ile dön)
+2. Backend decorator `@require_permission("fis_yukle")` her endpoint'te
+3. Frontend `chat.html` → `/api/me` döndüğünde `yetkiler` array'i al, sol menü buton/grupları filtrele
+4. `tenant_users` tablosu + admin endpoint'i (firma sahibi diğer kullanıcılara role atayabilsin)
+
+### FASE 2: Tenant Feature Flag (Modül Aç/Kapa)
+
+`tenants.ozellikler` JSON'unda hangi modüller aktif:
+```json
+{
+  "dogru_parasut_akisi": true,
+  "modules": {
+    "ocr": true,
+    "fatura": true,
+    "tahsilat": true,
+    "e_fatura": false,
+    "stok_takibi": true,
+    "rapor": true
+  }
+}
+```
+
+**Önemli:** Bir işlem yapmak için **hem tenant açmış olmalı hem kullanıcının yetkisi olmalı** (AND mantığı).
+
+### FASE 3: Self-Service Onboarding
+
+Yeni müşteri ilk girişte "Paraşüt'ünüzü bağlayın" formu:
+- Client ID, Secret, Email, Password, Company ID, Hurda Product ID
+- Sistem test eder (token alır → ✓/✗)
+- Başarılı ise DB'ye yazar (Fernet ile şifreli)
+
+Şu an manuel SQL ile yapılıyor (yukarıdaki "Yeni Tenant Eklemek" bölümü).
+
+### FASE 4: Production Hardening
+
+Demo öncesi NOT eklenmiş ama yapılmamış:
+- **Sentry** entegrasyonu (`sentry-sdk[fastapi]`) — production hata bildirimi
+- **Rate limiting** (`slowapi`) — `/api/upload`, `/api/chat` için kullanıcı başına
+- **Otomatik testler** (pytest) — kritik para işleyen akışlar
+- **OCR kullanıcı başına günlük quota** — abuse koruması
+- **CSRF token** — iframe embed akışı için
+- **CREDENTIAL_ENCRYPTION_KEY production'da zorunlu hâle getir** — env yoksa startup hatası
+
+### FASE 5: KVKK / Veri Koruma
+
+- Logger'da PII (IP, kullanıcı adı) mevcut → loglama policy
+- Tenant veri export/silme akışı (GDPR right to be forgotten)
+
+---
+
+## 📚 Önemli Tarihsel Kararlar (Yeniden Açmaktan Kaçın)
+
+1. **`contact_credit_transactions` = Tahsilat, `contact_debit_transactions` = Ödeme** — Paraşüt dokümanı YANILTICI, gerçek davranış böyle. KAPTAN DEMİR testiyle doğrulandı.
+2. **`unarchive` action endpoint'i** — `recover_from_archive` yerine V4 doc'a uygun. Fallback olarak eski endpoint de denenir.
+3. **`tahsilat_sil` intent yok** — LLM yanlış sınıflandırırsa para kaybı; sadece manuel buton.
+4. **Bekleyen irsaliyeler default 12 ay** — eskiden "bu ayın 1'i" idi, eski faturalanmamış irsaliyeler kayboluyordu.
+5. **Image preprocessing zorunlu** — küçük fotoğrafta upscale + unsharp + contrast olmadan OCR halüsinasyon yapıyor.
+6. **OCR plaka doğrulama** — Claude'un verdiği plaka LAYOUT tasvirinde geçmiyorsa null'a düşürülür (önceki fişten "hatırlanan" plakaları engeller).
+7. **Cari listesi iki sorgulu merge** — Paraşüt tek sorguda `account_type` tek değer döndürür, hem müşteri hem tedarikçi olan cari için merge gerekir.
+8. **`dogru_parasut_akisi=False` her yeni feature'da kontrol edilir** — Osman gibi eski tenant'lar geriye uyumlu olmak zorunda.
