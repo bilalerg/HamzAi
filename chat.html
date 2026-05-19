@@ -1407,14 +1407,23 @@
     showTyping();
     let hesaplar = [], cariler = [];
     try {
+      // Tüm carileri al — bakiye yönüne göre filtreleyeceğiz (Paraşüt UI mantığı)
       const [hr, cr] = await Promise.all([
         fetch('/api/hesaplar'),
-        fetch('/api/cariler?tip=supplier')
+        fetch('/api/cariler')
       ]);
       hesaplar = (await hr.json()).hesaplar || [];
       cariler  = (await cr.json()).cariler || [];
     } catch {}
     removeTyping();
+
+    // Paraşüt UI mantığı: ödeme sadece bakiye <= 0 cariler için mantıklı
+    //   - Negatif bakiye  → biz cariye borçluyuz → ödeme yapmalıyız ✓
+    //   - Sıfır bakiye    → avans verme senaryosu ✓
+    //   - Pozitif bakiye  → cari bize borçlu → ödeme yapmak mantıksız
+    cariler = cariler.filter(function(c) { return (c.bakiye || 0) <= 0; });
+    // Borçlular önce (negatif bakiyeliler), sonra sıfırlar
+    cariler.sort(function(a, b) { return (a.bakiye || 0) - (b.bakiye || 0); });
 
     const wrap = document.createElement('div');
     wrap.style.cssText = 'font-size:13px;';
@@ -3610,15 +3619,16 @@
     } catch {}
     removeTyping();
 
-    // Sadece müşteriler (customer / both / customer_supplier) — tedarikçi burada çıkmasın
-    const musteriler = cariler.filter(function(c) {
-      const t = c.tip || 'customer';
-      return t === 'customer' || t === 'both' || t === 'customer_supplier';
+    // Paraşüt UI mantığı: tahsilat sadece bakiye >= 0 cariler için mantıklı
+    // (negatif bakiye = biz borçluyuz → ödeme yapmamız lazım, tahsilat
+    // almak borcu artırır). Tip fark etmez — Paraşüt UI da tipe bakmıyor.
+    const uygunlar = cariler.filter(function(c) {
+      return (c.bakiye || 0) >= 0;
     });
-    // Alacaklıları önce göster
-    const alacaklilar = musteriler.filter(function(c) { return c.bakiye > 0; });
-    const digerler = musteriler.filter(function(c) { return c.bakiye <= 0; });
-    const siralanmis = alacaklilar.concat(digerler);
+    // Alacaklıları (pozitif bakiyeliler) önce göster
+    const alacaklilar = uygunlar.filter(function(c) { return c.bakiye > 0; });
+    const sifirlar    = uygunlar.filter(function(c) { return (c.bakiye || 0) === 0; });
+    const siralanmis  = alacaklilar.concat(sifirlar);
 
     const wrap = document.createElement('div');
     const baslik = document.createElement('div');
@@ -4719,17 +4729,58 @@
       satirEkle('🏛️', 'Vergi Dairesi', data.vergi_dairesi);
       satirEkle('🔢', 'Vergi No', data.vergi_no);
 
-      // ── Düzenle butonu ─────────────────────────────────────────
+      // ── EYLEM BUTONLARI: Bakiyeye göre akıllı butonlar (Paraşüt UI mantığı) ─
+      //   bakiye = 0       → hem Ödeme hem Tahsilat
+      //   bakiye negatif   → sadece Ödeme (biz borçluyuz)
+      //   bakiye pozitif   → sadece Tahsilat (cari bize borçlu)
+      const bakiyeVal = parseFloat(data.bakiye || 0);
+      const cariAdiTam = data.ad || onMusteri;
+
       const btnRow = document.createElement('div');
-      btnRow.style.cssText = 'display:flex;gap:6px;margin-top:12px;border-top:1px solid var(--border);padding-top:10px;';
+      btnRow.style.cssText = 'display:flex;gap:6px;margin-top:12px;border-top:1px solid var(--border);padding-top:10px;flex-wrap:wrap;';
+
+      // Ödeme Ekle butonu — bakiye <= 0 olduğunda göster
+      if (bakiyeVal <= 0) {
+        const odemeBtn = document.createElement('button');
+        odemeBtn.className = 'btn-primary';
+        odemeBtn.style.cssText = 'font-size:12px;flex:1;min-width:130px;';
+        odemeBtn.textContent = '💸 Ödeme Ekle';
+        odemeBtn.onclick = function() {
+          // Cari adıyla doğrudan ödeme formunu aç ve cariyi ön-doldur
+          odemeFormGoster('cari');
+          setTimeout(function() {
+            const inp = document.querySelector('.cari-search-input');
+            if (inp) {
+              inp.value = cariAdiTam;
+              inp.dispatchEvent(new Event('input'));
+              inp.focus();
+            }
+          }, 200);
+        };
+        btnRow.appendChild(odemeBtn);
+      }
+
+      // Tahsilat Ekle butonu — bakiye >= 0 olduğunda göster
+      if (bakiyeVal >= 0) {
+        const tahsilatBtn = document.createElement('button');
+        tahsilatBtn.className = 'btn-primary';
+        tahsilatBtn.style.cssText = 'font-size:12px;flex:1;min-width:130px;background:#0ea5e9;';
+        tahsilatBtn.textContent = '💵 Tahsilat Ekle';
+        tahsilatBtn.onclick = function() {
+          tahsilatFormGoster(cariAdiTam);
+        };
+        btnRow.appendChild(tahsilatBtn);
+      }
+
+      // ── Düzenle butonu ─────────────────────────────────────────
       const duzenleBtn = document.createElement('button');
       duzenleBtn.className = 'btn-cancel';
-      duzenleBtn.style.cssText = 'font-size:12px;flex:1;';
+      duzenleBtn.style.cssText = 'font-size:12px;flex:1;min-width:130px;';
       duzenleBtn.textContent = '✏️ Düzenle';
       duzenleBtn.onclick = function() {
         cariDuzenleFormGoster({
           id:            data.id,
-          ad:            data.ad || onMusteri,
+          ad:            cariAdiTam,
           email:         data.email !== '-' ? data.email : '',
           telefon:       data.telefon !== '-' ? data.telefon : '',
           vergi_no:      data.vergi_no !== '-' ? data.vergi_no : '',
