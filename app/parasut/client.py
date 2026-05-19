@@ -1181,12 +1181,18 @@ def cari_bazli_tahsilat(
         tenant_id=None,
 ) -> dict:
     """
-    Fatura olmadan doğrudan müşteri cari hesabına TAHSİLAT ekler.
+    Fatura olmadan doğrudan cari hesabına TAHSİLAT ekler.
 
-    Paraşüt V4 dokümanına göre:
-      POST /contacts/{id}/contact_debit_transactions
-      Attribute: ContactCollectionFormAttributes
-      Açıklama: 'Tahsilat'
+    GERÇEK DAVRANIŞ (KAPTAN DEMİR testiyle doğrulandı 19.05.2026):
+      contact_CREDIT_transactions → Paraşüt UI'da 'Tahsilat' olarak yazılır,
+        bakiyeyi negatife götürür.
+      contact_debit_transactions → Paraşüt UI'da 'Ödeme' olarak yazılır,
+        bakiyeyi pozitife götürür.
+
+    Paraşüt API V4 dokümanındaki 'Tahsilat: debit_transactions' etiketi
+    YANILTICI — gerçek Paraşüt UI davranışı ters yönde. Profaix'ten
+    'Tahsilat ekle' tıklandığında Paraşüt'te de 'Tahsilat' olarak yazılması
+    için contact_credit_transactions kullanıyoruz.
     """
     tid   = _resolve_tid(tenant_id)
     creds = _tenant_credentials(tid)
@@ -1205,17 +1211,17 @@ def cari_bazli_tahsilat(
         }}}
         try:
             sonuc = parasut_post(
-                f"/{cid}/contacts/{cari_id}/contact_debit_transactions",
+                f"/{cid}/contacts/{cari_id}/contact_credit_transactions",
                 istek, tenant_id=tid,
             )
         except Exception:
             istek["data"]["attributes"]["amount"] = str(tutar)
             sonuc = parasut_post(
-                f"/{cid}/contacts/{cari_id}/contact_debit_transactions",
+                f"/{cid}/contacts/{cari_id}/contact_credit_transactions",
                 istek, tenant_id=tid,
             )
         tx_id = sonuc.get("data", {}).get("id")
-        logger.info(f"Cari bazlı tahsilat (doc:debit): cari_id={cari_id} tutar={tutar:,.0f} TL tx={tx_id} (tenant={tid})")
+        logger.info(f"Cari bazlı tahsilat (UI:credit): cari_id={cari_id} tutar={tutar:,.0f} TL tx={tx_id} (tenant={tid})")
         try:
             cari_cache_yenile(tenant_id=tid)
         except Exception:
@@ -1235,12 +1241,18 @@ def cari_bazli_odeme(
         tenant_id=None,
 ) -> dict:
     """
-    Fatura olmadan doğrudan tedarikçi cari hesabına ÖDEME ekler.
+    Fatura olmadan doğrudan cari hesabına ÖDEME ekler.
 
-    Paraşüt V4 dokümanına göre:
-      POST /contacts/{id}/contact_credit_transactions
-      Attribute: ContactPaymentFormAttributes
-      Açıklama: 'Ödeme'
+    GERÇEK DAVRANIŞ (KAPTAN DEMİR + Kroman testiyle doğrulandı):
+      contact_DEBIT_transactions → Paraşüt UI'da 'Ödeme' olarak yazılır,
+        bakiyeyi pozitife götürür.
+      contact_credit_transactions → Paraşüt UI'da 'Tahsilat' olarak yazılır,
+        bakiyeyi negatife götürür.
+
+    Paraşüt API V4 dokümanındaki 'Ödeme: credit_transactions' etiketi
+    YANILTICI — gerçek Paraşüt UI davranışı ters yönde. Profaix'ten
+    'Ödeme ekle' tıklandığında Paraşüt'te de 'Ödeme' olarak yazılması
+    için contact_debit_transactions kullanıyoruz.
     """
     tid   = _resolve_tid(tenant_id)
     creds = _tenant_credentials(tid)
@@ -1259,17 +1271,17 @@ def cari_bazli_odeme(
         }}}
         try:
             sonuc = parasut_post(
-                f"/{cid}/contacts/{cari_id}/contact_credit_transactions",
+                f"/{cid}/contacts/{cari_id}/contact_debit_transactions",
                 istek, tenant_id=tid,
             )
         except Exception:
             istek["data"]["attributes"]["amount"] = str(tutar)
             sonuc = parasut_post(
-                f"/{cid}/contacts/{cari_id}/contact_credit_transactions",
+                f"/{cid}/contacts/{cari_id}/contact_debit_transactions",
                 istek, tenant_id=tid,
             )
         tx_id = sonuc.get("data", {}).get("id")
-        logger.info(f"Cari bazlı ödeme (doc:credit): cari_id={cari_id} tutar={tutar:,.0f} TL tx={tx_id} (tenant={tid})")
+        logger.info(f"Cari bazlı ödeme (UI:debit): cari_id={cari_id} tutar={tutar:,.0f} TL tx={tx_id} (tenant={tid})")
         try:
             cari_cache_yenile(tenant_id=tid)
         except Exception:
