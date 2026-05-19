@@ -1182,23 +1182,11 @@ def cari_bazli_tahsilat(
 ) -> dict:
     """
     Fatura olmadan doğrudan müşteri cari hesabına TAHSİLAT ekler.
-    Paraşüt: POST /contacts/{id}/contact_credit_transactions
 
-    NOT — Paraşüt'te bakiye yönü:
-      contact_credit_transactions → carinin alacak tarafına yazar → bakiye
-        'alacak' yönünde hareket eder → müşterinin bize olan borcu AZALIR
-      contact_debit_transactions → carinin borç tarafına yazar → bakiye
-        'borç' yönünde hareket eder → bizim ona olan borcumuz azalır
-        (TEDARİKÇİ ödemesi için)
-
-    Yani:
-      - Müşteriden tahsilat   → contact_CREDIT_transactions (bu)
-      - Tedarikçiye ödeme     → contact_DEBIT_transactions (cari_bazli_odeme)
-
-    İlk implementasyon DEBIT kullanıyordu — Paraşüt dokümandaki "Tahsilat:
-    debit_transactions" etiketine güvenmiştik. Gerçek test (ödeme tarafında)
-    etiketin yanıltıcı olduğunu gösterdi; simetri için tahsilat da CREDIT'e
-    çevrildi.
+    Paraşüt V4 dokümanına göre:
+      POST /contacts/{id}/contact_debit_transactions
+      Attribute: ContactCollectionFormAttributes
+      Açıklama: 'Tahsilat'
     """
     tid   = _resolve_tid(tenant_id)
     creds = _tenant_credentials(tid)
@@ -1217,17 +1205,17 @@ def cari_bazli_tahsilat(
         }}}
         try:
             sonuc = parasut_post(
-                f"/{cid}/contacts/{cari_id}/contact_credit_transactions",
+                f"/{cid}/contacts/{cari_id}/contact_debit_transactions",
                 istek, tenant_id=tid,
             )
         except Exception:
             istek["data"]["attributes"]["amount"] = str(tutar)
             sonuc = parasut_post(
-                f"/{cid}/contacts/{cari_id}/contact_credit_transactions",
+                f"/{cid}/contacts/{cari_id}/contact_debit_transactions",
                 istek, tenant_id=tid,
             )
         tx_id = sonuc.get("data", {}).get("id")
-        logger.info(f"Cari bazlı tahsilat (credit): cari_id={cari_id} tutar={tutar:,.0f} TL tx={tx_id} (tenant={tid})")
+        logger.info(f"Cari bazlı tahsilat (doc:debit): cari_id={cari_id} tutar={tutar:,.0f} TL tx={tx_id} (tenant={tid})")
         try:
             cari_cache_yenile(tenant_id=tid)
         except Exception:
@@ -1248,16 +1236,11 @@ def cari_bazli_odeme(
 ) -> dict:
     """
     Fatura olmadan doğrudan tedarikçi cari hesabına ÖDEME ekler.
-    Paraşüt: POST /contacts/{id}/contact_debit_transactions
 
-    NOT — Paraşüt muhasebe mantığı:
-      contact_debit_transactions → carinin BORÇ tarafına yazar
-        → tedarikçiye ödeme yapmak için DOĞRU endpoint (borç azalır)
-      contact_credit_transactions → carinin ALACAK tarafına yazar
-        → bizim borcumuzu ARTIRIR (avans/iade için kullanılır)
-
-    İlk implementasyonda credit_transactions kullanılmıştı — gerçek testte
-    tedarikçi bakiyesi düştüğü yerde ARTTI, yani yön tersti. Düzeltildi.
+    Paraşüt V4 dokümanına göre:
+      POST /contacts/{id}/contact_credit_transactions
+      Attribute: ContactPaymentFormAttributes
+      Açıklama: 'Ödeme'
     """
     tid   = _resolve_tid(tenant_id)
     creds = _tenant_credentials(tid)
@@ -1276,17 +1259,17 @@ def cari_bazli_odeme(
         }}}
         try:
             sonuc = parasut_post(
-                f"/{cid}/contacts/{cari_id}/contact_debit_transactions",
+                f"/{cid}/contacts/{cari_id}/contact_credit_transactions",
                 istek, tenant_id=tid,
             )
         except Exception:
             istek["data"]["attributes"]["amount"] = str(tutar)
             sonuc = parasut_post(
-                f"/{cid}/contacts/{cari_id}/contact_debit_transactions",
+                f"/{cid}/contacts/{cari_id}/contact_credit_transactions",
                 istek, tenant_id=tid,
             )
         tx_id = sonuc.get("data", {}).get("id")
-        logger.info(f"Cari bazlı ödeme (debit): cari_id={cari_id} tutar={tutar:,.0f} TL tx={tx_id} (tenant={tid})")
+        logger.info(f"Cari bazlı ödeme (doc:credit): cari_id={cari_id} tutar={tutar:,.0f} TL tx={tx_id} (tenant={tid})")
         try:
             cari_cache_yenile(tenant_id=tid)
         except Exception:
