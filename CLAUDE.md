@@ -84,10 +84,22 @@ app/
   ocr/
     reader.py            Claude Sonnet ile kantar fişi OCR + confidence scoring
     plaka_kontrol.py     Plaka doğrulama ve duplicate fiş tespiti
-  parasut/
-    client.py            Paraşüt REST API istemcisi (~2600 satır, senkron + async wrapper'lar)
-    fatura.py            Fatura kesme (duplicate + race condition korumalı)
-    irsaliye.py          İrsaliye oluşturma (duplicate + race condition korumalı)
+  parasut/               Paraşüt REST API — modüllere ayrılmış (per-konu)
+    _state.py            Per-tenant state: _tokens, _cari_caches, _kasa_hesabi_ids, locks
+    _http.py             rate_limit + parasut_get/post/delete/put/patch
+    token.py             tenant_credentials, get_tenant_config, get_token (per-tenant cache)
+    cari.py              Cari listesi/cache/CRUD/fuzzy id_bul/tip tespiti
+    tahsilat.py          Kasa + tahsilat/ödeme/transfer/açık_faturalar/cari_bazli
+    satis.py             sales_invoices iptal/güncelle/arşiv + ortak fatura helper'ları
+    alis.py              purchase_bills oluştur/iptal/güncelle/detay/ödeme
+    fatura_sorgu.py      cari_faturalari_getir, fatura_detay_getir, *_universal wrapper'lar
+    irsaliye_sorgu.py    Bekleyen irsaliyeler + detay (sorgu — yazma için irsaliye.py)
+    rapor.py             hesap_özeti, işlem_geçmişi, hesap_listesi, stok, gelir/gider
+    e_fatura.py          E-fatura/E-arşiv oluştur + mükellef + trackable_job + detay
+    async_wrappers.py    Tüm async_* fonksiyonlar (asyncio.to_thread)
+    client.py            BACKWARD-COMPAT SHIM (~100 satır, re-export wrapper)
+    fatura.py            Fatura kesme yazma (duplicate + race condition korumalı)
+    irsaliye.py          İrsaliye oluşturma yazma (duplicate + race condition korumalı)
 chat.html                HTML iskelet (~113 satır, sadece DOM yapısı + script tag'leri)
 login.html               Local admin giriş sayfası
 static/                  Frontend asset'leri (FastAPI StaticFiles ile /static/ altında serve edilir)
@@ -385,14 +397,31 @@ otomatik olarak `window.X` olur, herhangi bir modülde tanımlı olabilir.
 2. `chat.html` script tag listesine ekle (sıra önemli — bağımlı olduğu modülden SONRA gelmeli, en sonda `09-bootstrap.js` kalmalı)
 
 ### Yeni Paraşüt Çağrısı Eklemek
-1. `app/parasut/client.py` → senkron fonksiyon yaz, `tenant_id=None` parametresi al
-2. `client.py` sonuna async wrapper ekle:
+1. **Konuya göre doğru dosyayı seç**:
+   - Token/oauth → `app/parasut/token.py`
+   - Cari işlemi → `cari.py`
+   - Tahsilat/ödeme → `tahsilat.py`
+   - Satış faturası → `satis.py`
+   - Alış faturası → `alis.py`
+   - Universal fatura wrapper'ı → `fatura_sorgu.py`
+   - İrsaliye sorgu → `irsaliye_sorgu.py` (yazma için `irsaliye.py`)
+   - Rapor → `rapor.py`
+   - E-fatura/E-arşiv → `e_fatura.py`
+2. Senkron fonksiyonu yaz, `tenant_id=None` parametresi al. Gerekli import'lar:
    ```python
+   from ._state import _resolve_tid
+   from .token  import _tenant_credentials, get_tenant_config
+   from ._http  import parasut_get  # veya post/put/delete/patch
+   ```
+3. `async_wrappers.py`'a async wrapper ekle:
+   ```python
+   from .yeni_modul import yeni_fonksiyon
    async def async_yeni_fonksiyon(param: str, tenant_id=None) -> dict:
        return await asyncio.to_thread(yeni_fonksiyon, param, tenant_id)
    ```
-3. `main.py`'de `tenant_id = _tenant_id_from_user(aktif_user)` → `await async_yeni_fonksiyon(param, tenant_id=tenant_id)` ile çağır
-4. **Müşteri/tedarikçi ayrımı** gerekiyorsa `dogru_akis` flag'ini kontrol et
+4. **Backward-compat**: `client.py`'a re-export ekle (`from .yeni_modul import yeni_fonksiyon`).
+5. Router'da `await async_yeni_fonksiyon(param, tenant_id=tenant_id)` ile çağır.
+6. **Müşteri/tedarikçi ayrımı** gerekiyorsa `dogru_akis` flag'ini kontrol et.
 
 ### Yeni DB Tablosu / Kolonu Eklemek
 1. `app/core/database.py` → `Base` miras alan model ekle (yeni kolonsa mevcut modele alan ekle)
@@ -651,3 +680,4 @@ Demo öncesi NOT eklenmiş ama yapılmamış:
 11. **Firma kaynak tespiti** — OCR prompt'u firma'nın `firma_satiri` (Firma: etiketinden) veya `ust_baslik` (en üst başlık) hangisinden geldiğini raporlar. `ust_baslik` durumunda firma KANTAR firmasıdır (KAPTAN DEMİR gibi), tedarikçi DEĞİL — heuristik 0.15 + sarı uyarı gösterilir. Kullanıcı dropdown'dan gerçek tedarikçiyi seçer.
 12. **Low confidence ≠ retry** — Düşük güven OCR'ı yeniden çalıştırma sebebi DEĞİL (fotoğraf kalitesi sorunu, ikinci deneme aynı sonucu verir). Retry sadece JSON parse hatasında yapılır. Düşük güven kullanıcıya gösterilir → manuel düzeltir.
 13. **main.py monolit → APIRouter modülleri** — eski 2683 satırlık tek dosya `main.py` (161 satır, sadece app + middleware + lifespan + include_router) + 10 router dosyası (`app/routers/X.py`) + ortak `deps.py`'a bölündü. Yeni endpoint eklemek için **main.py'a DOKUNMA** — uygun router dosyasına `@router.X` ile ekle. `include_router` zaten kurulu. Eski monolite geri dönme — `main.py.bak` yedek var (`.gitignore`'da `*.bak`).
+14. **client.py monolit → per-konu modüller** — eski 2974 satırlık `app/parasut/client.py` (100 satır, **sadece backward-compat re-export shim**) + 12 modüle bölündü: `_state.py` (per-tenant state), `_http.py` (HTTP katmanı), `token.py`, `cari.py`, `tahsilat.py`, `satis.py`, `alis.py`, `fatura_sorgu.py`, `irsaliye_sorgu.py`, `rapor.py`, `e_fatura.py`, `async_wrappers.py`. **KRİTİK**: Module-level state (`_tokens`, `_cari_caches`, `_kasa_hesabi_ids`, vs.) **yalnızca `_state.py`'da tanımlanır** — diğer modüller import edip mutate eder. Hiçbir modül `_tokens = {}` ile **yeniden bind etmemeli** (yoksa tenant izolasyonu çöker). Eski `from app.parasut.client import X` çalışmaya devam eder (re-export sayesinde).
