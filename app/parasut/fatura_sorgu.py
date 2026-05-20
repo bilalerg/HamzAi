@@ -177,7 +177,13 @@ def fatura_detay_getir(fatura_id: str, tenant_id=None) -> dict:
             "tahsilatlar": tahsilatlar, "irsaliye_ids": irsaliye_ids,
         }
     except Exception as e:
-        logger.error(f"Fatura detay hatası: {e}")
+        # 404 "Record was not found" → büyük ihtimalle fatura purchase_bill,
+        # frontend tip=supplier ile yeniden deneyecek. Gürültü yapma, sessizce dön.
+        msg = str(e)
+        if "404" in msg or "Record was not found" in msg or "not_found" in msg.lower():
+            logger.info(f"fatura_detay_getir: sales_invoices'da yok (purchase_bill olabilir): {fatura_id}")
+        else:
+            logger.error(f"Fatura detay hatası: {e}")
         return {}
 
 
