@@ -50,7 +50,7 @@ BASE_URL                        # keep-alive ping (default: https://profaix-api.
 ## Mimari
 
 ```
-main.py                  FastAPI app, tüm route'lar burada (~2200 satır)
+main.py                  FastAPI app + tüm route'lar (~2400 satır) + StaticFiles mount
 app/
   core/
     config.py            Tüm env değişkenleri buradan okunur (tek kaynak)
@@ -63,15 +63,35 @@ app/
   chatbox/
     llm_handler.py       Claude Haiku ile intent sınıflandırma (tool_use API)
   ocr/
-    reader.py            Claude Sonnet ile kantar fişi OCR (vision API + preprocessing)
+    reader.py            Claude Sonnet ile kantar fişi OCR + confidence scoring
     plaka_kontrol.py     Plaka doğrulama ve duplicate fiş tespiti
   parasut/
-    client.py            Paraşüt REST API istemcisi (~2300 satır, senkron + async wrapper'lar)
+    client.py            Paraşüt REST API istemcisi (~2600 satır, senkron + async wrapper'lar)
     fatura.py            Fatura kesme (duplicate + race condition korumalı)
     irsaliye.py          İrsaliye oluşturma (duplicate + race condition korumalı)
-chat.html                SPA chat arayüzü (~4400 satır, tek dosya)
+chat.html                HTML iskelet (~113 satır, sadece DOM yapısı + script tag'leri)
 login.html               Local admin giriş sayfası
+static/                  Frontend asset'leri (FastAPI StaticFiles ile /static/ altında serve edilir)
+  css/
+    chat.css             Tüm tema/layout CSS (~690 satır)
+  img/
+    logo.jpg             Header logosu (eski inline base64 yerine)
+  js/                    Numaralandırılmış sıralı yüklenen modüller
+    01-state.js          Global vars + DOM element refs
+    02-core.js           Fetch intercept + UI helpers (panel, dialog, dropdown, addMessage)
+    03-session.js        Auth, oturum yönetimi, sohbet kaydetme
+    04-chat.js           sendMessage + OCR upload + firmaSecildi (confidence color)
+    05-rapor.js          Tüm raporlar (özet, fişler, bakiyeler, hesap özeti)
+    06-fatura.js         Fatura/irsaliye akışları (alış, iptal, güncelle, toplu, e-fatura)
+    07-tahsilat.js       Tahsilat/ödeme/transfer formları
+    08-cari.js           Cari işlemleri (detay, düzenle, yeni, cache yenile)
+    09-bootstrap.js      window.onload
 ```
+
+**JS modül yükleme sırası KRİTİK** — `<script>` tag'leri sıralı çalışır (no `defer`/`async`).
+- `let SESSION_ID` (01-state) → tüm modüller okuyabilir (global lexical environment paylaşılır)
+- `function panelKapat()` (02-core) → otomatik `window.panelKapat` olur → HTML `onclick="..."` çalışır
+- Bootstrap token inject (`main.py` `_chat_html()`) **01-state.js'in önüne** yapılır — `let AUTH_TOKEN = (window.PROFAIX_BOOTSTRAP_TOKEN || '')` doğru değeri okur.
 
 ## Temel Tasarım Kararları
 
@@ -192,6 +212,45 @@ Profaix tarafında:
 - Intent: `claude-haiku-4-5-20251001` (`app/chatbox/llm_handler.py`, tool_use API)
   - max_tokens=600 (uzun yetenek listesi cevapları için)
 
+### OCR Confidence Scoring — KRİTİK
+
+Her OCR çıktısı 5 güven skoru (0.0-1.0) ile gelir: `plaka`, `agirlik`, `fis_no`, `firma`, `genel`.
+
+**Hybrid hesaplama** (`_confidence_hesapla()` — `app/ocr/reader.py`):
+```
+nihai_conf = Claude AI skoru × W_claude + Heuristik × (1 - W_claude)
+```
+
+Alan başına `W_claude` ağırlığı:
+| Alan | W_claude | Sebep |
+|---|:-:|---|
+| plaka | %75 | Regex format-geçerliliği gerçek doğruluğu garanti etmez (`31K081` regex'e uyar ama yanlış okuma olabilir) |
+| agirlik | %60 | Heuristik (3000-40000 kg range) güçlü sinyal |
+| fis_no | %60 | Uzunluk-bazlı heuristik (≥8 karakter ideal) |
+| firma | %50 | `firma_kaynak` heuristiği (ust_baslik vs firma_satiri) çok güçlü |
+
+**Genel skor ağırlıkları**: plaka %30 + ağırlık %30 + fiş_no %15 + firma %15 + tarih %10
+
+**`firma_kaynak` sinyali** — OCR prompt'u firma'nın nereden alındığını JSON'a yazar:
+- `"firma_satiri"` → "Firma:" etiketli satırdan alındı → heuristik 0.90 (tedarikçi)
+- `"ust_baslik"` → Fişin en üst başlığından alındı → heuristik 0.15 (KANTAR firması, tedarikçi DEĞİL)
+
+`ust_baslik` durumunda kullanıcıya sarı uyarı gösterilir ("Firma X üst başlıktan alındı, dropdown'dan seçin").
+
+**UI eşikleri** (`static/js/04-chat.js`):
+- `> 0.85` → yeşil (kullanıcı dokunmaz)
+- `0.40-0.85` → sarı (kontrol uyarısı)
+- `≤ 0.40` → kırmızı (Kaydet butonu kilitli — kullanıcı düzeltmeden kaydedemez)
+
+**KRİTİK kural**: Plaka veya ağırlık kırmızıysa form OTOMATİK düzenleme modunda açılır.
+Form kullanıcı manuel olarak kırmızı alanı düzenleyene kadar "Kaydet" disabled.
+
+**DB**: `weigh_tickets` tablosunda 4 Float kolon: `ocr_confidence_plaka`,
+`ocr_confidence_agirlik`, `ocr_confidence_fis_no`, `ocr_confidence_genel`.
+
+`firma_confidence` ve `firma_kaynak` şu an sadece response'ta gönderiliyor — DB'ye yazılmıyor
+(genel skor içinde sayılıyor). Sonradan analiz gerekirse kolon eklenebilir.
+
 ### Intent Sistemi
 `INTENTLER` sözlüğü → `INTENT_ENUM` → tool_use → `intent_tespit` fonksiyonu.
 
@@ -207,6 +266,9 @@ Mevcut intent'ler:
 `tenants`, `vehicles`, `weigh_tickets`, `waybills`, `invoices`, `chat_sessions`,
 `active_logins`, `islem_logs`, `users`, `audit_logs`, `usage_logs`,
 `billable_events`, `hata_logs`, `tahsilat_logs`, `ocr_hata_logs`, `giris_logs`
+
+**`weigh_tickets` OCR Confidence kolonları** (`Float`):
+- `ocr_confidence_plaka`, `ocr_confidence_agirlik`, `ocr_confidence_fis_no`, `ocr_confidence_genel`
 
 Bağlantı havuzu: `pool_size=5, max_overflow=10` (max 15, Supabase limiti).
 
@@ -263,7 +325,30 @@ Frontend bunu kullanarak silme yapar.
 ### Yeni Intent Eklemek
 1. `app/chatbox/llm_handler.py` → `INTENTLER` sözlüğüne ekle, `SISTEM_PROMPTU` güncelle
 2. `main.py` → endpoint yaz (`async def`, `await async_*` kullan)
-3. `chat.html` → `INTENT_MAP` ve `intentHandlers` objesine JS handler ekle
+3. `static/js/04-chat.js` → `INTENT_MAP` ve `intentHandlers` objesine JS handler ekle
+   (eskiden `chat.html`'de tek dosya idi — şimdi `static/js/04-chat.js` modülünde)
+
+### Frontend Değişikliği Yapmak
+
+Tek monolitik `chat.html` artık yok — değişiklik tipine göre uygun dosyaya yaz:
+
+| İhtiyaç | Dosya |
+|---|---|
+| HTML iskelet değişikliği (yeni buton/div) | `chat.html` (~113 satır) |
+| Stil/tema değişikliği | `static/css/chat.css` |
+| Yeni global helper / state | `static/js/02-core.js` |
+| Yeni intent / chat akışı | `static/js/04-chat.js` |
+| Yeni rapor ekranı | `static/js/05-rapor.js` |
+| Fatura/irsaliye işlemi | `static/js/06-fatura.js` |
+| Tahsilat/ödeme formu | `static/js/07-tahsilat.js` |
+| Cari işlemi | `static/js/08-cari.js` |
+
+**`onclick="X()"` HTML attribute'ları** function declaration'larına bağlı —
+otomatik olarak `window.X` olur, herhangi bir modülde tanımlı olabilir.
+
+**Yeni JS modülü EKLEMEK istersen** (örn. `10-yeni.js`):
+1. `static/js/10-yeni.js` oluştur
+2. `chat.html` script tag listesine ekle (sıra önemli — bağımlı olduğu modülden SONRA gelmeli, en sonda `09-bootstrap.js` kalmalı)
 
 ### Yeni Paraşüt Çağrısı Eklemek
 1. `app/parasut/client.py` → senkron fonksiyon yaz, `tenant_id=None` parametresi al
@@ -276,7 +361,7 @@ Frontend bunu kullanarak silme yapar.
 4. **Müşteri/tedarikçi ayrımı** gerekiyorsa `dogru_akis` flag'ini kontrol et
 
 ### Yeni DB Tablosu / Kolonu Eklemek
-1. `app/core/database.py` → `Base` miras alan model ekle
+1. `app/core/database.py` → `Base` miras alan model ekle (yeni kolonsa mevcut modele alan ekle)
 2. `app/core/migrations.py` → `calistir()` içine ekle:
    ```python
    _kolon_ekle(conn, text(
@@ -285,6 +370,22 @@ Frontend bunu kullanarak silme yapar.
    # veya tablo için:
    _tablo_olustur(conn, text("CREATE TABLE IF NOT EXISTS ..."), "tablo_adi")
    ```
+
+**Gerçek örnek** — OCR confidence kolonları (`weigh_tickets`):
+```python
+# database.py — WeighTicket modelinde Float kolon
+from sqlalchemy import Float
+ocr_confidence_plaka   = Column(Float, nullable=True)
+ocr_confidence_agirlik = Column(Float, nullable=True)
+ocr_confidence_fis_no  = Column(Float, nullable=True)
+ocr_confidence_genel   = Column(Float, nullable=True)
+
+# migrations.py — startup'ta otomatik ekleyen migration
+_kolon_ekle(conn, text(
+    "ALTER TABLE weigh_tickets ADD COLUMN IF NOT EXISTS ocr_confidence_plaka FLOAT"
+), "ocr_confidence_plaka (weigh_tickets)")
+# ... diğer 3 kolon için aynı pattern
+```
 
 ### Yeni Tenant Eklemek (Manuel)
 Bir yeni müşteri için Supabase SQL:
@@ -511,3 +612,7 @@ Demo öncesi NOT eklenmiş ama yapılmamış:
 6. **OCR plaka doğrulama** — Claude'un verdiği plaka LAYOUT tasvirinde geçmiyorsa null'a düşürülür (önceki fişten "hatırlanan" plakaları engeller).
 7. **Cari listesi iki sorgulu merge** — Paraşüt tek sorguda `account_type` tek değer döndürür, hem müşteri hem tedarikçi olan cari için merge gerekir.
 8. **`dogru_parasut_akisi=False` her yeni feature'da kontrol edilir** — Osman gibi eski tenant'lar geriye uyumlu olmak zorunda.
+9. **chat.html monolit → modüler refactor** — eski 4871 satırlık tek dosya `chat.html` (113 satır iskelet) + `static/css/chat.css` (~690 satır) + 9 numaralı `static/js/0X-*.js` modülüne bölündü. JS modülleri `<script>` tag sırasıyla yüklenir, paylaşılan global lexical environment kullanır. Eski monolite geri dönme — `chat.html.bak` yedek var ama `.gitignore`'da.
+10. **OCR Confidence ≠ Doğruluk Garantisi** — Plaka için `^\d{2}[A-Z]{1,3}\d{2,4}$` regex match yüksek heuristik vermez (yanlış okumalar da regex'e uyabilir, örn `37LK081` yerine `31K081` okundu — ikisi de geçerli format). Bu yüzden plaka için Claude ağırlığı %75'e çıkarıldı, heuristik regex match'i %70 maksimumda tutulur.
+11. **Firma kaynak tespiti** — OCR prompt'u firma'nın `firma_satiri` (Firma: etiketinden) veya `ust_baslik` (en üst başlık) hangisinden geldiğini raporlar. `ust_baslik` durumunda firma KANTAR firmasıdır (KAPTAN DEMİR gibi), tedarikçi DEĞİL — heuristik 0.15 + sarı uyarı gösterilir. Kullanıcı dropdown'dan gerçek tedarikçiyi seçer.
+12. **Low confidence ≠ retry** — Düşük güven OCR'ı yeniden çalıştırma sebebi DEĞİL (fotoğraf kalitesi sorunu, ikinci deneme aynı sonucu verir). Retry sadece JSON parse hatasında yapılır. Düşük güven kullanıcıya gösterilir → manuel düzeltir.
