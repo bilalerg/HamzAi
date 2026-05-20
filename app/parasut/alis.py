@@ -12,7 +12,7 @@
 
 from app.core.logger import logger
 
-from ._state import _resolve_tid
+from ._state import _resolve_tid, _cari_caches
 from .token import _tenant_credentials, get_tenant_config
 from ._http import parasut_get, parasut_post, parasut_put, parasut_patch
 from .cari import cari_id_bul

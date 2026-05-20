@@ -13,7 +13,7 @@ from app.core.logger import logger
 from ._state import _resolve_tid
 from .token import _tenant_credentials, get_tenant_config
 from ._http import parasut_get
-from .cari import cari_listesi_getir
+from .cari import cari_listesi_getir, cari_detay_getir
 from .satis import _sales_faturalari_page, _fatura_dict_olustur
 from .alis import _purchase_faturalari_page
 
