@@ -12,6 +12,8 @@
 # fatura_sorgu.py icinde — onlar hem satis hem alis'i import eder.
 # ---------------------------------------------------------------------
 
+import re
+
 from app.core.logger import logger
 
 from ._state import _resolve_tid

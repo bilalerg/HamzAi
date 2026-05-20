@@ -16,6 +16,8 @@
 # Asla degistirilmemeli; kullanici testleriyle dogrulandi.
 # ---------------------------------------------------------------------
 
+import re
+
 from app.core.logger import logger
 
 from ._state import _kasa_hesabi_ids, _resolve_tid
