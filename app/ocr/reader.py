@@ -31,16 +31,19 @@ class FisVerisi:
     fire_kg:            Optional[int]           = None
     tarih:              Optional[str]           = None
     firma:              Optional[str]           = None
+    firma_kaynak:       Optional[str]           = None   # "firma_satiri" | "ust_baslik" | None
     irsaliye_no:        Optional[str]           = None
     kantar_no:          Optional[str]           = None
     malzemeler:         Optional[Dict[str,int]] = None
     claude_ham_cikti:   Optional[str]           = None
     hata:               Optional[str]           = None
     plaka_uyari:        Optional[str]           = None
+    firma_uyari:        Optional[str]           = None   # ust_baslik'ten alınmışsa uyarı
     # OCR güven skorları — 0.0-1.0 arası float
     plaka_confidence:   Optional[float]         = None
     agirlik_confidence: Optional[float]         = None
     fis_no_confidence:  Optional[float]         = None
+    firma_confidence:   Optional[float]         = None
     genel_confidence:   Optional[float]         = None
 
 
@@ -63,13 +66,23 @@ LAYOUT:
 - ...
 
 JSON:
-{"plaka":...,"plaka_confidence":0.0-1.0,"fis_no":...,"fis_no_confidence":0.0-1.0,"net_tartim_kg":...,"agirlik_confidence":0.0-1.0,"fire_kg":...,"tarih":...,"firma":...,"irsaliye_no":...,"kantar_no":...,"malzemeler":{}}
+{"plaka":...,"plaka_confidence":0.0-1.0,"fis_no":...,"fis_no_confidence":0.0-1.0,"net_tartim_kg":...,"agirlik_confidence":0.0-1.0,"fire_kg":...,"tarih":...,"firma":...,"firma_kaynak":"firma_satiri"|"ust_baslik","firma_confidence":0.0-1.0,"irsaliye_no":...,"kantar_no":...,"malzemeler":{}}
 
 Güven skoru (confidence) kuralları:
 - 0.9-1.0: Net, tam okunabilir, formatı doğru
 - 0.7-0.9: Okunabilir ama tek harf/rakam belirsiz olabilir
 - 0.4-0.7: Kısmen okundu, tahmin var
 - 0.0-0.4: Çok belirsiz, büyük ihtimalle hatalı
+
+⚠️ DÜRÜSTLÜK KURALI — confidence skorunu ŞİŞİRME:
+- Tek bir karakter belirsizse confidence 0.7-0.85 arasına düşür
+- Sadece çok net okuduğun alanlara 0.9+ ver
+- Plaka okurken "7L" ile "1" karıştırma riskine dikkat et — şüphe varsa 0.5-0.7 ver
+
+firma_kaynak ALANI (zorunlu — firma null değilse):
+- "firma_satiri": Eğer firma değerini "Firma:" etiketli satırdan aldıysan
+- "ust_baslik": Eğer firma değerini fişin EN ÜSTÜNDEKİ büyük başlıktan aldın (çünkü Firma: satırı yoktu)
+  → Bu durumda firma_confidence MUTLAKA 0.3 veya altına düşür (üst başlık genelde KANTAR firmasıdır, tedarikçi DEĞİL)
 
 UYDURMA YASAĞI:
 - Tipik plaka örnekleri ("34BEG354", "06FH8714") veya tipik fiş no'lar ("1234567", "15150") UYDURMA
@@ -101,8 +114,14 @@ f) BRÜT değeri: kaç kg?
 g) DARA değeri: kaç kg?
 h) NET değeri: kaç kg? (fişte NET satırı varsa o değer, yoksa BRÜT-DARA hesabı)
 i) Tarih: "Geliş Tarihi", "Tarih" alanı? (GG.AA.YYYY)
-j) Fiş ID veya Fiş No: "Id.", "Fiş No", "No" etiketli alan? Genelde fişin ALT kısmında
-   küçük yazıyla yazılı (örn: "Id.130002187968")
+j) ⚠️ FİŞ NO — DİKKATLİ BAK ⚠️
+   Fişin EN ALT KISMINDA mutlaka küçük puntolu bir kimlik numarası var. Etiketler:
+   "Id.", "Id:", "Fiş No", "No", "Fiş ID", "Belge No" olabilir veya bazen sadece "Id.130002187968"
+   gibi nokta sonra rakamlar şeklinde yazılır. Tipik 8-12 haneli rakam.
+   Yerleri: imzanın hemen üstü/altı, sol veya sağ alt köşe, bazen "Operatör:" satırının üst/altında.
+   Eğer "Id." veya benzeri etiketle başlayan bir RAKAM dizisi varsa BU SENİN fis_no'NDUR.
+   Örnek: "Id.130002187968" → fis_no="130002187968"
+   ❌ Fiş üzerinde gözünle göremiyorsan null bırak — UYDURMA
 k) Mal Cinsi: ne yazıyor?
 
 ⚠️ Bir alan için "görülmüyor" yazma hakkın var, ama önce DİKKATLİCE bak.
@@ -113,8 +132,11 @@ Yukarıdaki AŞAMA 1 gözleminize göre JSON'u doldur.
 
 Kurallar:
 - plaka: Aşama 1-e'de İLK plakayı al, boşluk/tire sil, büyük harf yap → "37LK081"
-- fis_no: Aşama 1-j'deki numara
-- firma: Aşama 1-b'deki TEDARIKÇİ adı (Firma: etiketli). YOKSA → Aşama 1-a'daki üst başlık
+  ⚠️ Plaka okurken "7" ile "1", "L" ile "I" gibi karakter karışıklığı çok yaygındır.
+  Eğer plakada şüpheli karakter varsa confidence 0.5-0.7 arasına düşür, 0.9+ verme.
+- fis_no: Aşama 1-j'deki numara. Gözünle gördüysen yaz, görmediysen null + confidence=0
+- firma + firma_kaynak: Aşama 1-b'deki Firma: SATIRINDAN aldıysan → firma_kaynak="firma_satiri" (confidence 0.85+)
+  Firma: satırı yoktuysa → Aşama 1-a'daki üst başlık → firma_kaynak="ust_baslik" (confidence MUTLAKA ≤0.3)
   ⚠️ Nakliye Firması (1-c) veya Ad Soyad (1-d) ASLA firma değildir
 - net_tartim_kg: Aşama 1-h'deki NET değer (tam sayı, virgül/nokta yok)
 - fire_kg: "Fire" veya "Tenzil" satırı yoksa 0
@@ -137,7 +159,7 @@ LAYOUT:
 - Mal Cinsi: YERLİ HURDA
 
 JSON:
-{"plaka":"37LK081","plaka_confidence":0.95,"fis_no":"130002187968","fis_no_confidence":0.90,"net_tartim_kg":15150,"agirlik_confidence":0.98,"fire_kg":0,"tarih":"12.03.2026","firma":"YEŞIL IZABE GERİ DÖNÜŞÜM NAK","irsaliye_no":null,"kantar_no":null,"malzemeler":{}}
+{"plaka":"37LK081","plaka_confidence":0.92,"fis_no":"130002187968","fis_no_confidence":0.90,"net_tartim_kg":15150,"agirlik_confidence":0.98,"fire_kg":0,"tarih":"12.03.2026","firma":"YEŞIL IZABE GERİ DÖNÜŞÜM NAK","firma_kaynak":"firma_satiri","firma_confidence":0.90,"irsaliye_no":null,"kantar_no":null,"malzemeler":{}}
 
 ŞİMDİ asıl fişe geçelim. Aynı formatta cevap ver."""
 
@@ -272,33 +294,43 @@ def _confidence_hesapla(
     plaka_gecerli: bool,
     plaka_uydurma_var: bool,
     net_tartim: int,
-) -> tuple[float, float, float, float]:
+) -> tuple[float, float, float, float, float]:
     """
-    Hybrid confidence hesapla: Claude AI skoru × 0.60 + Heuristik × 0.40
-    Döndürür: (plaka_conf, agirlik_conf, fis_no_conf, genel_conf)
+    Hybrid confidence hesapla.
 
-    Genel ağırlıklar: plaka %30, ağırlık %35, fiş_no %15, tarih %10, firma %10
+    Döndürür: (plaka_conf, agirlik_conf, fis_no_conf, firma_conf, genel_conf)
+
+    Blend ağırlıkları:
+    - PLAKA: Claude %75 + Heuristik %25
+      (Regex format-geçerliliği gerçek doğruluğu garanti etmez — yanlış okuma
+       da regex'e uyabilir, bu yüzden Claude'a daha çok güven.)
+    - AĞIRLIK, FİŞ NO: Claude %60 + Heuristik %40
+    - FİRMA: Claude %50 + Heuristik %50 (ust_baslik tespiti güçlü sinyal)
+
+    Genel ağırlıklar: plaka %30, ağırlık %30, fiş_no %15, firma %15, tarih %10
     """
     # ── 1. Claude'un verdiği ham skorları al ──────────────────────────
     c_plaka   = float(veri.get("plaka_confidence")   or 0.0)
     c_agirlik = float(veri.get("agirlik_confidence") or 0.0)
     c_fis_no  = float(veri.get("fis_no_confidence")  or 0.0)
+    c_firma   = float(veri.get("firma_confidence")   or 0.0)
     # Sınırla 0-1
     c_plaka   = max(0.0, min(1.0, c_plaka))
     c_agirlik = max(0.0, min(1.0, c_agirlik))
     c_fis_no  = max(0.0, min(1.0, c_fis_no))
+    c_firma   = max(0.0, min(1.0, c_firma))
 
     # ── 2. Heuristik skorlar ──────────────────────────────────────────
 
-    # PLAKA heuristic
+    # PLAKA heuristic — Regex sadece format kontrolü, gerçek doğruluk kontrolü değil
     if plaka_uydurma_var or not temiz_plaka:
         h_plaka = 0.0
     elif plaka_gecerli:
-        # Regex match → yüksek güven
-        h_plaka = 0.95
+        # Regex match → kabul edilebilir ama TAM GÜVEN DEĞİL (yanlış okuma da regex'e uyabilir)
+        h_plaka = 0.70
     else:
         # Plaka var ama format geçersiz → düşük
-        h_plaka = 0.35
+        h_plaka = 0.30
 
     # AĞIRLIK heuristic — tipik hurda TIR: 3000-40000 kg
     if net_tartim <= 0:
@@ -323,36 +355,50 @@ def _confidence_hesapla(
     else:
         h_fis_no = 0.0
 
-    # ── 3. Hybrid birleştir: Claude %60 + Heuristik %40 ─────────────
-    # Özel durum: Claude 0 verdi ama heuristik pozitif → sadece heuristik
-    def blend(claude_s: float, heur_s: float) -> float:
+    # FİRMA heuristic — kaynağa göre belirleyici
+    firma_str    = (veri.get("firma") or "").strip()
+    firma_kaynak = (veri.get("firma_kaynak") or "").strip().lower()
+    if not firma_str:
+        h_firma = 0.0
+    elif firma_kaynak == "ust_baslik":
+        # Üst başlıktan alındı → çok büyük ihtimalle KANTAR firması, tedarikçi değil
+        h_firma = 0.15
+    elif firma_kaynak == "firma_satiri":
+        # Firma: satırından net alındı → yüksek güven
+        h_firma = 0.90
+    else:
+        # Kaynak belirsiz → orta güven
+        h_firma = 0.50
+
+    # ── 3. Hybrid blend ────────────────────────────────────────────────
+    def blend(claude_s: float, heur_s: float, claude_w: float = 0.60) -> float:
         if claude_s <= 0.0:
-            return round(heur_s * 0.8, 3)   # Claude görmedi, heuristik tek kanıt
-        return round(claude_s * 0.60 + heur_s * 0.40, 3)
+            return round(heur_s * 0.8, 3)
+        return round(claude_s * claude_w + heur_s * (1.0 - claude_w), 3)
 
-    plaka_conf   = blend(c_plaka,   h_plaka)
-    agirlik_conf = blend(c_agirlik, h_agirlik)
-    fis_no_conf  = blend(c_fis_no,  h_fis_no)
+    plaka_conf   = blend(c_plaka,   h_plaka,   claude_w=0.75)  # Plaka için Claude daha ağırlıklı
+    agirlik_conf = blend(c_agirlik, h_agirlik, claude_w=0.60)
+    fis_no_conf  = blend(c_fis_no,  h_fis_no,  claude_w=0.60)
+    firma_conf   = blend(c_firma,   h_firma,   claude_w=0.50)  # Firma için heuristik (kaynak) güçlü
 
-    # Tarih ve firma için basit varlık skoru (yalnızca Claude skoru yok)
+    # Tarih için basit varlık skoru
     tarih_conf = 0.85 if veri.get("tarih") else 0.0
-    firma_conf = 0.70 if veri.get("firma") else 0.0
 
     # Genel ağırlıklı ortalama
     genel_conf = round(
         plaka_conf   * 0.30 +
-        agirlik_conf * 0.35 +
+        agirlik_conf * 0.30 +
         fis_no_conf  * 0.15 +
-        tarih_conf   * 0.10 +
-        firma_conf   * 0.10,
+        firma_conf   * 0.15 +
+        tarih_conf   * 0.10,
         3
     )
 
     logger.info(
         f"Confidence → plaka={plaka_conf} ağırlık={agirlik_conf} "
-        f"fiş_no={fis_no_conf} genel={genel_conf}"
+        f"fiş_no={fis_no_conf} firma={firma_conf} ({firma_kaynak}) genel={genel_conf}"
     )
-    return plaka_conf, agirlik_conf, fis_no_conf, genel_conf
+    return plaka_conf, agirlik_conf, fis_no_conf, firma_conf, genel_conf
 
 
 def _claude_fis_oku_once(fotograf_yolu: str, temperature: float = 0.0) -> FisVerisi:
@@ -467,7 +513,7 @@ def _claude_fis_oku_once(fotograf_yolu: str, temperature: float = 0.0) -> FisVer
         plaka_uyari = f"⚠️ Plaka '{temiz_plaka}' geçersiz format — lütfen kontrol edin."
 
     # ── Confidence hesapla ────────────────────────────────────────────
-    plaka_conf, agirlik_conf, fis_no_conf, genel_conf = _confidence_hesapla(
+    plaka_conf, agirlik_conf, fis_no_conf, firma_conf, genel_conf = _confidence_hesapla(
         veri              = veri,
         temiz_plaka       = temiz_plaka,
         plaka_gecerli     = plaka_gecerli,
@@ -475,7 +521,20 @@ def _claude_fis_oku_once(fotograf_yolu: str, temperature: float = 0.0) -> FisVer
         net_tartim        = net_tartim,
     )
 
-    logger.info(f"OCR sonuç — plaka={temiz_plaka} tartım={net_tartim}kg fire={fire}kg net={net_agirlik}kg firma={veri.get('firma')}")
+    # ── Firma uyarısı — üst başlıktan alındıysa kullanıcıyı bilgilendir ──
+    firma_kaynak = (veri.get("firma_kaynak") or "").strip().lower()
+    firma_uyari  = None
+    firma_raw    = (veri.get("firma") or "").strip() or None
+    if firma_raw and firma_kaynak == "ust_baslik":
+        firma_uyari = (
+            f"⚠️ Firma '{firma_raw}' fişin üst başlığından alındı (kantar/fabrika adı olabilir). "
+            "Gerçek tedarikçi firmayı dropdown'dan seçin."
+        )
+
+    logger.info(
+        f"OCR sonuç — plaka={temiz_plaka} tartım={net_tartim}kg fire={fire}kg "
+        f"net={net_agirlik}kg firma={firma_raw} (kaynak={firma_kaynak or 'belirsiz'})"
+    )
 
     return FisVerisi(
         plaka              = temiz_plaka,
@@ -484,15 +543,18 @@ def _claude_fis_oku_once(fotograf_yolu: str, temperature: float = 0.0) -> FisVer
         fire_kg            = fire,
         net_agirlik_kg     = net_agirlik,
         tarih              = veri.get("tarih"),
-        firma              = veri.get("firma"),
+        firma              = firma_raw,
+        firma_kaynak       = firma_kaynak or None,
         irsaliye_no        = veri.get("irsaliye_no"),
         kantar_no          = veri.get("kantar_no"),
         malzemeler         = malzemeler or None,
         claude_ham_cikti   = claude_cevap,
         plaka_uyari        = plaka_uyari,
+        firma_uyari        = firma_uyari,
         plaka_confidence   = plaka_conf,
         agirlik_confidence = agirlik_conf,
         fis_no_confidence  = fis_no_conf,
+        firma_confidence   = firma_conf,
         genel_confidence   = genel_conf,
     )
 

@@ -748,10 +748,13 @@ async def upload_fis(request: Request, background_tasks: BackgroundTasks,
             "ocr_tarih": fis.tarih or "",
             "ocr_firma": fis.firma or "",
             "plaka_uyari": fis.plaka_uyari,
+            "firma_uyari": fis.firma_uyari,
+            "firma_kaynak": fis.firma_kaynak,
             # OCR güven skorları — chat.html renklendirme ve Kaydet kilidi için
             "conf_plaka":   fis.plaka_confidence,
             "conf_agirlik": fis.agirlik_confidence,
             "conf_fis_no":  fis.fis_no_confidence,
+            "conf_firma":   fis.firma_confidence,
             "conf_genel":   fis.genel_confidence,
         })
     except Exception as e:

@@ -142,6 +142,12 @@
           uyari.textContent = data.plaka_uyari;
           hizliWrap.appendChild(uyari);
         }
+        if (data.firma_uyari) {
+          const fuyari = document.createElement('div');
+          fuyari.style.cssText = 'color:#f59e0b;font-size:12px;padding:4px 8px;background:rgba(245,158,11,0.12);border-radius:6px;';
+          fuyari.textContent = data.firma_uyari;
+          hizliWrap.appendChild(fuyari);
+        }
 
         // Confidence özet banner
         if (data.conf_genel != null) {
