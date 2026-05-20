@@ -450,3 +450,11 @@ def alis_faturasi_detay_getir(fatura_id: str, tenant_id=None) -> dict:
         return {}
 
 
+
+
+# ───────────────────────────────────────────────────────────────────
+# ASCII ALIAS — orijinal fonksiyon adi Turkce "i" icerdiginden eski
+# kodda hem alis_faturasi_odeme_ekle (ASCII) hem de alıs_... (Turkce)
+# kullaniliyor. Asagidaki alias geriye uyumluluk icin.
+# ───────────────────────────────────────────────────────────────────
+alis_faturasi_odeme_ekle = alıs_faturasi_odeme_ekle
