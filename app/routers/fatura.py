@@ -245,7 +245,7 @@ async def toplu_fatura_kes_endpoint(request: Request, background_tasks: Backgrou
                     logger.warning(f"İrsaliye silinemedi ({pid}): {e}")
 
         try:
-            await async_cari_cache_yenile()
+            await async_cari_cache_yenile(tenant_id=tenant_id)
         except Exception:
             pass
 
@@ -405,7 +405,7 @@ async def fatura_kes_endpoint(request: Request, background_tasks: BackgroundTask
         ozet += f"\n💵 Toplam: {int(toplam_tutar):,} TL\n🧾 Fatura No: {fatura_id}"
 
         try:
-            await async_cari_cache_yenile()
+            await async_cari_cache_yenile(tenant_id=tenant_id)
         except Exception:
             pass
 
