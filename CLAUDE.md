@@ -50,7 +50,8 @@ BASE_URL                        # keep-alive ping (default: https://profaix-api.
 ## Mimari
 
 ```
-main.py                  FastAPI app + tüm route'lar (~2400 satır) + StaticFiles mount
+main.py                  FastAPI app + middleware + lifespan + router kayıtları (~160 satır)
+                         (endpoint TANIMI YOK — sadece include_router çağrıları)
 app/
   core/
     config.py            Tüm env değişkenleri buradan okunur (tek kaynak)
@@ -60,6 +61,24 @@ app/
     logger.py            Loguru logger (stdout + dosya + errors.log)
   auth.py                JWT üretimi/çözümü, Profaix.com doğrulama,
                          tek-cihaz oturum (ActiveLogin tablosu)
+  routers/               Tüm endpoint tanımları (APIRouter'lara bölünmüş)
+    __init__.py          Boş (paket marker)
+    deps.py              Paylaşılan helper'lar (_islem_log, _usage_kaydet, _billable_kaydet,
+                         _tenant_id_from_user, _guvenli_hata, _admin_kontrol, tr_para, tr_kg,
+                         canonical_chat_session_id, _json_gather, _PANEL_TIKLAMA_EVENT)
+    auth.py              /health, /status, /chat, /login, /api/login, /api/logout, /api/me, /api/session/*
+    chat.py              /api/chat
+    ocr.py               /api/upload, /api/fis-iptal, /api/firma-sec
+    cari.py              /api/cariler, /api/cari-bilgi, /api/cari-olustur, /api/cari-guncelle
+    fatura.py            /api/fatura-detay, /api/cari-faturalar, /api/toplu-fatura-kes,
+                         /api/fatura-kes, /api/fatura-iptal, /api/fatura-guncelle
+    alis_fatura.py       /api/alis-faturasi-*, /api/bekleyen-alis-faturalari, /api/e-fatura-*
+    tahsilat.py          /api/tahsilat, /api/tahsilat-sil, /api/odeme-ekle, /api/cari-odeme,
+                         /api/para-transferi, /api/hesaplar, /api/stok-hareketleri
+    rapor.py             /api/hesap-ozeti, /api/islem-gecmisi, /api/bekleyen-irsaliyeler,
+                         /api/gunluk-ozet, /api/son-fisler, /api/gelir-gider-raporu
+    billing.py           /api/billing/*, /api/kullanim-ozeti
+    admin.py             /admin/* (X-Admin-Token gerekli)
   chatbox/
     llm_handler.py       Claude Haiku ile intent sınıflandırma (tool_use API)
   ocr/
@@ -322,9 +341,24 @@ Frontend bunu kullanarak silme yapar.
 
 ## Sık Yapılan Değişiklikler
 
+### Yeni Endpoint Eklemek (router'a)
+1. Endpoint'in konusunu belirle → uygun router dosyasını seç (`app/routers/X.py`):
+   - Fatura/irsaliye → `fatura.py` (satış) veya `alis_fatura.py` (alış/e-fatura)
+   - Cari yönetimi → `cari.py`
+   - Tahsilat/ödeme → `tahsilat.py`
+   - Rapor → `rapor.py`
+   - Admin → `admin.py`
+   - OCR/upload → `ocr.py`
+   - Auth/session → `auth.py`
+2. Router dosyasında `@router.X("/api/...")` decorator'ı ile fonksiyonu ekle
+3. Gerekli helper'lar → `from app.routers.deps import ...` (zaten import edilmiş)
+4. `main.py`'a dokunma — `include_router` zaten kurulu.
+5. Yeni router dosyası eklersen `main.py`'daki `from app.routers import ...` satırına ekle ve
+   `app.include_router(yeni_router.router)` ekle.
+
 ### Yeni Intent Eklemek
 1. `app/chatbox/llm_handler.py` → `INTENTLER` sözlüğüne ekle, `SISTEM_PROMPTU` güncelle
-2. `main.py` → endpoint yaz (`async def`, `await async_*` kullan)
+2. `app/routers/chat.py` veya ilgili router → endpoint yaz (`async def`, `await async_*` kullan)
 3. `static/js/04-chat.js` → `INTENT_MAP` ve `intentHandlers` objesine JS handler ekle
    (eskiden `chat.html`'de tek dosya idi — şimdi `static/js/04-chat.js` modülünde)
 
@@ -616,3 +650,4 @@ Demo öncesi NOT eklenmiş ama yapılmamış:
 10. **OCR Confidence ≠ Doğruluk Garantisi** — Plaka için `^\d{2}[A-Z]{1,3}\d{2,4}$` regex match yüksek heuristik vermez (yanlış okumalar da regex'e uyabilir, örn `37LK081` yerine `31K081` okundu — ikisi de geçerli format). Bu yüzden plaka için Claude ağırlığı %75'e çıkarıldı, heuristik regex match'i %70 maksimumda tutulur.
 11. **Firma kaynak tespiti** — OCR prompt'u firma'nın `firma_satiri` (Firma: etiketinden) veya `ust_baslik` (en üst başlık) hangisinden geldiğini raporlar. `ust_baslik` durumunda firma KANTAR firmasıdır (KAPTAN DEMİR gibi), tedarikçi DEĞİL — heuristik 0.15 + sarı uyarı gösterilir. Kullanıcı dropdown'dan gerçek tedarikçiyi seçer.
 12. **Low confidence ≠ retry** — Düşük güven OCR'ı yeniden çalıştırma sebebi DEĞİL (fotoğraf kalitesi sorunu, ikinci deneme aynı sonucu verir). Retry sadece JSON parse hatasında yapılır. Düşük güven kullanıcıya gösterilir → manuel düzeltir.
+13. **main.py monolit → APIRouter modülleri** — eski 2683 satırlık tek dosya `main.py` (161 satır, sadece app + middleware + lifespan + include_router) + 10 router dosyası (`app/routers/X.py`) + ortak `deps.py`'a bölündü. Yeni endpoint eklemek için **main.py'a DOKUNMA** — uygun router dosyasına `@router.X` ile ekle. `include_router` zaten kurulu. Eski monolite geri dönme — `main.py.bak` yedek var (`.gitignore`'da `*.bak`).
