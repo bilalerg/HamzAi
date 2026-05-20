@@ -16,3 +16,6 @@ venv/
 # Log dosyaları
 logs/
 *.log
+
+# Yedekler (lokal kalır, push edilmez)
+*.bak

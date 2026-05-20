@@ -122,6 +122,20 @@ def calistir(engine, db):
             "ALTER TABLE tenants ADD COLUMN IF NOT EXISTS ozellikler TEXT"
         ), "ozellikler (tenants)")
 
+        # ── OCR CONFIDENCE KOLONLARI ──────────────────────────────────────
+        _kolon_ekle(conn, text(
+            "ALTER TABLE weigh_tickets ADD COLUMN IF NOT EXISTS ocr_confidence_plaka FLOAT"
+        ), "ocr_confidence_plaka (weigh_tickets)")
+        _kolon_ekle(conn, text(
+            "ALTER TABLE weigh_tickets ADD COLUMN IF NOT EXISTS ocr_confidence_agirlik FLOAT"
+        ), "ocr_confidence_agirlik (weigh_tickets)")
+        _kolon_ekle(conn, text(
+            "ALTER TABLE weigh_tickets ADD COLUMN IF NOT EXISTS ocr_confidence_fis_no FLOAT"
+        ), "ocr_confidence_fis_no (weigh_tickets)")
+        _kolon_ekle(conn, text(
+            "ALTER TABLE weigh_tickets ADD COLUMN IF NOT EXISTS ocr_confidence_genel FLOAT"
+        ), "ocr_confidence_genel (weigh_tickets)")
+
         # ── INDEX MİGRATIONLARI ───────────────────────────────────────
         _index_olustur(conn, text(
             "CREATE INDEX IF NOT EXISTS idx_weigh_tickets_tenant_status "

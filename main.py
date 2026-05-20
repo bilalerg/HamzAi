@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, UploadFile, File, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from app.core.config import (
     validate_config, ENV, ADMIN_TOKEN, ALLOWED_ORIGINS,
     REQUIRE_SIGNED_EMBED_AUTH
@@ -65,6 +66,16 @@ def _chat_html(auth_token: str = "") -> str:
         "window.PROFAIX_BOOTSTRAP_TOKEN = " + _json.dumps(auth_token) + ";"
         "</script>\n"
     )
+    # Bootstrap'i ilk modülden (01-state.js) ÖNCE inject et — state.js
+    # window.PROFAIX_BOOTSTRAP_TOKEN okuyarak AUTH_TOKEN'a aktarıyor.
+    FIRST_MODULE = '<script src="/static/js/01-state.js"></script>'
+    if FIRST_MODULE in html:
+        return html.replace(FIRST_MODULE, bootstrap + FIRST_MODULE, 1)
+    # Fallback: tek dosya chat.js
+    LEGACY_SINGLE = '<script src="/static/js/chat.js"></script>'
+    if LEGACY_SINGLE in html:
+        return html.replace(LEGACY_SINGLE, bootstrap + LEGACY_SINGLE, 1)
+    # Eski monolitik chat.html backward-compat
     return html.replace("<script>", bootstrap + "<script>", 1)
 
 
@@ -149,6 +160,15 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization", "X-Admin-Token"],
 )
+
+# ── STATİK DOSYALAR ────────────────────────────────────────────────
+# /static/css/chat.css, /static/js/chat.js, /static/img/logo.jpg
+_STATIC_DIR = Path(__file__).parent / "static"
+if _STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
+    logger.info(f"📁 Statik dosyalar mount edildi: {_STATIC_DIR}")
+else:
+    logger.warning(f"⚠️ Statik dosya klasörü bulunamadı: {_STATIC_DIR}")
 
 # ── KİMLİK DOĞRULAMA MIDDLEWARE ───────────────────────────────────────────────
 # /api/login, /api/logout ve /api/me herkese açık; diğer tüm /api/* giriş zorunlu.
@@ -728,6 +748,11 @@ async def upload_fis(request: Request, background_tasks: BackgroundTasks,
             "ocr_tarih": fis.tarih or "",
             "ocr_firma": fis.firma or "",
             "plaka_uyari": fis.plaka_uyari,
+            # OCR güven skorları — chat.html renklendirme ve Kaydet kilidi için
+            "conf_plaka":   fis.plaka_confidence,
+            "conf_agirlik": fis.agirlik_confidence,
+            "conf_fis_no":  fis.fis_no_confidence,
+            "conf_genel":   fis.genel_confidence,
         })
     except Exception as e:
         logger.error(f"Upload hatası: {e}")

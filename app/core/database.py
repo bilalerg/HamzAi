@@ -2,7 +2,7 @@
 
 from sqlalchemy import (
     create_engine, Column, String, Integer,
-    DateTime, Text, Enum, ForeignKey, BigInteger
+    DateTime, Text, Enum, ForeignKey, BigInteger, Float
 )
 from sqlalchemy.orm import DeclarativeBase, sessionmaker, relationship
 from sqlalchemy.sql import func
@@ -97,7 +97,11 @@ class WeighTicket(Base):
     fis_tarihi        = Column(DateTime, nullable=True)
     ocr_ham_cikti     = Column(Text, nullable=True)
     tesseract_agirlik = Column(Integer, nullable=True)
-    ocr_uyusma        = Column(Integer, nullable=True)
+    ocr_uyusma             = Column(Integer, nullable=True)
+    ocr_confidence_plaka   = Column(Float, nullable=True)
+    ocr_confidence_agirlik = Column(Float, nullable=True)
+    ocr_confidence_fis_no  = Column(Float, nullable=True)
+    ocr_confidence_genel   = Column(Float, nullable=True)
     status            = Column(Enum(TicketStatus), default=TicketStatus.ALINDI, nullable=False)
     hata_mesaji       = Column(Text, nullable=True)
     vehicle_id        = Column(Integer, ForeignKey("vehicles.id"), nullable=True)

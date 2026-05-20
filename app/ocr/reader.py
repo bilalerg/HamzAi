@@ -24,19 +24,24 @@ OCR_MAX_RETRY  = 2  # Başarısız OCR'da kaç kez tekrar denensin
 
 @dataclass
 class FisVerisi:
-    plaka:            Optional[str]           = None
-    fis_no:           Optional[str]           = None
-    net_agirlik_kg:   Optional[int]           = None
-    net_tartim_kg:    Optional[int]           = None
-    fire_kg:          Optional[int]           = None
-    tarih:            Optional[str]           = None
-    firma:            Optional[str]           = None
-    irsaliye_no:      Optional[str]           = None
-    kantar_no:        Optional[str]           = None
-    malzemeler:       Optional[Dict[str,int]] = None
-    claude_ham_cikti: Optional[str]           = None
-    hata:             Optional[str]           = None
-    plaka_uyari:      Optional[str]           = None
+    plaka:              Optional[str]           = None
+    fis_no:             Optional[str]           = None
+    net_agirlik_kg:     Optional[int]           = None
+    net_tartim_kg:      Optional[int]           = None
+    fire_kg:            Optional[int]           = None
+    tarih:              Optional[str]           = None
+    firma:              Optional[str]           = None
+    irsaliye_no:        Optional[str]           = None
+    kantar_no:          Optional[str]           = None
+    malzemeler:         Optional[Dict[str,int]] = None
+    claude_ham_cikti:   Optional[str]           = None
+    hata:               Optional[str]           = None
+    plaka_uyari:        Optional[str]           = None
+    # OCR güven skorları — 0.0-1.0 arası float
+    plaka_confidence:   Optional[float]         = None
+    agirlik_confidence: Optional[float]         = None
+    fis_no_confidence:  Optional[float]         = None
+    genel_confidence:   Optional[float]         = None
 
 
 OCR_SYSTEM = """Sen Türkiye hurda/geri dönüşüm sektörüne ait kantar fişlerini okuyan profesyonel bir OCR motorusun.
@@ -58,7 +63,13 @@ LAYOUT:
 - ...
 
 JSON:
-{"plaka":...,"fis_no":...,"net_tartim_kg":...,"fire_kg":...,"tarih":...,"firma":...,"irsaliye_no":...,"kantar_no":...,"malzemeler":{}}
+{"plaka":...,"plaka_confidence":0.0-1.0,"fis_no":...,"fis_no_confidence":0.0-1.0,"net_tartim_kg":...,"agirlik_confidence":0.0-1.0,"fire_kg":...,"tarih":...,"firma":...,"irsaliye_no":...,"kantar_no":...,"malzemeler":{}}
+
+Güven skoru (confidence) kuralları:
+- 0.9-1.0: Net, tam okunabilir, formatı doğru
+- 0.7-0.9: Okunabilir ama tek harf/rakam belirsiz olabilir
+- 0.4-0.7: Kısmen okundu, tahmin var
+- 0.0-0.4: Çok belirsiz, büyük ihtimalle hatalı
 
 UYDURMA YASAĞI:
 - Tipik plaka örnekleri ("34BEG354", "06FH8714") veya tipik fiş no'lar ("1234567", "15150") UYDURMA
@@ -126,7 +137,7 @@ LAYOUT:
 - Mal Cinsi: YERLİ HURDA
 
 JSON:
-{"plaka":"37LK081","fis_no":"130002187968","net_tartim_kg":15150,"fire_kg":0,"tarih":"12.03.2026","firma":"YEŞIL IZABE GERİ DÖNÜŞÜM NAK","irsaliye_no":null,"kantar_no":null,"malzemeler":{}}
+{"plaka":"37LK081","plaka_confidence":0.95,"fis_no":"130002187968","fis_no_confidence":0.90,"net_tartim_kg":15150,"agirlik_confidence":0.98,"fire_kg":0,"tarih":"12.03.2026","firma":"YEŞIL IZABE GERİ DÖNÜŞÜM NAK","irsaliye_no":null,"kantar_no":null,"malzemeler":{}}
 
 ŞİMDİ asıl fişe geçelim. Aynı formatta cevap ver."""
 
@@ -255,6 +266,95 @@ def _parse_kg(deger) -> int:
         return 0
 
 
+def _confidence_hesapla(
+    veri: dict,
+    temiz_plaka: Optional[str],
+    plaka_gecerli: bool,
+    plaka_uydurma_var: bool,
+    net_tartim: int,
+) -> tuple[float, float, float, float]:
+    """
+    Hybrid confidence hesapla: Claude AI skoru × 0.60 + Heuristik × 0.40
+    Döndürür: (plaka_conf, agirlik_conf, fis_no_conf, genel_conf)
+
+    Genel ağırlıklar: plaka %30, ağırlık %35, fiş_no %15, tarih %10, firma %10
+    """
+    # ── 1. Claude'un verdiği ham skorları al ──────────────────────────
+    c_plaka   = float(veri.get("plaka_confidence")   or 0.0)
+    c_agirlik = float(veri.get("agirlik_confidence") or 0.0)
+    c_fis_no  = float(veri.get("fis_no_confidence")  or 0.0)
+    # Sınırla 0-1
+    c_plaka   = max(0.0, min(1.0, c_plaka))
+    c_agirlik = max(0.0, min(1.0, c_agirlik))
+    c_fis_no  = max(0.0, min(1.0, c_fis_no))
+
+    # ── 2. Heuristik skorlar ──────────────────────────────────────────
+
+    # PLAKA heuristic
+    if plaka_uydurma_var or not temiz_plaka:
+        h_plaka = 0.0
+    elif plaka_gecerli:
+        # Regex match → yüksek güven
+        h_plaka = 0.95
+    else:
+        # Plaka var ama format geçersiz → düşük
+        h_plaka = 0.35
+
+    # AĞIRLIK heuristic — tipik hurda TIR: 3000-40000 kg
+    if net_tartim <= 0:
+        h_agirlik = 0.0
+    elif 3000 <= net_tartim <= 40000:
+        h_agirlik = 1.0
+    elif 1000 <= net_tartim < 3000 or 40000 < net_tartim <= 60000:
+        # Küçük araç veya büyük yük — mümkün ama sınırda
+        h_agirlik = 0.65
+    else:
+        # Aşırı düşük/yüksek → büyük ihtimalle yanlış okuma
+        h_agirlik = 0.20
+
+    # FİŞ NO heuristic — en az 4 karakter
+    fis_no_str = str(veri.get("fis_no") or "")
+    if len(fis_no_str) >= 8:
+        h_fis_no = 0.95
+    elif len(fis_no_str) >= 4:
+        h_fis_no = 0.75
+    elif len(fis_no_str) >= 1:
+        h_fis_no = 0.35
+    else:
+        h_fis_no = 0.0
+
+    # ── 3. Hybrid birleştir: Claude %60 + Heuristik %40 ─────────────
+    # Özel durum: Claude 0 verdi ama heuristik pozitif → sadece heuristik
+    def blend(claude_s: float, heur_s: float) -> float:
+        if claude_s <= 0.0:
+            return round(heur_s * 0.8, 3)   # Claude görmedi, heuristik tek kanıt
+        return round(claude_s * 0.60 + heur_s * 0.40, 3)
+
+    plaka_conf   = blend(c_plaka,   h_plaka)
+    agirlik_conf = blend(c_agirlik, h_agirlik)
+    fis_no_conf  = blend(c_fis_no,  h_fis_no)
+
+    # Tarih ve firma için basit varlık skoru (yalnızca Claude skoru yok)
+    tarih_conf = 0.85 if veri.get("tarih") else 0.0
+    firma_conf = 0.70 if veri.get("firma") else 0.0
+
+    # Genel ağırlıklı ortalama
+    genel_conf = round(
+        plaka_conf   * 0.30 +
+        agirlik_conf * 0.35 +
+        fis_no_conf  * 0.15 +
+        tarih_conf   * 0.10 +
+        firma_conf   * 0.10,
+        3
+    )
+
+    logger.info(
+        f"Confidence → plaka={plaka_conf} ağırlık={agirlik_conf} "
+        f"fiş_no={fis_no_conf} genel={genel_conf}"
+    )
+    return plaka_conf, agirlik_conf, fis_no_conf, genel_conf
+
+
 def _claude_fis_oku_once(fotograf_yolu: str, temperature: float = 0.0) -> FisVerisi:
     """Tek OCR denemesi."""
     foto_base64, media_type, foto_meta = _fotograf_to_base64(fotograf_yolu)
@@ -366,21 +466,34 @@ def _claude_fis_oku_once(fotograf_yolu: str, temperature: float = 0.0) -> FisVer
     elif temiz_plaka and not plaka_gecerli:
         plaka_uyari = f"⚠️ Plaka '{temiz_plaka}' geçersiz format — lütfen kontrol edin."
 
+    # ── Confidence hesapla ────────────────────────────────────────────
+    plaka_conf, agirlik_conf, fis_no_conf, genel_conf = _confidence_hesapla(
+        veri              = veri,
+        temiz_plaka       = temiz_plaka,
+        plaka_gecerli     = plaka_gecerli,
+        plaka_uydurma_var = bool(plaka_uydurma_uyari),
+        net_tartim        = net_tartim,
+    )
+
     logger.info(f"OCR sonuç — plaka={temiz_plaka} tartım={net_tartim}kg fire={fire}kg net={net_agirlik}kg firma={veri.get('firma')}")
 
     return FisVerisi(
-        plaka            = temiz_plaka,
-        fis_no           = str(veri.get("fis_no")) if veri.get("fis_no") else None,
-        net_tartim_kg    = net_tartim,
-        fire_kg          = fire,
-        net_agirlik_kg   = net_agirlik,
-        tarih            = veri.get("tarih"),
-        firma            = veri.get("firma"),
-        irsaliye_no      = veri.get("irsaliye_no"),
-        kantar_no        = veri.get("kantar_no"),
-        malzemeler       = malzemeler or None,
-        claude_ham_cikti = claude_cevap,
-        plaka_uyari      = plaka_uyari
+        plaka              = temiz_plaka,
+        fis_no             = str(veri.get("fis_no")) if veri.get("fis_no") else None,
+        net_tartim_kg      = net_tartim,
+        fire_kg            = fire,
+        net_agirlik_kg     = net_agirlik,
+        tarih              = veri.get("tarih"),
+        firma              = veri.get("firma"),
+        irsaliye_no        = veri.get("irsaliye_no"),
+        kantar_no          = veri.get("kantar_no"),
+        malzemeler         = malzemeler or None,
+        claude_ham_cikti   = claude_cevap,
+        plaka_uyari        = plaka_uyari,
+        plaka_confidence   = plaka_conf,
+        agirlik_confidence = agirlik_conf,
+        fis_no_confidence  = fis_no_conf,
+        genel_confidence   = genel_conf,
     )
 
 
@@ -450,19 +563,23 @@ def fis_db_kaydet(fis: FisVerisi, foto_path: str, db) -> object:
                 continue
 
     ticket = WeighTicket(
-        foto_path     = foto_path,
-        plaka         = fis.plaka,
-        fis_no        = fis.fis_no,
-        agirlik_kg    = fis.net_agirlik_kg,
-        net_tartim_kg = fis.net_tartim_kg,
-        fire_kg       = fis.fire_kg or 0,
-        firma         = fis.firma,
-        fis_tarihi    = fis_tarihi,
-        malzeme       = "hurda",
-        malzemeler    = json.dumps(fis.malzemeler, ensure_ascii=False) if fis.malzemeler else None,
-        ocr_ham_cikti = fis.claude_ham_cikti,
-        status        = TicketStatus.OCR_TAMAMLANDI if not fis.hata else TicketStatus.HATA,
-        hata_mesaji   = fis.hata
+        foto_path              = foto_path,
+        plaka                  = fis.plaka,
+        fis_no                 = fis.fis_no,
+        agirlik_kg             = fis.net_agirlik_kg,
+        net_tartim_kg          = fis.net_tartim_kg,
+        fire_kg                = fis.fire_kg or 0,
+        firma                  = fis.firma,
+        fis_tarihi             = fis_tarihi,
+        malzeme                = "hurda",
+        malzemeler             = json.dumps(fis.malzemeler, ensure_ascii=False) if fis.malzemeler else None,
+        ocr_ham_cikti          = fis.claude_ham_cikti,
+        ocr_confidence_plaka   = fis.plaka_confidence,
+        ocr_confidence_agirlik = fis.agirlik_confidence,
+        ocr_confidence_fis_no  = fis.fis_no_confidence,
+        ocr_confidence_genel   = fis.genel_confidence,
+        status                 = TicketStatus.OCR_TAMAMLANDI if not fis.hata else TicketStatus.HATA,
+        hata_mesaji            = fis.hata
     )
 
     db.add(ticket)
