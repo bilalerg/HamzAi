@@ -18,7 +18,7 @@ _client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 import os as _os
 # OCR modeli — env'den override edilebilir (örn. claude-opus-4-...)
 OCR_MODEL      = _os.getenv("OCR_MODEL", "claude-sonnet-4-20250514")
-OCR_MAX_TOKENS = 2048  # chain-of-thought için artırıldı
+OCR_MAX_TOKENS = 3072  # chain-of-thought + çok kalemli layout için artırıldı
 OCR_MAX_RETRY  = 2  # Başarısız OCR'da kaç kez tekrar denensin
 
 
@@ -49,6 +49,8 @@ class FisVerisi:
 
 OCR_SYSTEM = """Sen Türkiye hurda/geri dönüşüm sektörüne ait kantar fişlerini okuyan profesyonel bir OCR motorusun.
 
+Sahada BİRÇOK FARKLI kantar yazılımı var (Kaptan Demir, Tosçelik/Tosyalı, İçdaş, Kroman, Samsun Makine...). Etiketler firmadan firmaya değişir ama hepsinde şu temel bilgiler bulunur: plaka, tartım ağırlıkları, firma, tarih, fiş no, malzeme. Etikete değil, ANLAMA odaklan.
+
 ÇOK ÖNEMLİ: 2 AŞAMALI ÇIKTI VERECEKSİN.
 
 ═══ AŞAMA 1 — TASVİR ═══
@@ -61,12 +63,16 @@ Aşama 1'de görmediğin değeri ASLA JSON'a koyma — null bırak.
 
 ÇIKTI FORMATI (KESİN):
 LAYOUT:
-- [üst başlık]: [değer]
 - [etiket]: [değer]
 - ...
 
 JSON:
 {"plaka":...,"plaka_confidence":0.0-1.0,"fis_no":...,"fis_no_confidence":0.0-1.0,"net_tartim_kg":...,"agirlik_confidence":0.0-1.0,"fire_kg":...,"tarih":...,"firma":...,"firma_kaynak":"firma_satiri"|"ust_baslik","firma_confidence":0.0-1.0,"irsaliye_no":...,"kantar_no":...,"malzemeler":{}}
+
+⚠️ SAYI FORMATI — EN SIK YAPILAN HATA:
+Türk fişlerinde nokta/virgül BİNLİK AYRAÇTIR, ondalık DEĞİL.
+"17.550" = 17550 kg.  "48.540" = 48540 kg.  "1.000" = 1000 kg.  "32.900" = 32900 kg.
+JSON'a TÜM ağırlıkları AYRAÇSIZ TAM SAYI yaz (17550 gibi). Hurda kg değerleri DAİMA tam sayıdır, asla 17.55 yazma.
 
 Güven skoru (confidence) kuralları:
 - 0.9-1.0: Net, tam okunabilir, formatı doğru
@@ -77,144 +83,169 @@ Güven skoru (confidence) kuralları:
 ⚠️ DÜRÜSTLÜK KURALI — confidence skorunu ŞİŞİRME:
 - Tek bir karakter belirsizse confidence 0.7-0.85 arasına düşür
 - Sadece çok net okuduğun alanlara 0.9+ ver
-- Plaka okurken "7L" ile "1" karıştırma riskine dikkat et — şüphe varsa 0.5-0.7 ver
+- Plaka okurken sık karışan karakterlere dikkat: "7↔1", "L↔I", "B↔8", "O↔0", "Z↔2", "S↔5", "G↔6". Şüphe varsa 0.5-0.7 ver.
 
 firma_kaynak ALANI (zorunlu — firma null değilse):
-- "firma_satiri": Eğer firma değerini "Firma:" etiketli satırdan aldıysan
-- "ust_baslik": Eğer firma değerini fişin EN ÜSTÜNDEKİ büyük başlıktan aldın (çünkü Firma: satırı yoktu)
-  → Bu durumda firma_confidence MUTLAKA 0.3 veya altına düşür (üst başlık genelde KANTAR firmasıdır, tedarikçi DEĞİL)
+- "firma_satiri": Eğer firma değerini "Firma" / "Firma Adı" etiketli satırdan aldıysan
+- "ust_baslik": Eğer Firma satırı YOKTU ve firma değerini fişin EN ÜSTÜNDEKİ büyük başlıktan aldın
+  → Bu durumda firma_confidence MUTLAKA 0.3 veya altına düşür (üst başlık genelde KANTAR/fabrika firmasıdır, tedarikçi DEĞİL)
 
 UYDURMA YASAĞI:
 - Tipik plaka örnekleri ("34BEG354", "06FH8714") veya tipik fiş no'lar ("1234567", "15150") UYDURMA
 - Önceki fişlerden hiçbir bilgi HATIRLAMA — her görsel bağımsız
 - Aşama 1'de tasvir etmediğin alanı Aşama 2'de SADECE null yapabilirsin
+- El yazısı notları (örn "kot 06") ve imzaları YOK SAY
 """
 
-OCR_PROMPT = """Bu fişi 2 aşamada oku.
+OCR_PROMPT = """Bu kantar fişini 2 aşamada oku.
 
-⚠️ KRİTİK LAYOUT UYARISI:
-Türk kantar fişleri tipik olarak SOL kolonda ETİKET (örn: "Plaka :", "Firma :")
-ve SAĞ kolonda DEĞER (örn: "37 LK 081", "YEŞIL IZABE") içerir.
-Etiket ve değer arasında 5-15 karakter BOŞLUK olabilir — aldanma, aynı satırdaki
-sağ taraftaki yazıyı OKU. Etiket soluk görünse bile sağdaki değer okunaklıdır.
+⚠️ LAYOUT: Türk kantar fişleri SOL kolonda ETİKET, SAĞ kolonda DEĞER içerir.
+Etiket ile değer arası 5-15 boşluk olabilir — aldanma, sağdaki yazıyı OKU.
+Etiket soluk olsa bile sağdaki değer okunaklıdır. Bazı fişler 2 BLOKLUDUR
+(sol blok + sağ blok yan yana) — ikisini de tara.
 
 ═══ AŞAMA 1 — LAYOUT TASVİRİ ═══
-Aşağıdaki sırada GÖZLEM YAP — her satır için sol kolon (etiket) + sağ kolon (değer)
-yapısını dikkate al. Eğer etiket soluk ama sağ tarafta yazı varsa o yazıyı oku:
+Sırayla GÖZLEM YAP. Görmediğini yazma.
 
-a) ÜST BAŞLIK: Fişin en tepesinde hangi şirket adı yazıyor? (Bu KANTARIN/alıcı fabrikanın adıdır)
-b) "Firma :" SATIRI: Bu satırın SAĞ TARAFINDA ne yazıyor? (Genelde fişin üst-orta kısmında)
-   Örnek: "Firma : YEŞIL IZABE GERİ DÖNÜŞÜM NAK" → değer="YEŞIL IZABE GERİ DÖNÜŞÜM NAK"
-c) "Nakliye Firması:" SATIRI: sağ tarafında ne yazıyor? (firma DEĞİL, sadece kaydet)
-d) "Ad Soyad:" SATIRI: sağ tarafında ne yazıyor? (firma DEĞİL — şoför)
-e) PLAKA SATIRI: "Araç-Dorse Plaka :" veya "Plaka :" etiketinin SAĞ TARAFINDA ne yazıyor?
-   Örnek: "Araç - Dorse Plaka : 37 LK 081 - 34 BSE 559" → değer="37 LK 081 - 34 BSE 559"
-   ⚠️ Plaka tipik biçim: 2 rakam + 1-3 harf + 2-4 rakam (örn: 37LK081, 06FH8714)
-f) BRÜT değeri: kaç kg?
-g) DARA değeri: kaç kg?
-h) NET değeri: kaç kg? (fişte NET satırı varsa o değer, yoksa BRÜT-DARA hesabı)
-i) Tarih: "Geliş Tarihi", "Tarih" alanı? (GG.AA.YYYY)
-j) ⚠️ FİŞ NO — DİKKATLİ BAK ⚠️
-   Fişin EN ALT KISMINDA mutlaka küçük puntolu bir kimlik numarası var. Etiketler:
-   "Id.", "Id:", "Fiş No", "No", "Fiş ID", "Belge No" olabilir veya bazen sadece "Id.130002187968"
-   gibi nokta sonra rakamlar şeklinde yazılır. Tipik 8-12 haneli rakam.
-   Yerleri: imzanın hemen üstü/altı, sol veya sağ alt köşe, bazen "Operatör:" satırının üst/altında.
-   Eğer "Id." veya benzeri etiketle başlayan bir RAKAM dizisi varsa BU SENİN fis_no'NDUR.
-   Örnek: "Id.130002187968" → fis_no="130002187968"
-   ❌ Fiş üzerinde gözünle göremiyorsan null bırak — UYDURMA
-k) Mal Cinsi: ne yazıyor?
+a) ÜST BAŞLIK: En tepedeki şirket adı (KANTARIN/alıcı fabrikanın adı — örn
+   KAPTAN DEMİR, TOSÇELİK/TOSYALI, İÇDAŞ, KROMAN, SAMSUN MAKİNE).
 
-⚠️ Bir alan için "görülmüyor" yazma hakkın var, ama önce DİKKATLİCE bak.
-Sol kolon etiketi flu olsa bile sağ kolondaki değer çoğu zaman okunaklıdır.
+b) FİRMA / TEDARİKÇİ: "Firma", "Firma Adı", "FİRMA" etiketinin SAĞINDA ne yazıyor?
+   Örnek: "Firma : YEŞIL IZABE GERİ DÖNÜŞÜM NAK" → değer alınır.
+   ⚠️ Bu satır BOŞSA firma=null bırak. "Geldiği Yer", "Nakliye Firması",
+   "Ad Soyad", "Adres" satırları firma DEĞİLDİR — bunları firma sanma.
+
+c) PLAKA: "Plaka", "Araç Plakası", "Plaka-1", "Araç-Dorse Plaka" etiketinin
+   sağındaki İLK plaka. Birden çok plaka varsa (araç-dorse) İLKİNİ al.
+   Tipik biçim: 2 rakam + 1-3 harf + 2-4 rakam (37LK081, 06FH8714, 27Z3024, 01BER242).
+
+d) TARTIM AĞIRLIKLARI — kantar yazılımına göre etiketler DEĞİŞİR:
+   • BRÜT (dolu araç): "BRÜT", "BÜRÜT", "Dolu Tartım", "Son Tartım", "2.Tartı"
+   • DARA  (boş araç): "DARA", "Boş Tartım", "İlk Tartım", "1.Tartı"
+   • Bazı fişlerde "Giriş Ağırlığı" / "Çıkış Ağırlığı" — biri dolu biri boştur.
+   • NET: "NET", "Net Tartım", "Net Ağırlık"
+   ⚠️ Hangi tartımın brüt hangisinin dara olduğu fişe göre TERS olabilir
+   (araç dolu mu boş mu geldi belli olmaz). GÜVENİLİR KURAL:
+   NET = iki tartımın FARKININ MUTLAK DEĞERİ. Fişte yazılı NET değeri varsa onu
+   kullan; yoksa |büyük tartım − küçük tartım|. Her iki tartımı ve NET'i ayrı yaz.
+
+e) FİRE / TENZİL: "Fire", "Tenzil", "6-) Fire" satırı. Varsa kg, yoksa 0.
+   (Bu, NET'ten DÜŞÜLECEK kayıptır — malzeme DEĞİLDİR.)
+
+f) MALZEME KALEMLERİ — ÇOK ÖNEMLİ:
+   • TEK satır malzeme (örn "Mal Cinsi: YERLİ HURDA") → malzemeler={}.
+   • KALEM LİSTESİ varsa → 0'dan BÜYÜK her kalemi ayrı yaz:
+     - Tosçelik tipi: "1-) DKP", "2-) Topsis", "3-) Bonus", "4-) 1.Grup",
+       "5-) Karma" → karşılarındaki kg.
+     - Kroman tipi tablo: "Hurda Tipi | Miktar | Tenz.Miktar" → her satırın adı +
+       "Miktar" kolonu (Tenz.Miktar kolonunu ALMA).
+   ⚠️ "Fire" / "Tenzil" satırını malzeme listesine KOYMA (o e şıkkında).
+   ⚠️ Kalem kg'ları zaten fire/tenzil düşülmüş NET değerlerdir; toplamları
+   (NET − Fire) değerine yaklaşık eşit olmalı.
+
+g) FİŞ NO: "Fiş No", "FİŞ NO", "Id.", "Id:", "Belge No", "Yükleme/Boşaltma Fiş No"
+   etiketli RAKAM dizisi (genelde 8-12 hane). Örn "Id.130002187958" → 130002187958.
+   ⚠️ "İrsaliye No" ile KARIŞTIRMA. Fiş no yerine TARİH yazma. Göremiyorsan null.
+
+h) İRSALİYE NO: "İrsaliye No" satırı. Tarih gibi görünüyorsa veya boşsa null.
+
+i) TARİH: "Tarih", "Giriş Tarihi", "Geliş Tarihi" (GG.AA.YYYY).
 
 ═══ AŞAMA 2 — JSON ═══
-Yukarıdaki AŞAMA 1 gözleminize göre JSON'u doldur.
-
 Kurallar:
-- plaka: Aşama 1-e'de İLK plakayı al, boşluk/tire sil, büyük harf yap → "37LK081"
-  ⚠️ Plaka okurken "7" ile "1", "L" ile "I" gibi karakter karışıklığı çok yaygındır.
-  Eğer plakada şüpheli karakter varsa confidence 0.5-0.7 arasına düşür, 0.9+ verme.
-- fis_no: Aşama 1-j'deki numara. Gözünle gördüysen yaz, görmediysen null + confidence=0
-- firma + firma_kaynak: Aşama 1-b'deki Firma: SATIRINDAN aldıysan → firma_kaynak="firma_satiri" (confidence 0.85+)
-  Firma: satırı yoktuysa → Aşama 1-a'daki üst başlık → firma_kaynak="ust_baslik" (confidence MUTLAKA ≤0.3)
-  ⚠️ Nakliye Firması (1-c) veya Ad Soyad (1-d) ASLA firma değildir
-- net_tartim_kg: Aşama 1-h'deki NET değer (tam sayı, virgül/nokta yok)
-- fire_kg: "Fire" veya "Tenzil" satırı yoksa 0
-- tarih: Aşama 1-i'den, GG.AA.YYYY formatı
-- malzemeler: Mal Cinsi tek satırsa {}, çoklu liste varsa {"isim": kg, ...}
+- plaka: İlk plaka, boşluk/tire silinmiş, BÜYÜK harf → "37LK081".
+  Şüpheli karakter varsa plaka_confidence ≤0.7.
+- net_tartim_kg: Fişteki NET (yoksa iki tartımın farkı). AYRAÇSIZ tam sayı.
+- fire_kg: Fire/Tenzil toplamı (yoksa 0). AYRAÇSIZ tam sayı.
+- malzemeler: {ad: kg} — her kalem AYRAÇSIZ tam sayı. Tek malzemeyse {}.
+- fis_no: g şıkkı (string). Göremiyorsan null + fis_no_confidence=0.
+- firma + firma_kaynak: b'deki Firma satırından → "firma_satiri" (conf 0.85+).
+  Firma satırı boşsa firma=null. Sadece üst başlık varsa firma=üst başlık +
+  firma_kaynak="ust_baslik" + firma_confidence ≤0.3.
+- tarih: GG.AA.YYYY. irsaliye_no: h şıkkı (yoksa null).
 
-ÇIKTI ÖRNEĞİ (yapın bu formatta, başka şey eklemeyin):
-
+ÇIKTI ÖRNEĞİ (çok kalemli Tosçelik — kalemler toplamı = NET − Fire = 17050):
 LAYOUT:
-- ÜST BAŞLIK: KAPTAN DEMİR ÇELİK END.A.Ş
-- Firma: YEŞIL IZABE GERİ DÖNÜŞÜM NAK
-- Nakliye Firması: İMAJ DENIZ
-- Ad Soyad: MEHMET ÖZDEMİR
-- Plaka: 37 LK 081 - 34 BSE 559
-- BRÜT: 33000 Kg
-- DARA: 17850 Kg
-- NET: 15150 Kg
-- Tarih: 12.03.2026
-- Id.: 130002187968
-- Mal Cinsi: YERLİ HURDA
+- ÜST BAŞLIK: TOSÇELİK / TOSYALI KANTAR
+- Yükleme/Boşaltma Fiş No: 20000117852
+- Araç Plakası: 27Z3024
+- Firma Adı: UHT UFUK HURDA TOPLAMA GERİ DÖNÜŞÜM SAN. TİC. LTD. ŞTİ.
+- İrsaliye No: TM00034122
+- Malzeme: 4-) 1.Grup: 1.000 | 5-) Karma: 16.050 | 6-) Fire: 500
+- İlk Tartım: 15.350 | Son Tartım: 32.900 | Net Tartım: 17.550
+- Tarih: 02.04.2026
 
 JSON:
-{"plaka":"37LK081","plaka_confidence":0.92,"fis_no":"130002187968","fis_no_confidence":0.90,"net_tartim_kg":15150,"agirlik_confidence":0.98,"fire_kg":0,"tarih":"12.03.2026","firma":"YEŞIL IZABE GERİ DÖNÜŞÜM NAK","firma_kaynak":"firma_satiri","firma_confidence":0.90,"irsaliye_no":null,"kantar_no":null,"malzemeler":{}}
+{"plaka":"27Z3024","plaka_confidence":0.88,"fis_no":"20000117852","fis_no_confidence":0.92,"net_tartim_kg":17550,"agirlik_confidence":0.95,"fire_kg":500,"tarih":"02.04.2026","firma":"UHT UFUK HURDA TOPLAMA GERİ DÖNÜŞÜM SAN. TİC. LTD. ŞTİ.","firma_kaynak":"firma_satiri","firma_confidence":0.9,"irsaliye_no":"TM00034122","kantar_no":"103-OSMANIYE","malzemeler":{"1.Grup":1000,"Karma":16050}}
 
 ŞİMDİ asıl fişe geçelim. Aynı formatta cevap ver."""
 
 
 def _fotograf_to_base64(fotograf_yolu: str) -> tuple[str, str, dict]:
     """
-    Fotoğrafı base64'e çevirir + Claude'un daha iyi okuyabilmesi için
-    pre-processing uygular:
-      1. Küçük fotoğrafları upscale (LANCZOS)
-      2. UNSHARP MASK ile keskinleştirme
-      3. Kontrast +25%
-      4. Sharpness +50%
+    Fotoğrafı base64'e çevirir + ADAPTİF ön-işleme uygular.
+
+    Tek-tip agresif işleme her fişe uymaz:
+      • Küçük/düşük çözünürlük foto → upscale + AGRESİF keskinleştirme/kontrast
+      • Zaten büyük & temiz görsel (e-posta ekran görüntüsü, yüksek-çöz. foto)
+        → HAFİF işle (agresif sharpen/kontrast pristine görseli BOZAR, halüsinasyon artar)
+      • Karanlık foto (araç içi, loş ortam) → ölçülü parlaklık artışı
     """
     meta = {"width": 0, "height": 0, "kb": 0, "dusuk_kalite": False}
     try:
-        from PIL import Image, ImageEnhance, ImageFilter
+        from PIL import Image, ImageEnhance, ImageFilter, ImageStat
         import io as _io
         with Image.open(fotograf_yolu) as img:
             if img.mode in ("RGBA", "P"):
                 img = img.convert("RGB")
             orig_w, orig_h = img.size
-            # 1. Çok küçük gelen fotoğrafları AGRESİF upscale et — Claude vision
-            #    yüksek çözünürlükte etiketli alanları çok daha iyi okuyor.
-            #    Hedef: en az 2200px (uzun kenar)
-            if max(orig_w, orig_h) < 2000:
-                oran = 2400 / max(orig_w, orig_h)
-                yeni_boyut = (int(orig_w * oran), int(orig_h * oran))
-                img = img.resize(yeni_boyut, Image.LANCZOS)
+            buyuk_kenar = max(orig_w, orig_h)
+
+            # Ortalama parlaklık (0-255) — karanlık tespiti için, İŞLEMEDEN ÖNCE ölç
+            try:
+                ort_parlaklik = ImageStat.Stat(img.convert("L")).mean[0]
+            except Exception:
+                ort_parlaklik = 128.0
+
+            # Boyut: küçükse 2400'e upscale, çok büyükse 2400'e indir
+            kucuk = buyuk_kenar < 1600
+            if kucuk:
+                oran = 2400 / buyuk_kenar
+                img = img.resize((int(orig_w * oran), int(orig_h * oran)), Image.LANCZOS)
                 logger.info(f"Fotoğraf upscale edildi: {orig_w}x{orig_h} → {img.size}")
-            else:
+            elif buyuk_kenar > 2400:
                 img.thumbnail((2400, 2400), Image.LANCZOS)
 
-            # 2. Unsharp mask — daha agresif (etiket/değer ayrımı için)
+            # İşleme yoğunluğu — küçük foto agresif, büyük/temiz foto hafif
+            if kucuk:
+                unsharp            = ImageFilter.UnsharpMask(radius=2, percent=170, threshold=2)
+                kontrast, keskinlik = 1.40, 1.8
+            else:
+                unsharp            = ImageFilter.UnsharpMask(radius=1.5, percent=110, threshold=3)
+                kontrast, keskinlik = 1.12, 1.25
+
             try:
-                img = img.filter(ImageFilter.UnsharpMask(radius=2, percent=180, threshold=2))
+                img = img.filter(unsharp)
             except Exception as fe:
                 logger.warning(f"UnsharpMask atlandı: {fe}")
-
-            # 3. Kontrast +50% (etiket görünürlüğü için)
             try:
-                img = ImageEnhance.Contrast(img).enhance(1.5)
+                img = ImageEnhance.Contrast(img).enhance(kontrast)
             except Exception as ce:
                 logger.warning(f"Contrast enhance atlandı: {ce}")
-
-            # 4. Sharpness +100%
             try:
-                img = ImageEnhance.Sharpness(img).enhance(2.0)
+                img = ImageEnhance.Sharpness(img).enhance(keskinlik)
             except Exception as se:
                 logger.warning(f"Sharpness enhance atlandı: {se}")
 
-            # 5. Brightness küçük artış — soluk metinler için
-            try:
-                img = ImageEnhance.Brightness(img).enhance(1.05)
-            except Exception as be:
-                logger.warning(f"Brightness enhance atlandı: {be}")
+            # Karanlık foto → ölçülü parlaklık artışı (yalnız gerçekten loşsa, hedef ~115).
+            # Aydınlık/temiz görsele DOKUNMA (yazıyı yıkmamak için cap 1.4).
+            parlaklik_faktor = 1.0
+            if ort_parlaklik < 85:
+                parlaklik_faktor = min(1.4, max(1.0, 115.0 / max(1.0, ort_parlaklik)))
+                try:
+                    img = ImageEnhance.Brightness(img).enhance(parlaklik_faktor)
+                except Exception as be:
+                    logger.warning(f"Brightness enhance atlandı: {be}")
 
             buffer = _io.BytesIO()
             img.save(buffer, format="JPEG", quality=95)
@@ -222,12 +253,12 @@ def _fotograf_to_base64(fotograf_yolu: str) -> tuple[str, str, dict]:
             meta["width"]  = img.size[0]
             meta["height"] = img.size[1]
             meta["kb"]     = len(data) // 1024
-            if max(orig_w, orig_h) < 800 or meta["kb"] < 60:
+            if buyuk_kenar < 800 or meta["kb"] < 60:
                 meta["dusuk_kalite"] = True
             logger.info(
-                f"Fotoğraf hazırlandı: orig=({orig_w}x{orig_h}) "
-                f"final={img.size} | {meta['kb']}KB base64 | "
-                f"preprocessing=unsharp+contrast+sharpness | "
+                f"Fotoğraf hazırlandı: orig=({orig_w}x{orig_h}) final={img.size} | "
+                f"{meta['kb']}KB | mod={'agresif' if kucuk else 'hafif'} | "
+                f"parlaklık={ort_parlaklik:.0f}→×{parlaklik_faktor:.2f} | "
                 f"düşük_kalite={meta['dusuk_kalite']}"
             )
         return data, "image/jpeg", meta
@@ -274,18 +305,31 @@ def _layout_kisminı_cikar(metin: str) -> str:
 
 
 def _parse_kg(deger) -> int:
+    """
+    Ağırlık değerini tam sayı kg'a çevirir.
+
+    Türk fişlerinde nokta/virgül BİNLİK AYRAÇTIR ("17.550" = 17550). Hurda kg
+    değerleri daima tam sayıdır. Prompt artık ayraçsız tam sayı istiyor ama
+    model "17.550" (string) veya 17.55 (float, yanlış ondalık) gönderebilir —
+    her ikisini de güvenle düzeltiriz.
+    """
     if deger is None:
         return 0
-    try:
-        f = float(str(deger).replace(",", "."))
-        if f != int(f) and f < 1000:
-            sonuc = int(round(f * 1000))
-            logger.warning(f"⚠️ Ondalıklı kg düzeltildi: {deger} → {sonuc}")
-            return sonuc
-        return int(f)
-    except (ValueError, TypeError):
+    # Float, ondalıklı ve < 1000 → büyük ihtimalle binlik ayraç ondalık sanıldı
+    # (örn 17.550 → 17.55). ×1000 ile düzelt.
+    if isinstance(deger, float) and deger != int(deger) and abs(deger) < 1000:
+        sonuc = int(round(deger * 1000))
+        logger.warning(f"⚠️ Ondalık kg binlik-ayraç olarak düzeltildi: {deger} → {sonuc}")
+        return sonuc
+    if isinstance(deger, (int, float)):
+        return int(deger)
+    # String: tüm binlik ayraçları (. ve ,) ve birim eklerini ("kg") temizle
+    s = str(deger).strip().replace(" ", "").replace(".", "").replace(",", "")
+    m = re.search(r"-?\d+", s)
+    if not m:
         logger.error(f"kg parse hatası: {deger}")
         return 0
+    return int(m.group())
 
 
 def _confidence_hesapla(
@@ -294,6 +338,7 @@ def _confidence_hesapla(
     plaka_gecerli: bool,
     plaka_uydurma_var: bool,
     net_tartim: int,
+    malzeme_tutarli: Optional[bool] = None,
 ) -> tuple[float, float, float, float, float]:
     """
     Hybrid confidence hesapla.
@@ -332,17 +377,19 @@ def _confidence_hesapla(
         # Plaka var ama format geçersiz → düşük
         h_plaka = 0.30
 
-    # AĞIRLIK heuristic — tipik hurda TIR: 3000-40000 kg
+    # AĞIRLIK heuristic — geçerli hurda yükü çok geniş aralıkta olabilir.
+    # Küçük seferler 500-3000 kg da gerçektir (Tosçelik fişlerinde 1540 kg gördük);
+    # sadece aşırı uçlar şüpheli. Eski 3000-40000 aralığı çok dardı.
     if net_tartim <= 0:
         h_agirlik = 0.0
-    elif 3000 <= net_tartim <= 40000:
-        h_agirlik = 1.0
-    elif 1000 <= net_tartim < 3000 or 40000 < net_tartim <= 60000:
-        # Küçük araç veya büyük yük — mümkün ama sınırda
-        h_agirlik = 0.65
+    elif net_tartim < 300:
+        h_agirlik = 0.25            # şüpheli ölçüde düşük
+    elif 300 <= net_tartim <= 50000:
+        h_agirlik = 1.0             # normal hurda yükü (geniş aralık)
+    elif 50000 < net_tartim <= 70000:
+        h_agirlik = 0.65            # çok ağır — mümkün ama sınırda
     else:
-        # Aşırı düşük/yüksek → büyük ihtimalle yanlış okuma
-        h_agirlik = 0.20
+        h_agirlik = 0.25            # aşırı yüksek → büyük ihtimalle yanlış okuma
 
     # FİŞ NO heuristic — en az 4 karakter
     fis_no_str = str(veri.get("fis_no") or "")
@@ -380,6 +427,13 @@ def _confidence_hesapla(
     agirlik_conf = blend(c_agirlik, h_agirlik, claude_w=0.60)
     fis_no_conf  = blend(c_fis_no,  h_fis_no,  claude_w=0.60)
     firma_conf   = blend(c_firma,   h_firma,   claude_w=0.50)  # Firma için heuristik (kaynak) güçlü
+
+    # Malzeme kalemleri NET ile tutarlıysa ağırlık güvenini pekiştir; uyuşmuyorsa
+    # bir değer yanlış okunmuş demektir → ağırlık güvenini belirgin düşür.
+    if malzeme_tutarli is True:
+        agirlik_conf = round(min(1.0, agirlik_conf + 0.05), 3)
+    elif malzeme_tutarli is False:
+        agirlik_conf = round(agirlik_conf * 0.75, 3)
 
     # Tarih için basit varlık skoru
     tarih_conf = 0.85 if veri.get("tarih") else 0.0
@@ -485,19 +539,42 @@ def _claude_fis_oku_once(fotograf_yolu: str, temperature: float = 0.0) -> FisVer
     if net_agirlik == 0 or net_tartim == 0:
         raise ValueError("Fişteki ağırlık değeri okunamadı veya sıfır.")
 
-    FIRE_KELIMELERI = {'fire', 'tenzil', 'fire kg', 'kayıp', 'kayip', 'hurda fire'}
+    # Fire/tenzil satırları malzeme DEĞİLDİR — substring ile ele (ör "6-) Fire")
+    FIRE_KELIMELERI = ('fire', 'tenzil', 'kayıp', 'kayip')
     malzemeler_ham = veri.get("malzemeler") or {}
-    malzemeler = {
-        k: _parse_kg(v) for k, v in malzemeler_ham.items()
-        if v and _parse_kg(v) > 0 and k.strip().lower() not in FIRE_KELIMELERI
-    }
-    # Malzeme toplamı net ağırlığı geçemez — geçerse net ağırlığa normalize et
+    malzemeler = {}
+    for k, v in malzemeler_ham.items():
+        anahtar = str(k).strip()
+        kg      = _parse_kg(v)
+        if kg <= 0:
+            continue
+        if any(fk in anahtar.lower() for fk in FIRE_KELIMELERI):
+            continue
+        malzemeler[anahtar] = kg
+
+    # ── MALZEME ↔ NET TUTARLILIK ──────────────────────────────────────
+    # Kalem toplamı (NET − Fire)'a yakın olmalı. Uyuşmazsa OCR bir değeri
+    # yanlış okumuş demektir → confidence düşürülür.
+    malzeme_tutarli = None  # None = malzeme yok / kontrol edilemedi
     if malzemeler and net_agirlik > 0:
         toplam_malzeme = sum(malzemeler.values())
-        if toplam_malzeme > net_agirlik:
-            logger.warning(f"⚠️ Malzeme toplamı ({toplam_malzeme}) net ağırlığı ({net_agirlik}) geçiyor, normalize ediliyor")
+        tolerans       = max(50, int(net_agirlik * 0.03))
+        if toplam_malzeme > net_agirlik + tolerans:
+            logger.warning(
+                f"⚠️ Malzeme toplamı ({toplam_malzeme}) net ağırlığı ({net_agirlik}) "
+                f"aşıyor, orantılı normalize ediliyor"
+            )
             oran = net_agirlik / toplam_malzeme
             malzemeler = {k: max(1, int(v * oran)) for k, v in malzemeler.items()}
+            malzeme_tutarli = False
+        elif abs(toplam_malzeme - net_agirlik) <= tolerans:
+            malzeme_tutarli = True
+        else:
+            logger.warning(
+                f"⚠️ Malzeme toplamı ({toplam_malzeme}) net ağırlığın ({net_agirlik}) "
+                f"belirgin altında — eksik/yanlış kalem olabilir"
+            )
+            malzeme_tutarli = False
 
     ham_plaka = veri.get("plaka")
     temiz_plaka = re.sub(r'[\s\-]', '', ham_plaka).upper() if ham_plaka else None
@@ -519,6 +596,7 @@ def _claude_fis_oku_once(fotograf_yolu: str, temperature: float = 0.0) -> FisVer
         plaka_gecerli     = plaka_gecerli,
         plaka_uydurma_var = bool(plaka_uydurma_uyari),
         net_tartim        = net_tartim,
+        malzeme_tutarli   = malzeme_tutarli,
     )
 
     # ── Firma uyarısı — üst başlıktan alındıysa kullanıcıyı bilgilendir ──
