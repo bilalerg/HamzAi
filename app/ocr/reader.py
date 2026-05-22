@@ -165,6 +165,9 @@ Kurallar:
 - fire_kg: Fire/Tenzil toplamı (yoksa 0). AYRAÇSIZ tam sayı.
 - malzemeler: {ad: kg} — her kalem AYRAÇSIZ tam sayı. Tek malzemeyse {}.
 - fis_no: g şıkkı (string). Göremiyorsan null + fis_no_confidence=0.
+  ⚠️ Fiş no çoğu zaman EN ALTTA çok küçük puntodadır. 8-12 haneli bu numarada TEK BİR
+  haneden bile şüphen varsa fis_no_confidence'i ≤0.6 ver (haneyi yanlış okuma riski yüksek,
+  ŞİŞİRME). Sadece her hanesini net seçiyorsan 0.9+ ver.
 - firma + firma_kaynak: b'deki Firma satırından → "firma_satiri" (conf 0.85+).
   Firma satırı boşsa firma=null. Sadece üst başlık varsa firma=üst başlık +
   firma_kaynak="ust_baslik" + firma_confidence ≤0.3.
@@ -358,7 +361,8 @@ def _confidence_hesapla(
     - PLAKA: Claude %75 + Heuristik %25
       (Regex format-geçerliliği gerçek doğruluğu garanti etmez — yanlış okuma
        da regex'e uyabilir, bu yüzden Claude'a daha çok güven.)
-    - AĞIRLIK, FİŞ NO: Claude %60 + Heuristik %40
+    - AĞIRLIK: Claude %60 + Heuristik %40
+    - FİŞ NO: Claude %80 + Heuristik %20 (uzunluk doğruluğu garanti etmez; minik punto)
     - FİRMA: Claude %50 + Heuristik %50 (ust_baslik tespiti güçlü sinyal)
 
     Genel ağırlıklar: plaka %30, ağırlık %30, fiş_no %15, firma %15, tarih %10
@@ -400,14 +404,17 @@ def _confidence_hesapla(
     else:
         h_agirlik = 0.25            # aşırı yüksek → büyük ihtimalle yanlış okuma
 
-    # FİŞ NO heuristic — en az 4 karakter
+    # FİŞ NO heuristic — uzunluk yalnızca FORMAT sinyalidir, DOĞRULUĞU garanti etmez.
+    # Fiş no genelde fişin altında minik puntolu "Id." numarasıdır; haneler yanlış
+    # okunsa bile uzunluk yine tutar (plaka ile aynı ders: format ≠ doğruluk). Bu yüzden
+    # tavan düşük tutulur, gerçek güven Claude'un ham skorundan gelir (blend'de claude_w yüksek).
     fis_no_str = str(veri.get("fis_no") or "")
     if len(fis_no_str) >= 8:
-        h_fis_no = 0.95
+        h_fis_no = 0.65
     elif len(fis_no_str) >= 4:
-        h_fis_no = 0.75
+        h_fis_no = 0.45
     elif len(fis_no_str) >= 1:
-        h_fis_no = 0.35
+        h_fis_no = 0.25
     else:
         h_fis_no = 0.0
 
@@ -434,7 +441,7 @@ def _confidence_hesapla(
 
     plaka_conf   = blend(c_plaka,   h_plaka,   claude_w=0.75)  # Plaka için Claude daha ağırlıklı
     agirlik_conf = blend(c_agirlik, h_agirlik, claude_w=0.60)
-    fis_no_conf  = blend(c_fis_no,  h_fis_no,  claude_w=0.60)
+    fis_no_conf  = blend(c_fis_no,  h_fis_no,  claude_w=0.80)  # Fiş no: minik punto → Claude'un dürüst skoru baskın
     firma_conf   = blend(c_firma,   h_firma,   claude_w=0.50)  # Firma için heuristik (kaynak) güçlü
 
     # Malzeme kalemleri NET ile tutarlıysa ağırlık güvenini pekiştir; uyuşmuyorsa
