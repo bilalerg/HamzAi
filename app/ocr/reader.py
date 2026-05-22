@@ -49,7 +49,7 @@ class FisVerisi:
 
 OCR_SYSTEM = """Sen Türkiye hurda/geri dönüşüm sektörüne ait kantar fişlerini okuyan profesyonel bir OCR motorusun.
 
-Sahada BİRÇOK FARKLI kantar yazılımı var (Kaptan Demir, Tosçelik/Tosyalı, İçdaş, Kroman, Samsun Makine...). Etiketler firmadan firmaya değişir ama hepsinde şu temel bilgiler bulunur: plaka, tartım ağırlıkları, firma, tarih, fiş no, malzeme. Etikete değil, ANLAMA odaklan.
+Sahada BİRÇOK FARKLI kantar yazılımı vardır; etiketler firmadan firmaya değişir ama hepsinde şu temel bilgiler bulunur: plaka, tartım ağırlıkları, firma, tarih, fiş no, malzeme. Etikete değil, ANLAMA odaklan.
 
 ÇOK ÖNEMLİ: 2 AŞAMALI ÇIKTI VERECEKSİN.
 
@@ -90,11 +90,14 @@ firma_kaynak ALANI (zorunlu — firma null değilse):
 - "ust_baslik": Eğer Firma satırı YOKTU ve firma değerini fişin EN ÜSTÜNDEKİ büyük başlıktan aldın
   → Bu durumda firma_confidence MUTLAKA 0.3 veya altına düşür (üst başlık genelde KANTAR/fabrika firmasıdır, tedarikçi DEĞİL)
 
-UYDURMA YASAĞI:
-- Tipik plaka örnekleri ("34BEG354", "06FH8714") veya tipik fiş no'lar ("1234567", "15150") UYDURMA
-- Önceki fişlerden hiçbir bilgi HATIRLAMA — her görsel bağımsız
-- Aşama 1'de tasvir etmediğin alanı Aşama 2'de SADECE null yapabilirsin
-- El yazısı notları (örn "kot 06") ve imzaları YOK SAY
+UYDURMA YASAĞI — KESİN KURAL:
+- SADECE bu görselde net OKUDUĞUN değerleri yaz. Göremediğin bir alanı (plaka, fiş no,
+  firma, tarih) TAHMİN ETME, benzer bir değer ÜRETME → null bırak.
+- Bu istemde geçen hiçbir biçim açıklamasını, etiket adını ya da yer-tutucu ifadeyi
+  DEĞER olarak çıktına KOPYALAMA. İstemdeki bir numara/plaka/firma cevabında yer almasın.
+- Her görsel bağımsızdır — başka fişlerden bilgi taşıma.
+- Aşama 1'de tasvir etmediğin alanı Aşama 2'de yalnızca null yapabilirsin.
+- El yazısı notları ve imzaları YOK SAY.
 """
 
 OCR_PROMPT = """Bu kantar fişini 2 aşamada oku.
@@ -107,17 +110,17 @@ Etiket soluk olsa bile sağdaki değer okunaklıdır. Bazı fişler 2 BLOKLUDUR
 ═══ AŞAMA 1 — LAYOUT TASVİRİ ═══
 Sırayla GÖZLEM YAP. Görmediğini yazma.
 
-a) ÜST BAŞLIK: En tepedeki şirket adı (KANTARIN/alıcı fabrikanın adı — örn
-   KAPTAN DEMİR, TOSÇELİK/TOSYALI, İÇDAŞ, KROMAN, SAMSUN MAKİNE).
+a) ÜST BAŞLIK: En tepedeki büyük şirket adı. Bu KANTARIN/alıcı fabrikanın adıdır —
+   tedarikçi DEĞİLDİR, firma alanına yazma.
 
 b) FİRMA / TEDARİKÇİ: "Firma", "Firma Adı", "FİRMA" etiketinin SAĞINDA ne yazıyor?
-   Örnek: "Firma : YEŞIL IZABE GERİ DÖNÜŞÜM NAK" → değer alınır.
+   Sağındaki firma adını OLDUĞU GİBİ oku (Türkçe karaktersiz yazılmışsa öyle bırak).
    ⚠️ Bu satır BOŞSA firma=null bırak. "Geldiği Yer", "Nakliye Firması",
    "Ad Soyad", "Adres" satırları firma DEĞİLDİR — bunları firma sanma.
 
 c) PLAKA: "Plaka", "Araç Plakası", "Plaka-1", "Araç-Dorse Plaka" etiketinin
    sağındaki İLK plaka. Birden çok plaka varsa (araç-dorse) İLKİNİ al.
-   Tipik biçim: 2 rakam + 1-3 harf + 2-4 rakam (37LK081, 06FH8714, 27Z3024, 01BER242).
+   Biçim: 2 rakam (il kodu 01-81) + 1-3 harf + 2-4 rakam. YALNIZCA görseldeki plakayı oku.
 
 d) TARTIM AĞIRLIKLARI — kantar yazılımına göre etiketler DEĞİŞİR:
    • BRÜT (dolu araç): "BRÜT", "BÜRÜT", "Dolu Tartım", "Son Tartım", "2.Tartı"
@@ -144,8 +147,10 @@ f) MALZEME KALEMLERİ — ÇOK ÖNEMLİ:
    (NET − Fire) değerine yaklaşık eşit olmalı.
 
 g) FİŞ NO: "Fiş No", "FİŞ NO", "Id.", "Id:", "Belge No", "Yükleme/Boşaltma Fiş No"
-   etiketli RAKAM dizisi (genelde 8-12 hane). Örn "Id.130002187958" → 130002187958.
-   ⚠️ "İrsaliye No" ile KARIŞTIRMA. Fiş no yerine TARİH yazma. Göremiyorsan null.
+   etiketli RAKAM dizisi — çoğu zaman fişin EN ALTINDA küçük puntoyla "Id." sonrası,
+   genelde 8-12 hane.
+   ⚠️ "İrsaliye No" ile KARIŞTIRMA. Fiş no bir AĞIRLIK değeriyle (net/brüt/dara) AYNI
+   OLAMAZ — ağırlığı fiş no yapma. Tarih de yazma. Net göremiyorsan null bırak.
 
 h) İRSALİYE NO: "İrsaliye No" satırı. Tarih gibi görünüyorsa veya boşsa null.
 
@@ -153,7 +158,7 @@ i) TARİH: "Tarih", "Giriş Tarihi", "Geliş Tarihi" (GG.AA.YYYY).
 
 ═══ AŞAMA 2 — JSON ═══
 Kurallar:
-- plaka: İlk plaka, boşluk/tire silinmiş, BÜYÜK harf → "37LK081".
+- plaka: İlk plaka; boşluk/tire silinmiş, bitişik, BÜYÜK harf.
   Şüpheli karakter varsa plaka_confidence ≤0.7.
 - net_tartim_kg: Fişteki NET (yoksa iki tartımın farkı). AYRAÇSIZ tam sayı.
 - fire_kg: Fire/Tenzil toplamı (yoksa 0). AYRAÇSIZ tam sayı.
@@ -164,21 +169,24 @@ Kurallar:
   firma_kaynak="ust_baslik" + firma_confidence ≤0.3.
 - tarih: GG.AA.YYYY. irsaliye_no: h şıkkı (yoksa null).
 
-ÇIKTI ÖRNEĞİ (çok kalemli Tosçelik — kalemler toplamı = NET − Fire = 17050):
+ÇIKTI FORMATI ÖRNEĞİ — aşağıdaki köşeli parantezler YER TUTUCUDUR (şablon).
+Bu yer tutucuları ASLA çıktına yazma; sadece BİÇİMİ gösterir. Gerçek değerleri
+yalnızca asıl görselden oku. Çok kalem varsa hepsini ekle; kalemler toplamı
+yaklaşık (NET − Fire) olmalı.
+
 LAYOUT:
-- ÜST BAŞLIK: TOSÇELİK / TOSYALI KANTAR
-- Yükleme/Boşaltma Fiş No: 20000117852
-- Araç Plakası: 27Z3024
-- Firma Adı: UHT UFUK HURDA TOPLAMA GERİ DÖNÜŞÜM SAN. TİC. LTD. ŞTİ.
-- İrsaliye No: TM00034122
-- Malzeme: 4-) 1.Grup: 1.000 | 5-) Karma: 16.050 | 6-) Fire: 500
-- İlk Tartım: 15.350 | Son Tartım: 32.900 | Net Tartım: 17.550
-- Tarih: 02.04.2026
+- ÜST BAŞLIK: [kantar/fabrika adı]
+- Fiş No: [numara veya yok]
+- Plaka: [plaka]
+- Firma Adı: [tedarikçi firma veya boş]
+- Malzeme/tartımlar: [gördüğün kalemler ve kg]
+- Tarih: [GG.AA.YYYY]
 
-JSON:
-{"plaka":"27Z3024","plaka_confidence":0.88,"fis_no":"20000117852","fis_no_confidence":0.92,"net_tartim_kg":17550,"agirlik_confidence":0.95,"fire_kg":500,"tarih":"02.04.2026","firma":"UHT UFUK HURDA TOPLAMA GERİ DÖNÜŞÜM SAN. TİC. LTD. ŞTİ.","firma_kaynak":"firma_satiri","firma_confidence":0.9,"irsaliye_no":"TM00034122","kantar_no":"103-OSMANIYE","malzemeler":{"1.Grup":1000,"Karma":16050}}
+JSON (tek satır):
+{"plaka":"[oku]","plaka_confidence":0.0,"fis_no":"[oku veya null]","fis_no_confidence":0.0,"net_tartim_kg":0,"agirlik_confidence":0.0,"fire_kg":0,"tarih":"[GG.AA.YYYY veya null]","firma":"[oku veya null]","firma_kaynak":"firma_satiri","firma_confidence":0.0,"irsaliye_no":null,"kantar_no":null,"malzemeler":{}}
 
-ŞİMDİ asıl fişe geçelim. Aynı formatta cevap ver."""
+ŞİMDİ asıl görseli oku. Yukarıdaki ŞABLON yer tutucularını DEĞİL, görseldeki
+GERÇEK değerleri yaz. Aynı LAYOUT + JSON formatında cevap ver."""
 
 
 def _fotograf_to_base64(fotograf_yolu: str) -> tuple[str, str, dict]:
