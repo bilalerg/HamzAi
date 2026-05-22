@@ -1,14 +1,16 @@
-# ice_al.py — Onaylı toplu satırları sisteme alma (WeighTicket + irsaliye)
+# ice_al.py — Onaylı toplu satırları sisteme alma (KONSOLİDE irsaliye)
 #
-# Her onaylı satır için:
-#   1) Cari resolver ile firma belirle (modüler)
-#   2) WeighTicket oluştur (foto yok — kaynak: toplu içe alım)
-#   3) irsaliye_olustur(beklet=True) — mevcut pipeline; fiyat sonra toplu faturada
-#
-# Mükerrer koruması: aynı fiş no aktif statüde varsa atlanır (kontrol.py ile aynı set).
+# Akış:
+#   1) Her satır → cari resolver ile firma belirle (modüler), WeighTicket oluştur
+#      (mükerrer fiş no aktifse atla). Ticket'lar fiş no mutabakatı/izlenebilirlik için.
+#   2) Yeni ticket'ları cariye göre GRUPLA → her grup için TEK konsolide irsaliye
+#      (tek toplam satır). Böylece 24 araç Paraşüt'te 1 belge olur (panel şişmez).
+#   3) Fatura: sonra "bekleyen irsaliyeler → toplu fatura" akışında tek fiyatla tek fatura.
 
+import json
+from collections import defaultdict
 from datetime import datetime
-from app.core.database import SessionLocal, WeighTicket, TicketStatus
+from app.core.database import SessionLocal, WeighTicket, Waybill, TicketStatus
 from app.core.logger import logger
 from app.toplu.cari_resolver import resolver_getir
 from app.toplu.kontrol import _AKTIF_STATULER
@@ -38,18 +40,21 @@ def toplu_ice_al(satirlar: list, tenant_id: str, secilen_cari: str = None,
                  tarih: str = None, resolver_tipi: str = "tek_cari",
                  ctx_extra: dict = None) -> dict:
     """
-    satirlar: [{fis_no, plaka, net_kg, sofor?, tesis?}, ...] — kullanıcının ONAYLADIĞI satırlar.
-    Dönüş: {basarili, ozet:{...}, sonuclar:[{fis_no, plaka, durum, irsaliye_id?, hata?}]}
+    satirlar: kullanıcının ONAYLADIĞI satırlar [{fis_no, plaka, net_kg, ...}].
+    Dönüş: {basarili, ozet, irsaliyeler:[{cari, parasut_id, arac, toplam_kg}], sonuclar:[...]}
     """
-    from app.parasut.irsaliye import irsaliye_olustur  # lazy — Paraşüt katmanı
+    from app.parasut.irsaliye import toplu_irsaliye_olustur  # lazy — Paraşüt katmanı
 
     resolver = resolver_getir(resolver_tipi)
     ctx = {"secilen_cari": secilen_cari, "tenant_id": tenant_id, **(ctx_extra or {})}
     fis_tarihi = _tarih_parse(tarih) or datetime.now()
 
     sonuclar = []
-    sayac = {"olusturuldu": 0, "atlandi": 0, "hata": 0}
+    sayac = {"eklenen": 0, "atlandi": 0, "hata": 0}
+    # cari → [ticket bilgileri]
+    gruplar = defaultdict(list)
 
+    # ── 1. Ticket'ları oluştur (mükerrer atla) ──
     for s in satirlar:
         fis_no = (s.get("fis_no") or "").strip() or None
         plaka  = (s.get("plaka") or "").strip().upper() or None
@@ -58,24 +63,17 @@ def toplu_ice_al(satirlar: list, tenant_id: str, secilen_cari: str = None,
 
         cari = resolver.resolve(s, ctx)
         if not cari:
-            kayit.update(durum="hata", hata="Cari belirlenemedi")
-            sayac["hata"] += 1
-            sonuclar.append(kayit)
-            continue
+            kayit.update(durum="hata", hata="Cari belirlenemedi"); sayac["hata"] += 1
+            sonuclar.append(kayit); continue
         if net <= 0:
-            kayit.update(durum="hata", hata="Net ağırlık 0")
-            sayac["hata"] += 1
-            sonuclar.append(kayit)
-            continue
+            kayit.update(durum="hata", hata="Net ağırlık 0"); sayac["hata"] += 1
+            sonuclar.append(kayit); continue
 
         db = SessionLocal()
         try:
             if _mevcut_aktif_var(db, fis_no, tenant_id):
                 kayit.update(durum="atlandi", hata="Bu fiş no zaten sistemde aktif")
-                sayac["atlandi"] += 1
-                sonuclar.append(kayit)
-                continue
-
+                sayac["atlandi"] += 1; sonuclar.append(kayit); continue
             ticket = WeighTicket(
                 tenant_id=tenant_id, foto_path=None,
                 plaka=plaka, fis_no=fis_no,
@@ -85,35 +83,74 @@ def toplu_ice_al(satirlar: list, tenant_id: str, secilen_cari: str = None,
                 ocr_ham_cikti="toplu_ice_alim",
                 status=TicketStatus.OCR_TAMAMLANDI,
             )
-            db.add(ticket)
-            db.commit()
-            db.refresh(ticket)
-            ticket_id = ticket.id
+            db.add(ticket); db.commit(); db.refresh(ticket)
+            gruplar[cari].append({"id": ticket.id, "net": net, "fis_no": fis_no, "plaka": plaka})
+            kayit.update(durum="eklendi", cari=cari); sayac["eklenen"] += 1
+            sonuclar.append(kayit)
         except Exception as e:
             db.rollback()
-            kayit.update(durum="hata", hata=f"Kayıt hatası: {e}")
-            sayac["hata"] += 1
+            kayit.update(durum="hata", hata=f"Kayıt hatası: {e}"); sayac["hata"] += 1
             sonuclar.append(kayit)
-            db.close()
-            continue
         finally:
             db.close()
 
-        # İrsaliye oluştur (beklet=True → FABRIKA_BEKLENIYOR; fiyat sonra toplu faturada)
-        try:
-            sonuc = irsaliye_olustur(ticket_id, True, tenant_id)
-            if sonuc.get("basarili"):
-                kayit.update(durum="olusturuldu", cari=cari,
-                             irsaliye_id=str(sonuc.get("parasut_id", "")))
-                sayac["olusturuldu"] += 1
-            else:
-                kayit.update(durum="hata", cari=cari, hata=sonuc.get("hata", "irsaliye hatası"))
-                sayac["hata"] += 1
-        except Exception as e:
-            kayit.update(durum="hata", cari=cari, hata=f"İrsaliye hatası: {e}")
-            sayac["hata"] += 1
-        sonuclar.append(kayit)
+    # ── 2. Cari grubu başına TEK konsolide irsaliye ──
+    irsaliyeler = []
+    for cari, grup in gruplar.items():
+        toplam = sum(t["net"] for t in grup)
+        aciklama = f"Toplu alım — {cari} — {len(grup)} araç — {fis_tarihi.strftime('%d.%m.%Y')}"
+        sonuc = toplu_irsaliye_olustur(cari, toplam, fis_tarihi, aciklama, tenant_id)
 
-    ozet = {"toplam": len(satirlar), **sayac}
-    logger.info(f"Toplu içe alım tamamlandı: {ozet}")
-    return {"basarili": sayac["hata"] == 0, "ozet": ozet, "sonuclar": sonuclar}
+        if sonuc.get("basarili"):
+            pid = sonuc["parasut_id"]
+            db = SessionLocal()
+            try:
+                wb = Waybill(
+                    irsaliye_no=str(pid), parasut_irsaliye_id=str(pid),
+                    status=TicketStatus.FABRIKA_BEKLENIYOR,
+                    ticket_id=grup[0]["id"], tenant_id=tenant_id,
+                    malzemeler_json=json.dumps(
+                        [{"plaka": t["plaka"], "fis_no": t["fis_no"], "net_kg": t["net"]} for t in grup],
+                        ensure_ascii=False),
+                )
+                db.add(wb)
+                for t in grup:
+                    tk = db.query(WeighTicket).filter(WeighTicket.id == t["id"]).first()
+                    if tk:
+                        tk.status = TicketStatus.FABRIKA_BEKLENIYOR
+                db.commit()
+            except Exception as e:
+                db.rollback()
+                logger.error(f"Toplu waybill/status hatası: {e}")
+            finally:
+                db.close()
+            irsaliyeler.append({"cari": cari, "parasut_id": pid,
+                                "arac": len(grup), "toplam_kg": toplam})
+        else:
+            # İrsaliye başarısız → bu grubun ticket'larını HATA yap, sayaçları düzelt
+            db = SessionLocal()
+            try:
+                for t in grup:
+                    tk = db.query(WeighTicket).filter(WeighTicket.id == t["id"]).first()
+                    if tk:
+                        tk.status = TicketStatus.HATA
+                        tk.hata_mesaji = sonuc.get("hata", "irsaliye hatası")
+                db.commit()
+            finally:
+                db.close()
+            sayac["eklenen"] -= len(grup)
+            sayac["hata"] += len(grup)
+            for kayit in sonuclar:
+                if kayit.get("durum") == "eklendi" and kayit.get("cari") == cari:
+                    kayit.update(durum="hata", hata=sonuc.get("hata", "irsaliye hatası"))
+
+    ozet = {
+        "toplam_satir": len(satirlar),
+        "eklenen": sayac["eklenen"],
+        "atlandi": sayac["atlandi"],
+        "hata": sayac["hata"],
+        "irsaliye": len(irsaliyeler),
+    }
+    logger.info(f"Toplu içe alım (konsolide): {ozet}")
+    return {"basarili": sayac["hata"] == 0, "ozet": ozet,
+            "irsaliyeler": irsaliyeler, "sonuclar": sonuclar}

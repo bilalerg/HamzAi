@@ -165,16 +165,19 @@
         const res = await r.json();
         const ro = res.ozet || {};
         let html = `<div style="margin-top:8px;padding:10px;border-radius:8px;background:rgba(34,197,94,0.1);">` +
-          `<b>✅ ${ro.olusturuldu || 0} irsaliye oluşturuldu</b>` +
-          (ro.atlandi ? ` · ${ro.atlandi} atlandı` : '') +
+          `<b>✅ ${ro.eklenen || 0} araç, ${ro.irsaliye || 0} konsolide irsaliyede toplandı</b>` +
+          (ro.atlandi ? ` · ${ro.atlandi} atlandı (mevcut)` : '') +
           (ro.hata ? ` · <span style="color:#dc2626;">${ro.hata} hata</span>` : '') + '</div>';
+        (res.irsaliyeler || []).forEach(i => {
+          html += `<div style="margin-top:5px;font-size:12px;">📋 <b>${i.cari}</b> — ${i.arac} araç · ${_kgFmt(i.toplam_kg)} kg <span style="color:var(--muted);">(Paraşüt ID: ${i.parasut_id})</span></div>`;
+        });
         const hatalar = (res.sonuclar || []).filter(x => x.durum === 'hata');
         if (hatalar.length) {
           html += '<div style="margin-top:6px;font-size:11.5px;color:#dc2626;">';
           hatalar.slice(0, 12).forEach(h => { html += `• ${h.fis_no || h.plaka || '-'}: ${h.hata}<br>`; });
           html += '</div>';
         }
-        if (ro.olusturuldu) html += '<div style="margin-top:6px;color:var(--muted);">💡 Fiyatlandırmak için <b>Bekleyen irsaliyeler → Toplu fatura</b> ekranını kullanın.</div>';
+        if (ro.irsaliye) html += '<div style="margin-top:6px;color:var(--muted);">💡 Tek fiyatla faturalamak için <b>Bekleyen irsaliyeler → Toplu fatura</b> ekranını kullanın.</div>';
         sonucEl.innerHTML = html;
         btn.textContent = '✓ Tamamlandı';
       } catch (e) {

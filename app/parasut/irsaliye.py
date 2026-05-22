@@ -177,6 +177,57 @@ def irsaliye_olustur(ticket_id: int, beklet: bool = False, tenant_id: str = None
         db.close()
 
 
+def toplu_irsaliye_olustur(cari_adi: str, toplam_kg: int, tarih_str=None,
+                           aciklama: str = None, tenant_id: str = None) -> dict:
+    """
+    TEK konsolide irsaliye oluşturur (tek toplam satır) — toplu içe alım için.
+    Paraşüt'e tek shipment_document + tek stock_movement (toplam kg) yazar.
+    WeighTicket'lara DOKUNMAZ — çağıran (ice_al) ticket/waybill yönetir.
+    """
+    try:
+        cfg = get_tenant_config(tenant_id)
+        contact_id = cari_id_bul(cari_adi, tenant_id=tenant_id)
+        if not contact_id:
+            return {"basarili": False, "hata": f"'{cari_adi}' Paraşüt'te bulunamadı."}
+
+        from app.parasut.client import cari_tipi_bul
+        from app.core.tenant import get_tenant_ozellik
+        dogru_akis = get_tenant_ozellik(tenant_id, "dogru_parasut_akisi", varsayilan=True)
+        if not dogru_akis:
+            inflow = False
+        else:
+            inflow = (cari_tipi_bul(cari_adi, tenant_id=tenant_id) == "supplier")
+
+        attributes = {
+            "description": aciklama or f"Toplu alım — {cari_adi}",
+            "issue_date":  _tarih_formatla(tarih_str),
+            "inflow":      inflow,
+            "currency":    "TRY",
+        }
+        stock_movements = [{
+            "type": "stock_movements",
+            "attributes": {"quantity": int(toplam_kg), "description": "Toplu hurda"},
+            "relationships": {
+                "product": {"data": {"type": "products", "id": str(cfg["hurda_product_id"])}}
+            }
+        }]
+        istek = {"data": {
+            "type": "shipment_documents",
+            "attributes": attributes,
+            "relationships": {
+                "contact": {"data": {"type": "contacts", "id": str(contact_id)}},
+                "stock_movements": {"data": stock_movements},
+            }
+        }}
+        sonuc = parasut_post(f"/{cfg['company_id']}/shipment_documents", istek, tenant_id=tenant_id)
+        pid = sonuc["data"]["id"]
+        logger.info(f"Toplu konsolide irsaliye oluşturuldu: parasut_id={pid} cari={cari_adi} toplam={toplam_kg}kg")
+        return {"basarili": True, "parasut_id": str(pid)}
+    except Exception as e:
+        logger.error(f"Toplu irsaliye oluşturma hatası: {e}")
+        return {"basarili": False, "hata": str(e)}
+
+
 def irsaliye_onayla(waybill_id: int) -> dict:
     db = SessionLocal()
     try:
