@@ -16,8 +16,9 @@ from app.core.logger import logger
 _client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
 import os as _os
-# OCR modeli — env'den override edilebilir (örn. claude-opus-4-...)
-OCR_MODEL      = _os.getenv("OCR_MODEL", "claude-sonnet-4-20250514")
+# OCR modeli — env'den override edilebilir (örn. claude-opus-4-7 daha da iyi okur).
+# Sonnet 4.6 vision, eski sonnet-4'ten belirgin daha iyi küçük metin okur.
+OCR_MODEL      = _os.getenv("OCR_MODEL", "claude-sonnet-4-6")
 OCR_MAX_TOKENS = 3072  # chain-of-thought + çok kalemli layout için artırıldı
 OCR_MAX_RETRY  = 2  # Başarısız OCR'da kaç kez tekrar denensin
 
