@@ -147,6 +147,7 @@ from app.routers import (
                                 # /api/gunluk-ozet, /api/son-fisler, /api/gelir-gider-raporu
     billing as billing_router,  # /api/billing/*, /api/kullanim-ozeti
     admin as admin_router,      # /admin/*
+    toplu as toplu_router,      # /api/toplu/onizle, /api/toplu/uygula
 )
 
 app.include_router(auth_router.router)
@@ -159,3 +160,4 @@ app.include_router(tahsilat_router.router)
 app.include_router(rapor_router.router)
 app.include_router(billing_router.router)
 app.include_router(admin_router.router)
+app.include_router(toplu_router.router)
