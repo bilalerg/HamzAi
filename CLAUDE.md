@@ -351,6 +351,28 @@ Paraşüt'te payment silmek için `DELETE /transactions/{id}` kullanılır, **pa
 Backend `fatura_detay_getir` yanıtında `payments.transaction` include eder; her ödemenin `transaction_id` alanı vardır.
 Frontend bunu kullanarak silme yapar.
 
+### Async Çağrılarda tenant_id ZORUNLU — Tenant Leak Riski
+Tüm `await async_*(...)` çağrılarına **mutlaka `tenant_id=tenant_id` geçilmeli**.
+Unutulursa `_resolve_tid(None)` → default tenant'a (`PARASUT_USERNAME`) düşer:
+- Yanlış tenant'tan token alınır + cari çekilir (3-4 sn boşa + cross-tenant cache karışması)
+- Loglarda `tenant=bilaleroglu3663@gmail.com` (default) gibi sızıntı görünür
+
+Geçmiş bug: `routers/fatura.py`'de fatura kesim sonrası `async_cari_cache_yenile()`
+parametresiz çağrılıyordu → düzeltildi (`tenant_id=tenant_id`).
+**Yeni async çağrı eklerken parametreyi asla atlamadığından emin ol.**
+
+### Paraşüt 429 Rate Limit — Otomatik Retry (Müdahale Gerekmez)
+`_http.py` `_istek_yap()` 429/503/504 yanıtlarında 4 kez exponential backoff retry yapar
+(`Retry-After` header'ı varsa onu, yoksa `2^deneme` saniye bekler).
+Loglarda `Paraşüt 429 ... N. deneme, X.Xs bekleniyor` görünür ama bu **beklenen davranıştır**,
+endpoint yine 200 döner. Çok sık 429 görülürse paralel sayfa çekme stratejisi gözden geçirilir.
+
+### Fatura Detay 404 — Beklenen Fallback (Hata Değil)
+`GET /api/fatura-detay/{id}?tip=customer` eğer fatura aslında `purchase_bill` ise Paraşüt 404 döner.
+Frontend bunu görünce otomatik `?tip=supplier` ile yeniden dener → 200.
+`fatura_detay_getir` bu 404'ü `logger.info` ile loglar (ERROR değil — gürültü yapmaz).
+İsteğe bağlı iyileştirme (yapılmadı): `?tip=auto` ile backend ikisini de denesin, frontend tek request atsın.
+
 ## Sık Yapılan Değişiklikler
 
 ### Yeni Endpoint Eklemek (router'a)
@@ -422,6 +444,38 @@ otomatik olarak `window.X` olur, herhangi bir modülde tanımlı olabilir.
 4. **Backward-compat**: `client.py`'a re-export ekle (`from .yeni_modul import yeni_fonksiyon`).
 5. Router'da `await async_yeni_fonksiyon(param, tenant_id=tenant_id)` ile çağır.
 6. **Müşteri/tedarikçi ayrımı** gerekiyorsa `dogru_akis` flag'ini kontrol et.
+
+### Refactor / Modül Değişikliği Sonrası ZORUNLU Smoke Test
+
+`app/parasut/` veya `app/routers/` modüllerini bölerken/taşırken **import hataları sessizce
+production'a kaçar** çünkü router'lar `from app.parasut.client import async_X`'i fonksiyon
+içinde (lazy) yapar — `from main import app` testi bunları yakalamaz.
+
+Bu yüzden değişiklikten sonra **3 kontrolü de** çalıştır (`.venv\Scripts\python.exe`):
+
+```bash
+# 1. Statik analiz — undefined name + eksik import yakalar (en güçlü)
+python -m pyflakes app/parasut/*.py app/routers/*.py | grep "undefined name"
+
+# 2. EAGER import — wildcard ile modül-level tüm import'ları zorla çalıştır
+python -c "from app.parasut.client import *; print('client OK')"
+python -c "from app.parasut.async_wrappers import *; print('async OK')"
+
+# 3. Full app
+python -c "import os; os.environ.setdefault('ENV','development'); from main import app; print('Routes:', len(app.routes))"
+```
+
+**Geçmiş ders**: client.py 12 modüle bölündüğünde 4 ayrı import bug'ı production'a kaçtı
+(`import re` eksik, `_cari_caches` import edilmemiş, `cari_detay_getir` import edilmemiş,
+`alıs_faturasi_odeme_ekle` Türkçe ı vs ASCII i uyuşmazlığı). Hepsi yukarıdaki pyflakes +
+eager import testi ile **deploy öncesi** yakalanabilirdi. PowerShell ile satır aralığı
+kopyalarken modül başındaki `import` bloğunu elle yazdığım için unutulmuştu.
+
+⚠️ **Türkçe karakter tuzağı**: Bazı fonksiyon adları Türkçe harf içerir
+(`alıs_faturasi_odeme_ekle` — "ı"). Modüllere taşırken `alis_` (ASCII) ile karıştırma.
+`alis.py` sonunda ASCII alias var: `alis_faturasi_odeme_ekle = alıs_faturasi_odeme_ekle`.
+PowerShell ile dosya okurken/yazarken **daima `-Encoding UTF8`** kullan, yoksa Türkçe
+karakterler bozulur (Windows default CP1254).
 
 ### Yeni DB Tablosu / Kolonu Eklemek
 1. `app/core/database.py` → `Base` miras alan model ekle (yeni kolonsa mevcut modele alan ekle)
@@ -681,3 +735,5 @@ Demo öncesi NOT eklenmiş ama yapılmamış:
 12. **Low confidence ≠ retry** — Düşük güven OCR'ı yeniden çalıştırma sebebi DEĞİL (fotoğraf kalitesi sorunu, ikinci deneme aynı sonucu verir). Retry sadece JSON parse hatasında yapılır. Düşük güven kullanıcıya gösterilir → manuel düzeltir.
 13. **main.py monolit → APIRouter modülleri** — eski 2683 satırlık tek dosya `main.py` (161 satır, sadece app + middleware + lifespan + include_router) + 10 router dosyası (`app/routers/X.py`) + ortak `deps.py`'a bölündü. Yeni endpoint eklemek için **main.py'a DOKUNMA** — uygun router dosyasına `@router.X` ile ekle. `include_router` zaten kurulu. Eski monolite geri dönme — `main.py.bak` yedek var (`.gitignore`'da `*.bak`).
 14. **client.py monolit → per-konu modüller** — eski 2974 satırlık `app/parasut/client.py` (100 satır, **sadece backward-compat re-export shim**) + 12 modüle bölündü: `_state.py` (per-tenant state), `_http.py` (HTTP katmanı), `token.py`, `cari.py`, `tahsilat.py`, `satis.py`, `alis.py`, `fatura_sorgu.py`, `irsaliye_sorgu.py`, `rapor.py`, `e_fatura.py`, `async_wrappers.py`. **KRİTİK**: Module-level state (`_tokens`, `_cari_caches`, `_kasa_hesabi_ids`, vs.) **yalnızca `_state.py`'da tanımlanır** — diğer modüller import edip mutate eder. Hiçbir modül `_tokens = {}` ile **yeniden bind etmemeli** (yoksa tenant izolasyonu çöker). Eski `from app.parasut.client import X` çalışmaya devam eder (re-export sayesinde).
+15. **Refactor sonrası import bug'ları & smoke test zorunluluğu** — client.py 12 modüle bölündüğünde 4 import bug'ı production'a kaçtı (`import re` eksik, `_cari_caches`/`cari_detay_getir` import edilmemiş, `alıs_faturasi_odeme_ekle` Türkçe ı vs ASCII i). Sebep: router'lar lazy import yaptığı için `from main import app` testi modül-level import'ları tetiklemez. **Çözüm**: modül değişikliği sonrası `pyflakes` + `from app.parasut.client import *` (eager) + `from app.parasut.async_wrappers import *` testleri ZORUNLU (bkz. "Refactor / Modül Değişikliği Sonrası ZORUNLU Smoke Test"). PowerShell ile satır kopyalarken daima `-Encoding UTF8` (Türkçe karakter koruması).
+16. **Async çağrılarda tenant_id atlanmaz** — `routers/fatura.py`'de fatura kesim sonrası `async_cari_cache_yenile()` parametresiz çağrılıyordu → default tenant'a (`bilaleroglu3663@gmail.com`) sızıyordu (3-4 sn boşa + cross-tenant cache karışması). Tüm `await async_*(...)` çağrılarına `tenant_id=tenant_id` geçilmeli.
