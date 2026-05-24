@@ -64,6 +64,21 @@
     }
   }
 
+  function _yetkileriUygula(yetkiler) {
+    try {
+      const izin = new Set(yetkiler || []);
+      document.querySelectorAll('.panel-btn[data-yetki]').forEach(function(btn) {
+        btn.style.display = izin.has(btn.getAttribute('data-yetki')) ? '' : 'none';
+      });
+      // Tüm butonları gizlenmiş grupları da gizle
+      document.querySelectorAll('.panel-group').forEach(function(grp) {
+        const btns = grp.querySelectorAll('.panel-btn');
+        const gorunur = Array.prototype.some.call(btns, function(b) { return b.style.display !== 'none'; });
+        grp.style.display = gorunur ? '' : 'none';
+      });
+    } catch (e) { console.log('yetki uygula hatası', e); }
+  }
+
   async function initChatSession() {
     try {
       const res = await fetch('/api/me');
@@ -73,6 +88,7 @@
         document.getElementById('userAdSoyad').textContent = ad;
         const wadEl = document.getElementById('welcomeAd');
         if (wadEl) wadEl.textContent = ad.split(' ')[0] || ad;
+        _yetkileriUygula(user.yetkiler || []);
         if (user.chat_session_id) SESSION_ID = user.chat_session_id;
         else if (user.profaix_user_id) SESSION_ID = 'pfa_' + user.profaix_user_id;
         else if (user.id != null && user.id !== '') SESSION_ID = 'loc_' + user.id;

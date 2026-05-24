@@ -53,7 +53,8 @@ def _tokenli_chat_response(token: str) -> HTMLResponse:
 
 
 def _profaix_token_uret(profaix_user_id: str, full_name: str, email: str,
-                        request: Request, beni_hatirla: bool = True) -> str:
+                        request: Request, beni_hatirla: bool = True,
+                        rol: str = None) -> str:
     sid = aktif_oturum_baslat("pfa:" + str(profaix_user_id), full_name, request)
     return token_uret(
         profaix_user_id=profaix_user_id,
@@ -61,6 +62,7 @@ def _profaix_token_uret(profaix_user_id: str, full_name: str, email: str,
         email=email,
         beni_hatirla=beni_hatirla,
         auth_session_id=sid,
+        rol=rol,
     )
 
 
@@ -112,7 +114,8 @@ async def chat_sayfasi(request: Request):
             full_name = payload.get("full_name") or payload.get("name") or payload.get("username") or profaix_user_id
             email = payload.get("email", "")
             if profaix_user_id:
-                token = _profaix_token_uret(profaix_user_id, full_name, email, request, True)
+                token = _profaix_token_uret(profaix_user_id, full_name, email, request, True,
+                                            rol=payload.get("role") or payload.get("rol"))
                 logger.info(f"✅ İmzalı embed giriş: {full_name} ({profaix_user_id})")
                 return _tokenli_chat_response(token)
         logger.warning("Geçersiz embed_token ile /chat isteği alındı")
@@ -127,8 +130,9 @@ async def chat_sayfasi(request: Request):
                 kullanici.get("email", ""),
                 request,
                 True,
+                rol=kullanici.get("role"),
             )
-            logger.info(f"✅ Otomatik giriş: {kullanici.get('full_name')} ({user_id_param})")
+            logger.info(f"✅ Otomatik giriş: {kullanici.get('full_name')} ({user_id_param}) rol={kullanici.get('role')}")
             return _tokenli_chat_response(token)
     elif user_id_param:
         logger.warning("user_id ile /chat girişi reddedildi; embed_token gerekli")
@@ -174,9 +178,10 @@ async def login(request: Request, background_tasks: BackgroundTasks):
         email = payload.get("email", "")
         if not profaix_user_id:
             return JSONResponse({"basarili": False, "hata": "Güvenli giriş tokenı eksik"})
-        token = _profaix_token_uret(profaix_user_id, full_name, email, request, beni_hatirla)
+        embed_rol = payload.get("role") or payload.get("rol")
+        token = _profaix_token_uret(profaix_user_id, full_name, email, request, beni_hatirla, rol=embed_rol)
         response = JSONResponse({"basarili": True, "username": full_name,
-                                  "ad_soyad": full_name, "rol": "user",
+                                  "ad_soyad": full_name, "rol": embed_rol or "owner",
                                   "auth_token": token})
         response.set_cookie(key="profaix_token", value=token, max_age=max_age,
                             httponly=True, secure=True, samesite="none")
@@ -188,18 +193,22 @@ async def login(request: Request, background_tasks: BackgroundTasks):
         kullanici = await profaix_kullanici_dogrula(user_id)
         if not kullanici:
             return JSONResponse({"basarili": False, "hata": "Kullanıcı doğrulanamadı"})
+        if not kullanici.get("is_active", True):
+            return JSONResponse({"basarili": False, "hata": "Hesabınız pasif durumda. Yöneticinize başvurun."}, status_code=403)
+        kullanici_rol = kullanici.get("role")
         token = _profaix_token_uret(
             kullanici["id"],
             kullanici.get("full_name", ""),
             kullanici.get("email", ""),
             request,
             beni_hatirla,
+            rol=kullanici_rol,
         )
-        logger.info(f"✅ Profaix girişi: {kullanici.get('full_name')} ({user_id})")
+        logger.info(f"✅ Profaix girişi: {kullanici.get('full_name')} ({user_id}) rol={kullanici_rol}")
         background_tasks.add_task(_usage_kaydet, None, kullanici.get("full_name", user_id),
                                   "GIRIS", f"profaix_id={user_id}", 0, user_id)
         response = JSONResponse({"basarili": True, "username": kullanici.get("full_name", ""),
-                                  "ad_soyad": kullanici.get("full_name", ""), "rol": "user",
+                                  "ad_soyad": kullanici.get("full_name", ""), "rol": kullanici_rol or "owner",
                                   "auth_token": token})
         response.set_cookie(key="profaix_token", value=token, max_age=max_age,
                             httponly=True, secure=True, samesite="none")
@@ -265,6 +274,8 @@ async def me(request: Request):
         code = "SESSION_REPLACED" if auth_reason == "replaced" else "AUTH_REQUIRED"
         return JSONResponse({"giris_yapildi": False, "code": code})
     out = {"giris_yapildi": True, **user}
+    from app.core.yetki import yetkiler_getir
+    out["yetkiler"] = yetkiler_getir(user.get("rol"))
     sid = canonical_chat_session_id(user)
     if sid:
         out["chat_session_id"] = sid

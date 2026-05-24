@@ -103,6 +103,43 @@ else:
 # /api/billing/* admin token ile de gecilebilir; diger /api/* giris zorunlu.
 _ACIK_API_YOLLARI = {"/api/login", "/api/logout", "/api/me"}
 
+# ── ROL/YETKI ENFORCEMENT ─────────────────────────────────────────────
+# path prefix → gereken yetki. Listede OLMAYAN /api/ yolları tüm girişli
+# kullanıcılara açık (örn. /api/upload, /api/firma-sec, /api/chat → fiş yükleme akışı).
+# Sıra önemli: spesifik prefix'ler genelden ÖNCE gelmeli.
+_YETKI_PREFIX = [
+    ("/api/toplu/",                  "toplu"),
+    ("/api/toplu-fatura-kes",        "fatura"),
+    ("/api/cari-faturalar",          "fatura"),
+    ("/api/cari-odeme",              "tahsilat"),
+    ("/api/fatura",                  "fatura"),
+    ("/api/bekleyen-irsaliyeler",    "fatura"),
+    ("/api/bekleyen-alis-faturalari","fatura"),
+    ("/api/alis-faturasi",           "fatura"),
+    ("/api/e-fatura",                "fatura"),
+    ("/api/tahsilat",                "tahsilat"),
+    ("/api/odeme-ekle",              "tahsilat"),
+    ("/api/para-transferi",          "tahsilat"),
+    ("/api/hesaplar",                "tahsilat"),
+    ("/api/stok-hareketleri",        "rapor"),
+    ("/api/cariler",                 "cari"),
+    ("/api/cari-bilgi",              "cari"),
+    ("/api/cari-olustur",            "cari"),
+    ("/api/cari-guncelle",           "cari"),
+    ("/api/hesap-ozeti",             "rapor"),
+    ("/api/islem-gecmisi",           "rapor"),
+    ("/api/gunluk-ozet",             "rapor"),
+    ("/api/son-fisler",              "rapor"),
+    ("/api/gelir-gider-raporu",      "rapor"),
+]
+
+
+def _gereken_yetki(path: str):
+    for prefix, yetki in _YETKI_PREFIX:
+        if path.startswith(prefix):
+            return yetki
+    return None
+
 
 @app.middleware("http")
 async def api_auth_middleware(request: Request, call_next):
@@ -124,6 +161,15 @@ async def api_auth_middleware(request: Request, call_next):
                 {"hata": "Bu işlem için giriş yapmanız gerekiyor.", "code": "AUTH_REQUIRED"},
                 status_code=401,
             )
+        # ── ROL/YETKI KONTROLU ──
+        gereken = _gereken_yetki(path)
+        if gereken:
+            from app.core.yetki import yetki_var
+            if not yetki_var(user.get("rol"), gereken):
+                return JSONResponse(
+                    {"hata": "Bu işlem için yetkiniz yok.", "code": "YETKI_YOK"},
+                    status_code=403,
+                )
     return await call_next(request)
 
 

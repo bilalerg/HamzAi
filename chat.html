@@ -23,11 +23,11 @@
         <span class="pg-icon">🧾</span><span class="pg-title">Faturalar</span><span class="pg-chev">▶</span>
       </button>
       <div class="panel-group-items">
-        <button class="panel-btn" onclick="panelKapat();bekleyenIrsaliyeleriGoster()"><span class="btn-icon">📋</span> Bekleyen irsaliyeler</button>
-        <button class="panel-btn" onclick="panelKapat();topluFaturaGoster()"><span class="btn-icon">🧾</span> Toplu fatura</button>
-        <button class="panel-btn" onclick="panelKapat();faturaListesiGoster()"><span class="btn-icon">🔍</span> Fatura sorgula</button>
-        <button class="panel-btn" onclick="panelKapat();alisFaturasiFormGoster()"><span class="btn-icon">📥</span> Alış faturası kes</button>
-        <button class="panel-btn" onclick="panelKapat();topluFisGoster()"><span class="btn-icon">📑</span> Toplu fiş (Excel/PDF)</button>
+        <button class="panel-btn" data-yetki="fatura" onclick="panelKapat();bekleyenIrsaliyeleriGoster()"><span class="btn-icon">📋</span> Bekleyen irsaliyeler</button>
+        <button class="panel-btn" data-yetki="fatura" onclick="panelKapat();topluFaturaGoster()"><span class="btn-icon">🧾</span> Toplu fatura</button>
+        <button class="panel-btn" data-yetki="fatura" onclick="panelKapat();faturaListesiGoster()"><span class="btn-icon">🔍</span> Fatura sorgula</button>
+        <button class="panel-btn" data-yetki="fatura" onclick="panelKapat();alisFaturasiFormGoster()"><span class="btn-icon">📥</span> Alış faturası kes</button>
+        <button class="panel-btn" data-yetki="toplu" onclick="panelKapat();topluFisGoster()"><span class="btn-icon">📑</span> Toplu fiş (Excel/PDF)</button>
       </div>
     </div>
 
@@ -36,10 +36,10 @@
         <span class="pg-icon">💵</span><span class="pg-title">Tahsilat & Ödeme</span><span class="pg-chev">▶</span>
       </button>
       <div class="panel-group-items">
-        <button class="panel-btn" onclick="panelKapat();tahsilatFormGoster()"><span class="btn-icon">💵</span> Tahsilat ekle</button>
-        <button class="panel-btn" onclick="panelKapat();odemeFormGoster()"><span class="btn-icon">💸</span> Ödeme ekle</button>
-        <button class="panel-btn" onclick="panelKapat();paraTransferiFormGoster()"><span class="btn-icon">🔄</span> Para transferi</button>
-        <button class="panel-btn" onclick="panelKapat();hesaplarGoster()"><span class="btn-icon">🏦</span> Kasa / banka hesapları</button>
+        <button class="panel-btn" data-yetki="tahsilat" onclick="panelKapat();tahsilatFormGoster()"><span class="btn-icon">💵</span> Tahsilat ekle</button>
+        <button class="panel-btn" data-yetki="tahsilat" onclick="panelKapat();odemeFormGoster()"><span class="btn-icon">💸</span> Ödeme ekle</button>
+        <button class="panel-btn" data-yetki="tahsilat" onclick="panelKapat();paraTransferiFormGoster()"><span class="btn-icon">🔄</span> Para transferi</button>
+        <button class="panel-btn" data-yetki="tahsilat" onclick="panelKapat();hesaplarGoster()"><span class="btn-icon">🏦</span> Kasa / banka hesapları</button>
       </div>
     </div>
 
@@ -48,8 +48,8 @@
         <span class="pg-icon">👥</span><span class="pg-title">Cariler</span><span class="pg-chev">▶</span>
       </button>
       <div class="panel-group-items">
-        <button class="panel-btn" onclick="panelKapat();cariFormGoster()"><span class="btn-icon">➕</span> Yeni cari</button>
-        <button class="panel-btn" onclick="panelKapat();bakiyeleriGoster()"><span class="btn-icon">💰</span> Müşteri bakiyeleri</button>
+        <button class="panel-btn" data-yetki="cari" onclick="panelKapat();cariFormGoster()"><span class="btn-icon">➕</span> Yeni cari</button>
+        <button class="panel-btn" data-yetki="cari" onclick="panelKapat();bakiyeleriGoster()"><span class="btn-icon">💰</span> Müşteri bakiyeleri</button>
       </div>
     </div>
 
@@ -58,11 +58,11 @@
         <span class="pg-icon">📊</span><span class="pg-title">Raporlar</span><span class="pg-chev">▶</span>
       </button>
       <div class="panel-group-items">
-        <button class="panel-btn" onclick="panelKapat();hesapOzetiGoster()"><span class="btn-icon">📊</span> Hesap özeti</button>
-        <button class="panel-btn" onclick="panelKapat();gunlukOzetGoster()"><span class="btn-icon">📈</span> Günlük özet</button>
-        <button class="panel-btn" onclick="panelKapat();gelirGiderRaporuGoster()"><span class="btn-icon">📉</span> Gelir/Gider raporu</button>
-        <button class="panel-btn" onclick="panelKapat();stokHareketleriGoster()"><span class="btn-icon">📦</span> Stok hareketleri</button>
-        <button class="panel-btn" onclick="panelKapat();sonFisleriGoster()"><span class="btn-icon">🗂️</span> Son yüklenen fişler</button>
+        <button class="panel-btn" data-yetki="rapor" onclick="panelKapat();hesapOzetiGoster()"><span class="btn-icon">📊</span> Hesap özeti</button>
+        <button class="panel-btn" data-yetki="rapor" onclick="panelKapat();gunlukOzetGoster()"><span class="btn-icon">📈</span> Günlük özet</button>
+        <button class="panel-btn" data-yetki="rapor" onclick="panelKapat();gelirGiderRaporuGoster()"><span class="btn-icon">📉</span> Gelir/Gider raporu</button>
+        <button class="panel-btn" data-yetki="rapor" onclick="panelKapat();stokHareketleriGoster()"><span class="btn-icon">📦</span> Stok hareketleri</button>
+        <button class="panel-btn" data-yetki="rapor" onclick="panelKapat();sonFisleriGoster()"><span class="btn-icon">🗂️</span> Son yüklenen fişler</button>
       </div>
     </div>
 
@@ -71,7 +71,7 @@
         <span class="pg-icon">⚙️</span><span class="pg-title">Sistem</span><span class="pg-chev">▶</span>
       </button>
       <div class="panel-group-items">
-        <button class="panel-btn" onclick="cacheYenile(this)"><span class="btn-icon">🔄</span> Bakiyeleri yenile</button>
+        <button class="panel-btn" data-yetki="cari" onclick="cacheYenile(this)"><span class="btn-icon">🔄</span> Bakiyeleri yenile</button>
       </div>
     </div>
 
