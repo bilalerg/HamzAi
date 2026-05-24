@@ -144,7 +144,7 @@ def _gereken_yetki(path: str):
 @app.middleware("http")
 async def api_auth_middleware(request: Request, call_next):
     path = request.url.path
-    if path.startswith("/api/billing/") and _admin_kontrol(request):
+    if (path.startswith("/api/billing/") or path == "/api/usage") and _admin_kontrol(request):
         return await call_next(request)
     if path.startswith("/api/") and path not in _ACIK_API_YOLLARI:
         user, auth_reason = token_durumu(request)

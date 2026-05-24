@@ -136,6 +136,11 @@ def calistir(engine, db):
             "ALTER TABLE weigh_tickets ADD COLUMN IF NOT EXISTS ocr_confidence_genel FLOAT"
         ), "ocr_confidence_genel (weigh_tickets)")
 
+        # ── TOKEN/BILLING: company_id (sirket bazli kullanim sayaci) ──────
+        _kolon_ekle(conn, text(
+            "ALTER TABLE billable_events ADD COLUMN IF NOT EXISTS company_id VARCHAR(100)"
+        ), "company_id (billable_events)")
+
         # ── INDEX MİGRATIONLARI ───────────────────────────────────────
         _index_olustur(conn, text(
             "CREATE INDEX IF NOT EXISTS idx_weigh_tickets_tenant_status "

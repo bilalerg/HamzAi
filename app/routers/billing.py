@@ -14,6 +14,68 @@ from app.routers.deps import (
 
 router = APIRouter()
 
+import os as _os
+# İşlem başına ücret (TL) — env ile değiştirilebilir. profaix paneli buradan okur.
+ISLEM_BIRIM_TL = float(_os.getenv("ISLEM_BIRIM_TL", "4.7"))
+
+
+@router.get("/api/usage")
+def company_usage_endpoint(request: Request, company_id: str = None,
+                           baslangic: str = None, bitis: str = None, limit: int = 200):
+    """
+    Şirket bazlı kullanım/işlem geçmişi — profaix.com panelinin çektiği endpoint.
+    Her işlem ISLEM_BIRIM_TL (4.7 TL) olarak ücretlenir.
+    X-Admin-Token (servis-to-servis) ile korunur.
+    """
+    if not _admin_kontrol(request):
+        return JSONResponse({"hata": "Yetkisiz erişim"}, status_code=401)
+    if not company_id:
+        return JSONResponse({"hata": "company_id zorunlu"}, status_code=400)
+
+    from app.core.database import SessionLocal, BillableEvent
+    from sqlalchemy import func as sqlfunc
+    from datetime import datetime, time as _time
+
+    db = SessionLocal()
+    try:
+        q = db.query(BillableEvent).filter(BillableEvent.company_id == company_id)
+        if baslangic:
+            q = q.filter(BillableEvent.created_at >= datetime.combine(
+                datetime.strptime(baslangic, "%Y-%m-%d").date(), _time.min))
+        if bitis:
+            q = q.filter(BillableEvent.created_at <= datetime.combine(
+                datetime.strptime(bitis, "%Y-%m-%d").date(), _time.max))
+
+        toplam_adet   = q.with_entities(sqlfunc.coalesce(sqlfunc.sum(BillableEvent.amount), 0)).scalar() or 0
+        toplam_tutar  = round(float(toplam_adet) * ISLEM_BIRIM_TL, 2)
+        kayitlar = q.order_by(BillableEvent.created_at.desc()).limit(min(max(limit, 1), 1000)).all()
+
+        return JSONResponse({
+            "company_id":    company_id,
+            "birim_tl":      ISLEM_BIRIM_TL,
+            "toplam_islem":  int(toplam_adet),
+            "toplam_tutar":  toplam_tutar,
+            "kayitlar": [
+                {
+                    "log_id":    e.event_id,
+                    "tarih":     e.created_at.isoformat() if e.created_at else None,
+                    "kullanici": e.username,
+                    "islem":     e.event_type,
+                    "endpoint":  e.source,
+                    "payload":   e.description,
+                    "durum":     "success",
+                    "adet":      e.amount,
+                    "tutar":     round((e.amount or 1) * ISLEM_BIRIM_TL, 2),
+                }
+                for e in kayitlar
+            ],
+        })
+    except Exception as e:
+        logger.error(f"Company usage endpoint hatası: {e}")
+        return JSONResponse({"hata": _guvenli_hata(e, "Kullanım özeti alınamadı")}, status_code=500)
+    finally:
+        db.close()
+
 
 @router.get("/api/billing/usage/{user_id}")
 def billing_usage_endpoint(user_id: str, request: Request, baslangic: str = None,

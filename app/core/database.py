@@ -245,6 +245,7 @@ class BillableEvent(Base):
     user_id         = Column(Integer, ForeignKey("users.id"), nullable=True)
     username        = Column(String(100), nullable=True, index=True)
     profaix_user_id = Column(String(100), nullable=True, index=True)
+    company_id      = Column(String(100), nullable=True, index=True)
     event_type      = Column(String(50), nullable=False, index=True)
     amount          = Column(Integer, default=1, nullable=False)
     source          = Column(String(50), nullable=True)
