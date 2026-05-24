@@ -142,7 +142,8 @@ _PANEL_TIKLAMA_EVENT = {
 
 
 def _admin_kontrol(request: Request) -> bool:
-    token = request.headers.get("X-Admin-Token")
+    # Header (servis-to-servis) veya ?token= (tarayıcıdan hızlı kontrol) kabul edilir
+    token = request.headers.get("X-Admin-Token") or request.query_params.get("token")
     return bool(ADMIN_TOKEN) and token == ADMIN_TOKEN
 
 
