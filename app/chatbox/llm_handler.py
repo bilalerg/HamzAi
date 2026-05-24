@@ -202,17 +202,37 @@ GENEL SOHBET ÖRNEKLERİ (intent: none ama BİLGİLENDİRİCİ cevap):
 
 # ── ANA FONKSİYON ─────────────────────────────────────────────────────
 
-def soru_cevapla(mesaj: str, session_id: str = "") -> dict:
+def _yetki_notu(yetkiler) -> str:
+    """Kısıtlı rol için sistem prompt'una eklenecek not — yapamayacağı işleri önermesin."""
+    if yetkiler is None:
+        return ""
+    izin = set(yetkiler)
+    yapamaz = []
+    if "fatura"   not in izin: yapamaz.append("fatura kesme/sorgulama, bekleyen irsaliyeler, e-fatura")
+    if "tahsilat" not in izin: yapamaz.append("tahsilat/ödeme/transfer")
+    if "cari"     not in izin: yapamaz.append("cari yönetimi ve müşteri bakiyeleri")
+    if "rapor"    not in izin: yapamaz.append("raporlar (hesap özeti, günlük özet, gelir-gider, stok, son fişler)")
+    if "toplu"    not in izin: yapamaz.append("toplu fiş içe alma")
+    if not yapamaz:
+        return ""
+    return ("\n\n⚠️ ÖNEMLİ — BU KULLANICININ YETKİSİ KISITLI. Şu işlemleri YAPAMAZ, ASLA ÖNERME ve "
+            "intent olarak SEÇME: " + "; ".join(yapamaz) + ". Kullanıcı bunları isterse kibarca "
+            "'Bu işlem için yetkiniz yok' de ve intent=none ver. Sadece izinli işlere — özellikle "
+            "fiş fotoğrafı yüklemeye — yönlendir.")
+
+
+def soru_cevapla(mesaj: str, session_id: str = "", yetkiler=None) -> dict:
     """
     Kullanıcı mesajını alır, intent + mesaj + params döndürür.
     DB işlemi yok — session kaydı BackgroundTasks ile ayrıca yapılır.
+    yetkiler verilirse kısıtlı rol için LLM yapamayacağı işleri önermez.
     """
     try:
         response = _client.messages.create(
             model=MODEL,
             max_tokens=600,  # 200 idi — uzun yetenek listesi cevapları kesilmesin
             temperature=0.0,
-            system=SISTEM_PROMPTU,
+            system=SISTEM_PROMPTU + _yetki_notu(yetkiler),
             tools=INTENT_TOOL,
             tool_choice={"type": "any"},
             messages=[{"role": "user", "content": mesaj}]

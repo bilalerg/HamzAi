@@ -11,6 +11,16 @@ from app.routers.deps import (
 
 router = APIRouter()
 
+# Intent → gereken yetki (RBAC). Listede olmayan intent (none) herkese açık.
+_INTENT_YETKI = {
+    "bekleyen_irsaliyeler": "fatura", "toplu_fatura": "fatura", "fatura_sorgula": "fatura",
+    "satis_faturasi_kes": "fatura", "alis_faturasi_kes": "fatura", "fatura_iptal": "fatura",
+    "e_fatura_kes": "fatura",
+    "tahsilat_ekle": "tahsilat", "odeme_ekle": "tahsilat",
+    "yeni_cari": "cari", "cari_detay": "cari", "musteri_bakiyeleri": "cari",
+    "hesap_ozeti": "rapor", "gunluk_ozet": "rapor", "son_fisler": "rapor",
+}
+
 
 @router.post("/api/chat")
 async def chat_api(request: Request, background_tasks: BackgroundTasks):
@@ -25,9 +35,17 @@ async def chat_api(request: Request, background_tasks: BackgroundTasks):
         return JSONResponse({"cevap": "Mesaj boş olamaz.", "intent": "none"})
     try:
         from app.chatbox.llm_handler import soru_cevapla, session_kaydet_bg, SESSION_UI_RESTORE_INTENTS
-        sonuc = soru_cevapla(mesaj, session_id)
+        from app.core.yetki import yetkiler_getir, yetki_var
+        yetkiler = yetkiler_getir(aktif_user.get("rol")) if aktif_user else None
+        sonuc = soru_cevapla(mesaj, session_id, yetkiler=yetkiler)
         intent = sonuc.get("intent") or "none"
         params = sonuc.get("params") or {}
+        # ── YETKI KAPISI: yetkisiz intent'i engelle ──
+        gereken = _INTENT_YETKI.get(intent)
+        if gereken and aktif_user and not yetki_var(aktif_user.get("rol"), gereken):
+            logger.info(f"Chat intent engellendi: {intent} (yetki {gereken} yok) user={aktif_user.get('username')}")
+            return JSONResponse({"cevap": "Bu işlem için yetkiniz yok. Sadece fiş fotoğrafı yükleyebilirsiniz.",
+                                  "intent": "none"})
         ui_kind = intent if intent != "none" and intent in SESSION_UI_RESTORE_INTENTS else None
         background_tasks.add_task(
             session_kaydet_bg, session_id, mesaj, sonuc.get("mesaj", ""),
