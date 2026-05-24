@@ -59,6 +59,7 @@ def company_usage_endpoint(request: Request, company_id: str = None,
                 {
                     "log_id":    e.event_id,
                     "tarih":     e.created_at.isoformat() if e.created_at else None,
+                    "user_id":   e.profaix_user_id,
                     "kullanici": e.username,
                     "islem":     e.event_type,
                     "endpoint":  e.source,
