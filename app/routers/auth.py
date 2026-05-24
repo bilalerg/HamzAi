@@ -54,7 +54,7 @@ def _tokenli_chat_response(token: str) -> HTMLResponse:
 
 def _profaix_token_uret(profaix_user_id: str, full_name: str, email: str,
                         request: Request, beni_hatirla: bool = True,
-                        rol: str = None) -> str:
+                        rol: str = None, company_id: str = None) -> str:
     sid = aktif_oturum_baslat("pfa:" + str(profaix_user_id), full_name, request)
     return token_uret(
         profaix_user_id=profaix_user_id,
@@ -63,22 +63,24 @@ def _profaix_token_uret(profaix_user_id: str, full_name: str, email: str,
         beni_hatirla=beni_hatirla,
         auth_session_id=sid,
         rol=rol,
+        company_id=company_id,
     )
 
 
 async def _embed_rol_coz(profaix_user_id: str, payload: dict):
-    """Embed (iframe) girişinde rolü çöz. İmzalı token'da rol varsa onu kullan;
-    yoksa profaix /users endpoint'inden çek. Dönüş: (rol, is_active)."""
+    """Embed (iframe) girişinde rol + company_id çöz. İmzalı token'da varsa onu kullan;
+    yoksa profaix /users endpoint'inden çek. Dönüş: (rol, is_active, company_id)."""
     rol = (payload or {}).get("role") or (payload or {}).get("rol")
-    if rol:
-        return rol, True
+    comp = (payload or {}).get("company_id")
+    if rol and comp:
+        return rol, True, comp
     try:
         k = await profaix_kullanici_dogrula(profaix_user_id)
         if k:
-            return k.get("role"), bool(k.get("is_active", True))
+            return (rol or k.get("role")), bool(k.get("is_active", True)), (comp or k.get("company_id"))
     except Exception as e:
         logger.warning(f"Embed rol çözümleme hatası: {e}")
-    return None, True  # çözülemezse rol=None → owner grace
+    return (rol or None), True, comp  # çözülemezse rol=None → owner grace
 
 
 # ── TEMEL ENDPOINT'LER ────────────────────────────────────────────────
@@ -129,12 +131,12 @@ async def chat_sayfasi(request: Request):
             full_name = payload.get("full_name") or payload.get("name") or payload.get("username") or profaix_user_id
             email = payload.get("email", "")
             if profaix_user_id:
-                rol, aktif = await _embed_rol_coz(profaix_user_id, payload)
+                rol, aktif, comp = await _embed_rol_coz(profaix_user_id, payload)
                 if not aktif:
                     return HTMLResponse(
                         "<h3 style='font-family:sans-serif;text-align:center;margin-top:60px'>Hesabınız pasif. Yöneticinize başvurun.</h3>",
                         status_code=403)
-                token = _profaix_token_uret(profaix_user_id, full_name, email, request, True, rol=rol)
+                token = _profaix_token_uret(profaix_user_id, full_name, email, request, True, rol=rol, company_id=comp)
                 logger.info(f"✅ İmzalı embed giriş: {full_name} ({profaix_user_id}) rol={rol}")
                 return _tokenli_chat_response(token)
         logger.warning("Geçersiz embed_token ile /chat isteği alındı")
@@ -150,6 +152,7 @@ async def chat_sayfasi(request: Request):
                 request,
                 True,
                 rol=kullanici.get("role"),
+                company_id=kullanici.get("company_id"),
             )
             logger.info(f"✅ Otomatik giriş: {kullanici.get('full_name')} ({user_id_param}) rol={kullanici.get('role')}")
             return _tokenli_chat_response(token)
@@ -197,10 +200,11 @@ async def login(request: Request, background_tasks: BackgroundTasks):
         email = payload.get("email", "")
         if not profaix_user_id:
             return JSONResponse({"basarili": False, "hata": "Güvenli giriş tokenı eksik"})
-        embed_rol, embed_aktif = await _embed_rol_coz(profaix_user_id, payload)
+        embed_rol, embed_aktif, embed_comp = await _embed_rol_coz(profaix_user_id, payload)
         if not embed_aktif:
             return JSONResponse({"basarili": False, "hata": "Hesabınız pasif durumda."}, status_code=403)
-        token = _profaix_token_uret(profaix_user_id, full_name, email, request, beni_hatirla, rol=embed_rol)
+        token = _profaix_token_uret(profaix_user_id, full_name, email, request, beni_hatirla,
+                                    rol=embed_rol, company_id=embed_comp)
         response = JSONResponse({"basarili": True, "username": full_name,
                                   "ad_soyad": full_name, "rol": embed_rol or "owner",
                                   "auth_token": token})
@@ -224,6 +228,7 @@ async def login(request: Request, background_tasks: BackgroundTasks):
             request,
             beni_hatirla,
             rol=kullanici_rol,
+            company_id=kullanici.get("company_id"),
         )
         logger.info(f"✅ Profaix girişi: {kullanici.get('full_name')} ({user_id}) rol={kullanici_rol}")
         background_tasks.add_task(_usage_kaydet, None, kullanici.get("full_name", user_id),

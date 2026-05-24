@@ -45,7 +45,7 @@ async def profaix_kullanici_dogrula(user_id: str) -> Optional[dict]:
 # ── JWT TOKEN ────────────────────────────────────────────────────────
 def token_uret(profaix_user_id: str, full_name: str, email: str,
                beni_hatirla: bool = False, auth_session_id: str = None,
-               rol: str = None) -> str:
+               rol: str = None, company_id: str = None) -> str:
     sure    = TOKEN_SURE_HATIRLA if beni_hatirla else TOKEN_SURE
     expire  = datetime.utcnow() + sure
     payload = {
@@ -57,6 +57,8 @@ def token_uret(profaix_user_id: str, full_name: str, email: str,
     }
     if rol:
         payload["rol"] = rol
+    if company_id:
+        payload["company_id"] = company_id
     if auth_session_id:
         payload["sid"] = auth_session_id
     return jwt.encode(payload, JWT_SECRET_KEY, algorithm=ALGORITHM)
@@ -168,6 +170,7 @@ def _payload_kullanici(payload: dict) -> Optional[dict]:
             "email": payload.get("email", ""),
             "full_name": payload.get("full_name", ""),
             "rol": payload.get("rol") or "owner",  # eski token (rol yok) → owner grace
+            "company_id": payload.get("company_id"),
             "auth_session_id": payload.get("sid", ""),
         }
 
