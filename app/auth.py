@@ -22,12 +22,13 @@ PROFAIX_API        = "https://profaix.com/api/users"
 # ── PROFAİX.COM KULLANICI DOĞRULAMA ──────────────────────────────────
 async def profaix_kullanici_dogrula(user_id: str) -> Optional[dict]:
     """
-    profaix.com/api/users?role=user endpoint'inden kullanıcıyı doğrular.
-    Bulursa kullanıcı bilgilerini döndürür, bulamazsa None.
+    profaix.com /users endpoint'inden kullanıcıyı doğrular (TÜM roller).
+    Bulursa kullanıcı bilgilerini (role, is_active dahil) döndürür, bulamazsa None.
+    Not: role filtresi YOK — operation/owner/superadmin hepsi bulunmalı.
     """
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            res = await client.get(PROFAIX_API, params={"role": "user"})
+            res = await client.get(PROFAIX_API)
             if res.status_code != 200:
                 logger.error(f"Profaix API hatası: {res.status_code}")
                 return None
