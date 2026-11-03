@@ -26,8 +26,23 @@ PARASUT_COMPANY_ID       = os.getenv("PARASUT_COMPANY_ID")
 PARASUT_BASE_URL         = os.getenv("PARASUT_BASE_URL", "https://api.parasut.com/v4")
 PARASUT_HURDA_PRODUCT_ID = os.getenv("PARASUT_HURDA_PRODUCT_ID")
 
+# ── MUHASEBE SAĞLAYICISI ───────────────────────────────────────────────
+# Profaix'in muhasebe kayıtlarını nereye yazacağı:
+#   "yerel"   → Profaix'in kendi veritabanı (Paraşüt gerekmez, varsayılan)
+#   "parasut" → Paraşüt V4 API (PARASUT_* anahtarları zorunlu)
+MUHASEBE_SAGLAYICI = (os.getenv("MUHASEBE_SAGLAYICI", "yerel") or "yerel").strip().lower()
+if MUHASEBE_SAGLAYICI not in ("yerel", "parasut"):
+    MUHASEBE_SAGLAYICI = "yerel"
+
+# Yerel modda ilk açılışta örnek (demo) veri yüklensin mi? (sadece tablolar boşsa)
+DEMO_VERI = os.getenv("DEMO_VERI", "1").strip().lower() in ("1", "true", "yes")
+
 # ── VERİTABANI ─────────────────────────────────────────────────────────
-DATABASE_URL = os.getenv("DATABASE_URL")
+# Boş bırakılırsa proje klasöründe SQLite dosyası kullanılır (kurulum gerektirmez).
+DATABASE_URL = os.getenv("DATABASE_URL") or (
+    "sqlite:///" + str(Path(__file__).resolve().parent.parent.parent / "profaix_yerel.db")
+)
+IS_SQLITE = DATABASE_URL.startswith("sqlite")
 
 # ── MAİL — SMTP ────────────────────────────────────────────────────────
 MAIL_HOST     = os.getenv("MAIL_HOST", "smtp.gmail.com")
@@ -112,16 +127,22 @@ def validate_config():
     """Kritik ayarların dolu ve güvenli olduğunu kontrol eder."""
 
     kritik_alanlar = {
-        "ANTHROPIC_API_KEY":     ANTHROPIC_API_KEY,
         "DATABASE_URL":          DATABASE_URL,
-        "PARASUT_CLIENT_ID":     PARASUT_CLIENT_ID,
-        "PARASUT_CLIENT_SECRET": PARASUT_CLIENT_SECRET,
-        "PARASUT_USERNAME":      PARASUT_USERNAME,
-        "PARASUT_PASSWORD":      PARASUT_PASSWORD,
-        "PARASUT_COMPANY_ID":    PARASUT_COMPANY_ID,
         "JWT_SECRET_KEY":        JWT_SECRET_KEY,
         "ADMIN_TOKEN":           ADMIN_TOKEN,
     }
+    # Paraşüt anahtarları sadece Paraşüt sağlayıcısı seçiliyse zorunlu
+    if MUHASEBE_SAGLAYICI == "parasut":
+        kritik_alanlar.update({
+            "PARASUT_CLIENT_ID":     PARASUT_CLIENT_ID,
+            "PARASUT_CLIENT_SECRET": PARASUT_CLIENT_SECRET,
+            "PARASUT_USERNAME":      PARASUT_USERNAME,
+            "PARASUT_PASSWORD":      PARASUT_PASSWORD,
+            "PARASUT_COMPANY_ID":    PARASUT_COMPANY_ID,
+        })
+    # Production'da Claude anahtarı zorunlu; lokal/demo'da yoksa yedek moda geçilir
+    if IS_PRODUCTION:
+        kritik_alanlar["ANTHROPIC_API_KEY"] = ANTHROPIC_API_KEY
     if REQUIRE_SIGNED_EMBED_AUTH:
         kritik_alanlar["PROFAIX_EMBED_SECRET"] = PROFAIX_EMBED_SECRET
 
@@ -146,4 +167,6 @@ def validate_config():
             )
 
     from app.core.logger import logger
-    logger.info(f"✅ Config yüklendi — Ortam: {ENV}")
+    if not ANTHROPIC_API_KEY:
+        logger.warning("⚠️ ANTHROPIC_API_KEY yok — sohbet anahtar-kelime moduna, fiş okuma elle girişe düşer")
+    logger.info(f"✅ Config yüklendi — Ortam: {ENV} | Muhasebe: {MUHASEBE_SAGLAYICI} | DB: {'SQLite' if IS_SQLITE else 'PostgreSQL'}")

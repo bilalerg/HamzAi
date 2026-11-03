@@ -13,7 +13,8 @@ from datetime import datetime
 from app.core.config import ANTHROPIC_API_KEY
 from app.core.logger import logger
 
-_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+# Anahtar yoksa client oluşturulmaz → fiş okuma "elle giriş" moduna düşer.
+_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else None
 
 import os as _os
 # OCR modeli — env'den override edilebilir (örn. claude-opus-4-7 daha da iyi okur).
@@ -46,6 +47,8 @@ class FisVerisi:
     fis_no_confidence:  Optional[float]         = None
     firma_confidence:   Optional[float]         = None
     genel_confidence:   Optional[float]         = None
+    # Claude anahtarı yokken True: OCR yapılmadı, kullanıcı formu elle dolduracak
+    manuel_giris:       bool                    = False
 
 
 OCR_SYSTEM = """Sen Türkiye hurda/geri dönüşüm sektörüne ait kantar fişlerini okuyan profesyonel bir OCR motorusun.
@@ -659,6 +662,18 @@ def claude_fis_oku(fotograf_yolu: str) -> FisVerisi:
     Tüm denemeler temperature=0.0 ile yapılır (deterministik, halüsinasyon riskini azaltır).
     Tüm denemeler başarısız olursa hata döndürür.
     """
+    if _client is None:
+        # ANTHROPIC_API_KEY yok → OCR yapılmaz. Tüm güven skorları 0 olduğu için
+        # arayüz formu otomatik düzenleme modunda açar; kullanıcı değerleri elle girer.
+        logger.warning("OCR atlandı: ANTHROPIC_API_KEY yok → elle giriş modu")
+        return FisVerisi(
+            net_agirlik_kg=0, net_tartim_kg=0, fire_kg=0,
+            claude_ham_cikti="manuel_giris",
+            plaka_confidence=0.0, agirlik_confidence=0.0, fis_no_confidence=0.0,
+            firma_confidence=0.0, genel_confidence=0.0,
+            manuel_giris=True,
+        )
+
     logger.info(f"OCR başlıyor: {fotograf_yolu} | model={OCR_MODEL}")
     son_hata = None
 

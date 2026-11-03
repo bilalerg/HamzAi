@@ -31,7 +31,7 @@ async def alis_faturasi_kes_endpoint(request: Request, background_tasks: Backgro
     if not cari_adi or tutar <= 0:
         return JSONResponse({"hata": "cari_adi ve tutar zorunlu"}, status_code=400)
 
-    from app.parasut.client import async_alis_faturasi_basit_olustur
+    from app.muhasebe import async_alis_faturasi_basit_olustur
     sonuc = await async_alis_faturasi_basit_olustur(
         cari_adi=cari_adi, tutar=tutar, aciklama=aciklama,
         issue_date=issue_date, due_date=due_date, vat_rate=vat_rate,
@@ -57,7 +57,7 @@ async def alis_faturasi_iptal_endpoint(request: Request, background_tasks: Backg
     if not fatura_id:
         return JSONResponse({"hata": "fatura_id zorunlu"}, status_code=400)
 
-    from app.parasut.client import async_alis_faturasi_iptal
+    from app.muhasebe import async_alis_faturasi_iptal
     sonuc = await async_alis_faturasi_iptal(fatura_id, tenant_id=tenant_id)
     if sonuc.get("basarili"):
         if aktif_user:
@@ -73,7 +73,7 @@ async def alis_faturasi_detay_endpoint(request: Request, fatura_id: str):
     """Alış faturası detayını döner (kalemler + ödemeler)."""
     aktif_user = mevcut_kullanici(request)
     tenant_id  = _tenant_id_from_user(aktif_user)
-    from app.parasut.client import async_alis_faturasi_detay_getir
+    from app.muhasebe import async_alis_faturasi_detay_getir
     try:
         detay = await async_alis_faturasi_detay_getir(fatura_id, tenant_id=tenant_id)
         return JSONResponse(detay)
@@ -86,7 +86,7 @@ async def bekleyen_alis_faturalari(request: Request):
     """Ödenmemiş alış faturalarını listeler."""
     aktif_user = mevcut_kullanici(request)
     tenant_id  = _tenant_id_from_user(aktif_user)
-    from app.parasut.client import async_son_alis_faturalari_getir
+    from app.muhasebe import async_son_alis_faturalari_getir
     try:
         faturalar = await async_son_alis_faturalari_getir(limit=30, tenant_id=tenant_id)
         return JSONResponse({"faturalar": faturalar, "toplam": len(faturalar)})
@@ -101,7 +101,7 @@ async def e_fatura_mukellef_endpoint(request: Request, vkn: str):
     """VKN'in e-fatura mükellefi olup olmadığını sorgular."""
     aktif_user = mevcut_kullanici(request)
     tenant_id  = _tenant_id_from_user(aktif_user)
-    from app.parasut.client import async_e_fatura_mukellef_kontrol
+    from app.muhasebe import async_e_fatura_mukellef_kontrol
     try:
         sonuc = await async_e_fatura_mukellef_kontrol(vkn, tenant_id=tenant_id)
         return JSONResponse(sonuc)
@@ -125,7 +125,7 @@ async def e_fatura_kes_endpoint(request: Request, background_tasks: BackgroundTa
     if not fatura_id:
         return JSONResponse({"hata": "fatura_id zorunlu"}, status_code=400)
 
-    from app.parasut.client import async_fatura_resmilestir_otomatik
+    from app.muhasebe import async_fatura_resmilestir_otomatik
     sonuc = await async_fatura_resmilestir_otomatik(
         fatura_id=fatura_id, vkn=vkn, tckn=tckn,
         bekle=True, tenant_id=tenant_id,

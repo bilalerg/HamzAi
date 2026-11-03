@@ -17,7 +17,7 @@ def cari_debug(request: Request):
     if not _admin_kontrol(request):
         return JSONResponse({"hata": "Yetkisiz erişim"}, status_code=401)
     try:
-        from app.parasut.client import parasut_get
+        from app.muhasebe import parasut_get
         from app.core.config import PARASUT_COMPANY_ID
         ozet = []
         page = 1
@@ -61,7 +61,7 @@ def irsaliye_debug(irsaliye_id: str, request: Request):
     if not _admin_kontrol(request):
         return JSONResponse({"hata": "Yetkisiz erişim"}, status_code=401)
     try:
-        from app.parasut.client import parasut_get
+        from app.muhasebe import parasut_get
         from app.core.config import PARASUT_COMPANY_ID
         return JSONResponse(parasut_get(f"/{PARASUT_COMPANY_ID}/shipment_documents/{irsaliye_id}",
                                          params={"include": "stock_movements,contact"}))
@@ -120,7 +120,7 @@ async def accounts_debug(request: Request):
     if not _admin_kontrol(request):
         return JSONResponse({"hata": "Yetkisiz erişim"}, status_code=401)
     try:
-        from app.parasut.client import parasut_get
+        from app.muhasebe import parasut_get
         from app.core.config import PARASUT_COMPANY_ID
         sonuc    = parasut_get(f"/{PARASUT_COMPANY_ID}/accounts")
         hesaplar = [{"id": h["id"], "ad": h.get("attributes", {}).get("name"),

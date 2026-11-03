@@ -1,4 +1,6 @@
-﻿# app/routers/rapor.py -- Raporlar (hesap ozeti, islem gecmisi, bekleyen irsaliyeler, gunluk ozet, son fisler, gelir/gider)
+# app/routers/rapor.py -- Raporlar (hesap ozeti, islem gecmisi, bekleyen irsaliyeler, gunluk ozet, son fisler, gelir/gider)
+
+import json as _json
 
 from fastapi import APIRouter, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
@@ -17,9 +19,9 @@ router = APIRouter()
 @router.get("/api/hesap-ozeti")
 async def hesap_ozeti(request: Request, background_tasks: BackgroundTasks):
     """
-    Genel hesap Ã¶zeti veya tek cari bakiyesi.
-    ?cari=FirmaAdÄ± ile tek cari sorgulanabilir.
-    DÃ¶nem filtresi yoktur â€” bakiye anlÄ±k ParaÅŸÃ¼t deÄŸeridir.
+    Genel hesap özeti veya tek cari bakiyesi.
+    ?cari=FirmaAdı ile tek cari sorgulanabilir.
+    Dönem filtresi yoktur — bakiye anlık Paraşüt değeridir.
     """
     aktif_user = mevcut_kullanici(request)
     tenant_id  = _tenant_id_from_user(aktif_user)
@@ -27,12 +29,12 @@ async def hesap_ozeti(request: Request, background_tasks: BackgroundTasks):
         background_tasks.add_task(_usage_kaydet, aktif_user["id"], aktif_user["username"],
                                    "SORGU", "hesap_ozeti", 1, aktif_user.get("profaix_user_id"))
     try:
-        from app.parasut.client import async_hesap_ozeti_getir, async_cari_id_bul, async_cari_detay_getir
+        from app.muhasebe import async_hesap_ozeti_getir, async_cari_id_bul, async_cari_detay_getir
         cari_adi = request.query_params.get("cari")
         if cari_adi:
             cari_id = await async_cari_id_bul(cari_adi, tenant_id=tenant_id)
             if not cari_id:
-                return JSONResponse({"hata": f"Cari bulunamadÄ±: {cari_adi}"})
+                return JSONResponse({"hata": f"Cari bulunamadı: {cari_adi}"})
             detay = await async_cari_detay_getir(cari_id, tenant_id=tenant_id)
             bakiye = detay.get("bakiye", 0)
             return JSONResponse({
@@ -44,7 +46,7 @@ async def hesap_ozeti(request: Request, background_tasks: BackgroundTasks):
             })
         return JSONResponse(await async_hesap_ozeti_getir(tenant_id=tenant_id))
     except Exception as e:
-        logger.error(f"Hesap Ã¶zeti hatasÄ±: {e}")
+        logger.error(f"Hesap özeti hatası: {e}")
         return JSONResponse({"hata": _guvenli_hata(e)})
 
 
@@ -52,7 +54,7 @@ async def hesap_ozeti(request: Request, background_tasks: BackgroundTasks):
 @router.get("/api/islem-gecmisi/{cari_adi}")
 async def islem_gecmisi(cari_adi: str, request: Request, background_tasks: BackgroundTasks):
     """
-    Carinin iÅŸlem geÃ§miÅŸi â€” tarih filtreli ve sayfalÄ±.
+    Carinin işlem geçmişi — tarih filtreli ve sayfalı.
 
     Query params:
         baslangic : YYYY-MM-DD
@@ -60,7 +62,7 @@ async def islem_gecmisi(cari_adi: str, request: Request, background_tasks: Backg
         sayfa     : int (default 1)
         limit     : int (default 25, max 25)
 
-    DÃ¶nÃ¼ÅŸ:
+    Dönüş:
         {bakiye, islemler: [...], sayfa, sonraki_sayfa_var}
     """
     aktif_user = mevcut_kullanici(request)
@@ -70,7 +72,7 @@ async def islem_gecmisi(cari_adi: str, request: Request, background_tasks: Backg
                                    "SORGU", f"islem_gecmisi | cari={cari_adi}",
                                    1, aktif_user.get("profaix_user_id"))
     try:
-        from app.parasut.client import async_cari_id_bul, async_islem_gecmisi_getir
+        from app.muhasebe import async_cari_id_bul, async_islem_gecmisi_getir
         from urllib.parse import unquote
         cari_adi  = unquote(cari_adi)
         baslangic = request.query_params.get("baslangic")
@@ -79,13 +81,13 @@ async def islem_gecmisi(cari_adi: str, request: Request, background_tasks: Backg
         limit     = min(int(request.query_params.get("limit", 25)), 25)
         cari_id   = await async_cari_id_bul(cari_adi, tenant_id=tenant_id)
         if not cari_id:
-            return JSONResponse({"hata": f"Cari bulunamadÄ±: {cari_adi}"})
+            return JSONResponse({"hata": f"Cari bulunamadı: {cari_adi}"})
 
         sonuc    = await async_islem_gecmisi_getir(cari_id, baslangic, bitis, tenant_id=tenant_id)
         islemler = sonuc.get("islemler", [])
 
-        # Client-side sayfalama â€” islem_gecmisi_getir tÃ¼m iÅŸlemleri Ã§eker,
-        # burada dilime alÄ±yoruz
+        # Client-side sayfalama — islem_gecmisi_getir tüm işlemleri çeker,
+        # burada dilime alıyoruz
         baslangic_idx    = (sayfa - 1) * limit
         bitis_idx        = baslangic_idx + limit
         sayfa_islemleri  = islemler[baslangic_idx:bitis_idx]
@@ -102,7 +104,7 @@ async def islem_gecmisi(cari_adi: str, request: Request, background_tasks: Backg
             "sonraki_sayfa_var": sonraki_sayfa_var,
         })
     except Exception as e:
-        logger.error(f"Ä°ÅŸlem geÃ§miÅŸi hatasÄ±: {e}")
+        logger.error(f"İşlem geçmişi hatası: {e}")
         return JSONResponse({"hata": _guvenli_hata(e)})
 
 
@@ -110,15 +112,15 @@ async def islem_gecmisi(cari_adi: str, request: Request, background_tasks: Backg
 @router.get("/api/bekleyen-irsaliyeler")
 async def bekleyen_irsaliyeler(request: Request, background_tasks: BackgroundTasks):
     """
-    Bekleyen irsaliyeleri tarih filtreli ve sayfalÄ± getirir.
+    Bekleyen irsaliyeleri tarih filtreli ve sayfalı getirir.
 
     Query params:
-        baslangic : YYYY-MM-DD  (default: bu ayÄ±n 1'i)
-        bitis     : YYYY-MM-DD  (default: bugÃ¼n)
+        baslangic : YYYY-MM-DD  (default: bu ayın 1'i)
+        bitis     : YYYY-MM-DD  (default: bugün)
         sayfa     : int (default 1)
         sayfa_basi: int (default 25, max 25)
 
-    DÃ¶nÃ¼ÅŸ:
+    Dönüş:
         {irsaliyeler: [...], toplam, sayfa, sonraki_sayfa_var}
     """
     aktif_user = mevcut_kullanici(request)
@@ -128,13 +130,13 @@ async def bekleyen_irsaliyeler(request: Request, background_tasks: BackgroundTas
                                    "SORGU", "bekleyen_irsaliyeler", 1, aktif_user.get("profaix_user_id"))
     db = SessionLocal()
     try:
-        from app.parasut.client import async_tum_bekleyen_irsaliyeleri_getir, async_cari_listesi_getir
+        from app.muhasebe import async_tum_bekleyen_irsaliyeleri_getir, async_cari_listesi_getir
         from app.core.database import Waybill, TicketStatus
         from datetime import date
 
-        # Tarih filtresi â€” default son 12 ay (eski irsaliyeler de
-        # faturalanabilir; "bu ayÄ±n 1'i" Ã§ok dar bir varsayÄ±lan idi ve
-        # birkaÃ§ ay Ã¶nce kesilmiÅŸ bekleyen irsaliyelerin gÃ¶rÃ¼nmemesine
+        # Tarih filtresi — default son 12 ay (eski irsaliyeler de
+        # faturalanabilir; "bu ayın 1'i" çok dar bir varsayılan idi ve
+        # birkaç ay önce kesilmiş bekleyen irsaliyelerin görünmemesine
         # sebep oluyordu)
         from datetime import timedelta as _td
         bugun     = date.today()
@@ -194,7 +196,7 @@ async def bekleyen_irsaliyeler(request: Request, background_tasks: BackgroundTas
             "sonraki_sayfa_var": sonraki_sayfa_var,
         })
     except Exception as e:
-        logger.error(f"Bekleyen irsaliye hatasÄ±: {e}")
+        logger.error(f"Bekleyen irsaliye hatası: {e}")
         return JSONResponse({"irsaliyeler": [], "hata": _guvenli_hata(e)})
     finally:
         db.close()
@@ -266,11 +268,11 @@ async def gelir_gider_raporu_endpoint(
     baslangic: str = None,
     bitis: str = None,
 ):
-    """Belirtilen tarih aralÄ±ÄŸÄ± iÃ§in gelir/gider raporu."""
+    """Belirtilen tarih aralığı için gelir/gider raporu."""
     aktif_user = mevcut_kullanici(request)
     tenant_id  = _tenant_id_from_user(aktif_user)
     from datetime import datetime, timedelta
-    from app.parasut.client import async_gelir_gider_raporu_getir
+    from app.muhasebe import async_gelir_gider_raporu_getir
     if not baslangic:
         baslangic = (datetime.now().replace(day=1)).strftime("%Y-%m-%d")
     if not bitis:

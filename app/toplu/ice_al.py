@@ -43,7 +43,7 @@ def toplu_ice_al(satirlar: list, tenant_id: str, secilen_cari: str = None,
     satirlar: kullanıcının ONAYLADIĞI satırlar [{fis_no, plaka, net_kg, ...}].
     Dönüş: {basarili, ozet, irsaliyeler:[{cari, parasut_id, arac, toplam_kg}], sonuclar:[...]}
     """
-    from app.parasut.irsaliye import toplu_irsaliye_olustur  # lazy — Paraşüt katmanı
+    from app.muhasebe.irsaliye_akisi import toplu_irsaliye_olustur  # lazy — Paraşüt katmanı
 
     resolver = resolver_getir(resolver_tipi)
     ctx = {"secilen_cari": secilen_cari, "tenant_id": tenant_id, **(ctx_extra or {})}

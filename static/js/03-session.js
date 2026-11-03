@@ -89,6 +89,7 @@
         const wadEl = document.getElementById('welcomeAd');
         if (wadEl) wadEl.textContent = ad.split(' ')[0] || ad;
         _yetkileriUygula(user.yetkiler || []);
+        if (user.muhasebe) _muhasebeUygula(user.muhasebe);
         if (user.chat_session_id) SESSION_ID = user.chat_session_id;
         else if (user.profaix_user_id) SESSION_ID = 'pfa_' + user.profaix_user_id;
         else if (user.id != null && user.id !== '') SESSION_ID = 'loc_' + user.id;

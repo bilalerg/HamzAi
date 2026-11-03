@@ -77,19 +77,27 @@ async def upload_fis(request: Request, background_tasks: BackgroundTasks,
             for isim, kg in malzemeler.items():
                 malzeme_ozet += f"  • {isim}: {kg:,} kg ({kg/1000:.2f} ton)\n"
 
-        cevap = (
-            f"✅ Fiş okundu!\n\n🚗 Plaka: {fis.plaka}\n📋 Fiş No: {fis.fis_no or '-'}\n"
-            f"⚖️ Net Ağırlık: {fis.net_agirlik_kg:,} kg ({fis.net_agirlik_kg/1000:.2f} ton)\n"
-            f"🔥 Fire: {fis.fire_kg or 0:,} kg\n📅 Fiş Tarihi: {fis.tarih or '-'}\n"
-            f"🏭 OCR Firma: {fis.firma or '-'}{yeni_plaka_uyari}{malzeme_ozet}\n"
-            f"🏭 Bu fiş hangi fabrikaya ait?"
-        )
+        if fis.manuel_giris:
+            cevap = (
+                "📝 Fiş fotoğrafı kaydedildi.\n\n"
+                "Otomatik fiş okuma kapalı (Claude API anahtarı tanımlı değil). "
+                "Plaka, fiş no ve ağırlığı aşağıdaki forma elle girin.\n\n"
+                "🏭 Bu fiş hangi firmaya ait?"
+            )
+        else:
+            cevap = (
+                f"✅ Fiş okundu!\n\n🚗 Plaka: {fis.plaka}\n📋 Fiş No: {fis.fis_no or '-'}\n"
+                f"⚖️ Net Ağırlık: {fis.net_agirlik_kg:,} kg ({fis.net_agirlik_kg/1000:.2f} ton)\n"
+                f"🔥 Fire: {fis.fire_kg or 0:,} kg\n📅 Fiş Tarihi: {fis.tarih or '-'}\n"
+                f"🏭 OCR Firma: {fis.firma or '-'}{yeni_plaka_uyari}{malzeme_ozet}\n"
+                f"🏭 Bu fiş hangi fabrikaya ait?"
+            )
 
         # Cari listesi async çekiliyor — event loop bloklanmıyor
         # Kantar fişi = gelen mal = tedarikçi → sadece supplier + both göster
         # Not: cache'lenmiş tam liste üzerinden filtreliyoruz; tüm carilere
         # ait account_type bilgisi zaten cache'de var, ek API çağrısı yapılmaz.
-        from app.parasut.client import async_cari_listesi_getir
+        from app.muhasebe import async_cari_listesi_getir
         cariler       = await async_cari_listesi_getir(tenant_id=tenant_id)
         firma_listesi = sorted({
             c["ad"] for c in cariler
@@ -114,6 +122,7 @@ async def upload_fis(request: Request, background_tasks: BackgroundTasks,
             "conf_fis_no":  fis.fis_no_confidence,
             "conf_firma":   fis.firma_confidence,
             "conf_genel":   fis.genel_confidence,
+            "manuel_giris": fis.manuel_giris,   # True → Claude anahtarı yok, form elle doldurulur
         })
     except Exception as e:
         logger.error(f"Upload hatası: {e}")
@@ -159,7 +168,7 @@ async def fis_iptal(request: Request, background_tasks: BackgroundTasks):
         ):
             return JSONResponse({
                 "basarili": False,
-                "hata": "Bu fiş zaten Paraşüt'e gönderilmiş, iptal edilemez."
+                "hata": "Bu fiş için irsaliye zaten oluşturulmuş, iptal edilemez."
             }, status_code=409)
         ticket.status = TicketStatus.IPTAL
         db.commit()
@@ -229,7 +238,8 @@ async def firma_sec(request: Request, background_tasks: BackgroundTasks):
         # irsaliye_olustur senkron ama içinde Parasut çağrısı var
         # to_thread ile sarıyoruz
         import asyncio
-        from app.parasut.irsaliye import irsaliye_olustur
+        from app.muhasebe.irsaliye_akisi import irsaliye_olustur
+        from app.muhasebe import saglayici_adi
         sonuc = await asyncio.to_thread(irsaliye_olustur, ticket_id, True, tenant_id)
 
         if not sonuc.get("basarili"):
@@ -266,8 +276,8 @@ async def firma_sec(request: Request, background_tasks: BackgroundTasks):
                 malzeme_ozet += f"  • {isim}: {kg:,} kg\n"
 
         return JSONResponse({
-            "cevap": (f"✅ {secilen_firma} seçildi, irsaliye Paraşüt'te oluşturuldu!\n"
-                      f"🆔 Paraşüt ID: {parasut_id}{malzeme_ozet}\n"
+            "cevap": (f"✅ {secilen_firma} seçildi, irsaliye oluşturuldu ({saglayici_adi()})!\n"
+                      f"🆔 İrsaliye No: {parasut_id}{malzeme_ozet}\n"
                       f"Fatura kesmek için 'bekleyen irsaliyeler' yazın veya butona tıklayın."),
             "bekliyor": "bitti"
         })

@@ -18,7 +18,7 @@ from app.core.logger import logger
 
 from ._state import _resolve_tid
 from .token import _tenant_credentials, get_tenant_config
-from ._http import parasut_get, parasut_post, parasut_put, parasut_patch
+from ._http import parasut_get, parasut_post, parasut_put, parasut_patch, parasut_delete
 
 
 def _sales_faturalari_page(cid: str, tid: str, cari_id: str, durum: str, page: int) -> list:

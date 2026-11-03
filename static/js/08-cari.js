@@ -119,7 +119,7 @@
 
     const info = document.createElement('div');
     info.style.cssText = 'font-size:12px;color:var(--muted);margin-bottom:10px;padding:8px 12px;background:var(--accent-lt);border-radius:8px;border-left:3px solid var(--accent);';
-    info.textContent = 'Sadece değiştirmek istediğiniz alanları doldurun. Boş bırakılan alanlar Paraşüt\'te aynı kalır.';
+    info.textContent = 'Sadece değiştirmek istediğiniz alanları doldurun. Boş bırakılan alanlar aynı kalır.';
     wrap.appendChild(info);
 
     const formWrap = document.createElement('div');

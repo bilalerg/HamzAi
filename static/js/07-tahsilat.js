@@ -106,7 +106,7 @@
 
     const manuelInp = document.createElement('input');
     manuelInp.type = 'text'; manuelInp.className = 'fiyat-input';
-    manuelInp.placeholder = 'veya fatura ID girin (Paraşüt URL\'den)';
+    manuelInp.placeholder = MUHASEBE.saglayici === 'yerel' ? 'veya fatura ID girin' : 'veya fatura ID girin (Paraşüt URL\'den)';
     wrap.appendChild(satir('', manuelInp));
 
     const tutarInp = document.createElement('input');

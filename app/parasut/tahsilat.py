@@ -23,7 +23,7 @@ from app.core.logger import logger
 from ._state import _kasa_hesabi_ids, _resolve_tid
 from .token import _tenant_credentials, get_tenant_config
 from ._http import parasut_get, parasut_post, parasut_delete
-from .cari import cari_id_bul, cari_listesi_getir, cari_tipi_bul
+from .cari import cari_id_bul, cari_listesi_getir, cari_tipi_bul, cari_cache_yenile
 
 
 def _kasa_hesabi_bul(tenant_id=None) -> str | None:

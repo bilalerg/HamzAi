@@ -32,7 +32,7 @@ async def fatura_detay_endpoint(fatura_id: str, request: Request, background_tas
                                    "SORGU", f"fatura_detay | id={fatura_id} | tip={tip}", 1,
                                    aktif_user.get("profaix_user_id"))
     try:
-        from app.parasut.client import async_fatura_detay_universal
+        from app.muhasebe import async_fatura_detay_universal
         detay = await async_fatura_detay_universal(fatura_id, tip=tip, tenant_id=tenant_id)
         if detay:
             detay["tip"] = tip
@@ -63,7 +63,7 @@ async def cari_faturalar_endpoint(cari_adi: str, request: Request, background_ta
                                    "SORGU", f"fatura_listesi | cari={cari_adi}", 1,
                                    aktif_user.get("profaix_user_id"))
     try:
-        from app.parasut.client import async_cari_id_bul, async_cari_faturalari_getir
+        from app.muhasebe import async_cari_id_bul, async_cari_faturalari_getir
         from urllib.parse import unquote
         cari_adi  = unquote(cari_adi)
         baslangic = request.query_params.get("baslangic")
@@ -105,7 +105,7 @@ async def toplu_fatura_kes_endpoint(request: Request, background_tasks: Backgrou
     tenant_id  = _tenant_id_from_user(aktif_user)
     db = SessionLocal()
     try:
-        from app.parasut.client import async_cari_id_bul, async_parasut_post, async_parasut_delete, async_cari_cache_yenile, get_tenant_config
+        from app.muhasebe import async_cari_id_bul, async_parasut_post, async_parasut_delete, async_cari_cache_yenile, get_tenant_config
         from app.core.database import Waybill, WeighTicket, TicketStatus
         from datetime import datetime
 
@@ -151,7 +151,7 @@ async def toplu_fatura_kes_endpoint(request: Request, background_tasks: Backgrou
         if not detaylar:
             return JSONResponse({"cevap": "❌ Fatura kalemi oluşturulamadı.", "basarili": False})
 
-        from app.parasut.client import async_cari_tipi_bul
+        from app.muhasebe import async_cari_tipi_bul
         from app.core.tenant import get_tenant_ozellik
         dogru_akis   = get_tenant_ozellik(tenant_id, "dogru_parasut_akisi", varsayilan=True)
         account_type = await async_cari_tipi_bul(cari_adi, tenant_id=tenant_id) if dogru_akis else "customer"
@@ -196,6 +196,8 @@ async def toplu_fatura_kes_endpoint(request: Request, background_tasks: Backgrou
                 sonuc = await async_parasut_post(f"/{cfg['company_id']}/sales_invoices", istek, tenant_id=tenant_id)
 
         fatura_id = sonuc["data"]["id"]
+        # Kullanıcıya gösterilecek numara: sağlayıcı fatura no verdiyse o (yerel: AF2026-00013), yoksa ID
+        fatura_gorunen_no = (sonuc["data"].get("attributes") or {}).get("invoice_no") or fatura_id
         logger.info(f"✅ Toplu fatura kesildi: {fatura_id} ← {len(irsaliye_ids)} irsaliye")
 
         if aktif_user:
@@ -250,7 +252,7 @@ async def toplu_fatura_kes_endpoint(request: Request, background_tasks: Backgrou
             pass
 
         return JSONResponse({
-            "cevap": f"✅ Toplu fatura kesildi!\n\n🏢 {cari_adi}\n📦 {len(irsaliye_ids)} irsaliye birleştirildi\n💵 Toplam: {int(toplam_tutar):,} TL\n🧾 Fatura No: {fatura_id}",
+            "cevap": f"✅ Toplu fatura kesildi!\n\n🏢 {cari_adi}\n📦 {len(irsaliye_ids)} irsaliye birleştirildi\n💵 Toplam: {tr_para(toplam_tutar, 2)} TL\n🧾 Fatura No: {fatura_gorunen_no}",
             "basarili": True, "fatura_no": fatura_id
         })
     except Exception as e:
@@ -279,7 +281,7 @@ async def fatura_kes_endpoint(request: Request, background_tasks: BackgroundTask
     tenant_id  = _tenant_id_from_user(aktif_user)
     db = SessionLocal()
     try:
-        from app.parasut.client import async_cari_id_bul, async_parasut_post, async_parasut_delete, async_cari_cache_yenile, get_tenant_config
+        from app.muhasebe import async_cari_id_bul, async_parasut_post, async_parasut_delete, async_cari_cache_yenile, get_tenant_config
         from app.core.database import Waybill, WeighTicket, TicketStatus
         from datetime import datetime
 
@@ -311,7 +313,7 @@ async def fatura_kes_endpoint(request: Request, background_tasks: BackgroundTask
                                              "vat_rate": 0, "description": f"Hurda — {tr_kg(kg)} kg"},
                               "relationships": {"product": {"data": {"type": "products", "id": str(cfg["hurda_product_id"])}}}}]
 
-        from app.parasut.client import async_cari_tipi_bul
+        from app.muhasebe import async_cari_tipi_bul
         from app.core.tenant import get_tenant_ozellik
         dogru_akis   = get_tenant_ozellik(tenant_id, "dogru_parasut_akisi", varsayilan=True)
         account_type = await async_cari_tipi_bul(cari_adi, tenant_id=tenant_id) if dogru_akis else "customer"
@@ -356,6 +358,8 @@ async def fatura_kes_endpoint(request: Request, background_tasks: BackgroundTask
                 sonuc = await async_parasut_post(f"/{cfg['company_id']}/sales_invoices", istek, tenant_id=tenant_id)
 
         fatura_id = sonuc["data"]["id"]
+        # Kullanıcıya gösterilecek numara: sağlayıcı fatura no verdiyse o (yerel: AF2026-00013), yoksa ID
+        fatura_gorunen_no = (sonuc["data"].get("attributes") or {}).get("invoice_no") or fatura_id
         logger.info(f"✅ Fatura kesildi: {fatura_id} ← irsaliye {parasut_irsaliye_id}")
 
         if aktif_user:
@@ -402,7 +406,7 @@ async def fatura_kes_endpoint(request: Request, background_tasks: BackgroundTask
         for malzeme_adi_ozet, fiyat_ozet in toplanan_fiyatlar.items():
             kg_val = malzemeler.get(malzeme_adi_ozet, agirlik_kg) if malzemeler else agirlik_kg
             ozet  += f"  • {malzeme_adi_ozet if malzemeler and len(toplanan_fiyatlar) > 1 else 'Hurda'}: {tr_kg(kg_val)} kg × {tr_para(fiyat_ozet, 4)} TL/kg = {tr_para(kg_val * fiyat_ozet, 2)} TL\n"
-        ozet += f"\n💵 Toplam: {int(toplam_tutar):,} TL\n🧾 Fatura No: {fatura_id}"
+        ozet += f"\n💵 Toplam: {tr_para(toplam_tutar, 2)} TL\n🧾 Fatura No: {fatura_gorunen_no}"
 
         try:
             await async_cari_cache_yenile(tenant_id=tenant_id)
@@ -438,7 +442,7 @@ async def fatura_iptal_endpoint(request: Request, background_tasks: BackgroundTa
     if not fatura_id:
         return JSONResponse({"hata": "fatura_id zorunlu"}, status_code=400)
 
-    from app.parasut.client import async_fatura_iptal_universal
+    from app.muhasebe import async_fatura_iptal_universal
     sonuc = await async_fatura_iptal_universal(fatura_id, tip=tip, tenant_id=tenant_id)
     if sonuc.get("basarili"):
         if aktif_user:
@@ -509,7 +513,7 @@ async def fatura_guncelle_endpoint(request: Request, background_tasks: Backgroun
                   or diger_alanlar.pop("due_date", None))
     currency   = data.get("currency") or diger_alanlar.pop("currency", None)
 
-    from app.parasut.client import async_fatura_guncelle_universal
+    from app.muhasebe import async_fatura_guncelle_universal
     sonuc = await async_fatura_guncelle_universal(
         fatura_id=fatura_id, tip=tip,
         aciklama=aciklama, issue_date=issue_date,

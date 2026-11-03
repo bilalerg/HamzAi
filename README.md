@@ -1,8 +1,36 @@
 # Profaix (HamzAI) — Multi-Tenant Accounting Automation Agent
 
-A multi-tenant backend that puts a conversational layer over the **Paraşüt ERP API**, so an
+A multi-tenant backend that puts a conversational layer over accounting, so a scrap-metal
 accounting team can issue invoices, record collections, create waybills and pull reports by
 typing a sentence instead of navigating an ERP UI.
+
+The accounting backend is **pluggable**: records go either to Profaix's own database
+(`MUHASEBE_SAGLAYICI=yerel`, default — no external account needed, exportable to Excel) or to
+the **Paraşüt ERP API** (`MUHASEBE_SAGLAYICI=parasut`).
+
+---
+
+## Hızlı başlangıç (lokal, Paraşüt gerekmez)
+
+**Windows:** klasörde `baslat.bat` dosyasına çift tıkla.
+**macOS / Linux:** `./baslat.sh`
+
+İlk çalıştırmada sanal ortamı kurar, paketleri yükler, `.env` dosyasını rastgele güvenlik
+anahtarlarıyla oluşturur ve tarayıcıda `http://localhost:8000/login` açılır.
+
+- Giriş: **admin / profaix123** (`.env` içinde `ADMIN_PASSWORD` ile değiştirilebilir)
+- Veritabanı: proje klasöründe `profaix_yerel.db` (SQLite — kurulum gerekmez)
+- İlk açılışta örnek (uydurma) cariler, faturalar, irsaliyeler ve tahsilatlar yüklenir
+- Video çekmeden önce temiz başlangıç: `baslat.bat --sifirla` / `./baslat.sh --sifirla`
+- Örnek kantar fişi görseli: `demo/ornek_kantar_fisi.jpg`
+
+**Claude API anahtarı (opsiyonel):** `.env` içine `ANTHROPIC_API_KEY` yazılırsa sohbet Claude
+ile anlar ve kantar fişi fotoğrafı otomatik okunur. Yazılmazsa uygulama yine çalışır: sohbet
+basit anahtar-kelime moduna geçer, fiş bilgileri forma elle girilir.
+
+**Paraşüt'e bağlamak:** `.env` içinde `MUHASEBE_SAGLAYICI=parasut` yap ve `PARASUT_*` alanlarını doldur.
+
+**Testler:** `pip install -r requirements-dev.txt` → `python -m pytest -q`
 
 Built end to end as a solo developer: architecture, backend, LLM layer, front-end and deployment.
 ~10,000 lines of Python.
@@ -36,9 +64,11 @@ flowchart TD
     TM --> RB[RBAC check - 4 roles]
     RB --> IR[LLM intent router - Claude Haiku]
     IR -->|16 intents| WF[Matching backend workflow]
-    WF --> PA[Paraşüt API client]
-    WF --> DB[(PostgreSQL)]
-    OCR[Receipt image] --> OP[Tesseract + OpenCV] --> WF
+    WF --> MP{Accounting provider}
+    MP -->|yerel| LP[Local ledger - own DB]
+    MP -->|parasut| PA[Paraşüt API client]
+    WF --> DB[(SQLite / PostgreSQL)]
+    OCR[Receipt image] --> OP[Claude vision OCR + confidence scoring] --> WF
     XL[Excel / PDF bulk import] --> BL[Bulk resolver] --> WF
     TM -.reads.-> TC[Per-tenant credentials<br/>Fernet-encrypted]
 ```
@@ -70,10 +100,10 @@ Excel file does not become 200 manual lookups.
 | Layer | Choice |
 |---|---|
 | API | FastAPI, Pydantic |
-| LLM | Anthropic Claude (Haiku for routing) |
-| Database | PostgreSQL, SQLAlchemy, automated migrations |
+| LLM | Anthropic Claude (Haiku for routing, Sonnet for receipt OCR) |
+| Database | SQLite (local) or PostgreSQL, SQLAlchemy, automated migrations |
 | Auth | JWT, bcrypt, role-based access control |
-| OCR | Tesseract + OpenCV |
+| OCR | Claude vision + Pillow preprocessing + hybrid confidence scoring |
 | Crypto | Fernet (per-tenant credential encryption) |
 | Ops | Docker, structured logging, keep-alive health check |
 
@@ -91,9 +121,13 @@ app/
     migrations.py       schema migrations
     logger.py           structured logging
   chatbox/
-    llm_handler.py      intent classification + response generation
-  parasut/              Paraşüt ERP API client
-  ocr/                  receipt ingestion (Tesseract + OpenCV)
+    llm_handler.py      intent classification (+ keyword fallback without API key)
+  muhasebe/             accounting provider layer — routers import only from here
+    __init__.py         picks the provider from MUHASEBE_SAGLAYICI
+    irsaliye_akisi.py   receipt → waybill flow (provider-agnostic)
+    yerel/              local ledger provider (models, service, Excel export, demo data)
+  parasut/              Paraşüt ERP API client (the "parasut" provider)
+  ocr/                  receipt ingestion (Claude vision + confidence scoring)
   toplu/                bulk Excel / PDF import
   routers/              endpoint modules, shared deps.py
 static/                 front-end (vanilla JS, CSS)
@@ -101,19 +135,18 @@ static/                 front-end (vanilla JS, CSS)
 
 ---
 
-## Running locally
+## Running locally (manual)
 
 ```bash
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-cp .env.example .env        # fill in database URL, Anthropic key, Fernet key
-python main.py
+cp .env.example .env        # set JWT_SECRET_KEY, ADMIN_TOKEN, ADMIN_PASSWORD
+uvicorn main:app --reload --port 8000
 ```
 
 The app validates required configuration on startup and refuses to boot with missing keys.
-
-> **Note:** the Paraşüt integration requires live ERP credentials, which are tenant-owned and
-> not included in this repository. Without them the conversational layer runs but ERP calls
-> will fail — this is intentional.
+With `MUHASEBE_SAGLAYICI=yerel` (default) no Paraşüt credentials are needed; with
+`MUHASEBE_SAGLAYICI=parasut` the tenant's live Paraşüt credentials are required.
 
 ---
 
@@ -122,4 +155,5 @@ The app validates required configuration on startup and refuses to boot with mis
 - Replace the intent classifier with a small fine-tuned model to cut latency and remove the
   API dependency on the hot path.
 - Move bulk import to a background worker; today a large file blocks the request.
-- Add contract tests against a recorded Paraşüt fixture set so ERP changes surface in CI.
+- Add contract tests against a recorded Paraşüt fixture set so ERP changes surface in CI
+  (the local provider already has a pytest suite under `tests/`).

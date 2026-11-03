@@ -524,3 +524,58 @@
 
   // ── FATURA LİSTESİ & DETAY ───────────────────────────────────────
 
+
+  // ── MUHASEBE SAĞLAYICISI (yerel / Paraşüt) ───────────────────────────
+
+  function _muhasebeUygula(m) {
+    MUHASEBE = Object.assign({}, MUHASEBE, m || {});
+    try {
+      const rozet = document.getElementById('muhasebeRozet');
+      if (rozet) {
+        rozet.textContent = MUHASEBE.saglayici === 'yerel' ? '● Yerel kayıt' : '● Paraşüt bağlı';
+        rozet.title = MUHASEBE.saglayici === 'yerel'
+          ? 'Kayıtlar Profaix\'in kendi veritabanında tutuluyor (Excel\'e aktarılabilir)'
+          : 'Kayıtlar Paraşüt hesabına yazılıyor';
+        rozet.classList.toggle('yerel', MUHASEBE.saglayici === 'yerel');
+        rozet.style.display = '';
+      }
+      const excelBtn = document.getElementById('excelAktarBtn');
+      // Görünürlüğü _yetkileriUygula (rapor yetkisi) belirler; Paraşüt modunda düğme kaldırılır
+      if (excelBtn && !MUHASEBE.excel_aktar) excelBtn.remove();
+      // Lokal çalışırken profaix.com paneline dönüş linki anlamsız
+      if (['localhost', '127.0.0.1'].indexOf(location.hostname) !== -1) {
+        const link = document.getElementById('panelDonLink');
+        if (link) link.style.display = 'none';
+      }
+    } catch (e) { console.log('muhasebe uygula hatası', e); }
+  }
+
+  async function excelAktar(btn) {
+    const orijinal = btn ? btn.innerHTML : '';
+    if (btn) { btn.innerHTML = '<span class="btn-icon">⏳</span> Hazırlanıyor…'; btn.disabled = true; }
+    try {
+      const res = await fetch('/api/muhasebe/excel');
+      if (!res.ok) {
+        let hata = 'Excel oluşturulamadı.';
+        try { hata = (await res.json()).hata || hata; } catch {}
+        addMessage('❌ ' + hata, 'bot');
+        return;
+      }
+      const blob = await res.blob();
+      const cd = res.headers.get('Content-Disposition') || '';
+      const m = cd.match(/filename="([^"]+)"/);
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = m ? m[1] : 'profaix_muhasebe.xlsx';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(function() { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+      if (typeof panelKapat === 'function') panelKapat();
+      addMessage('📗 Muhasebe kayıtları Excel\'e aktarıldı: cariler, faturalar, irsaliyeler, tahsilat/ödemeler, kasa/banka ve kantar fişleri ayrı sayfalarda.', 'bot');
+    } catch (e) {
+      addMessage('❌ Excel indirilemedi.', 'bot');
+    } finally {
+      if (btn) { btn.innerHTML = orijinal; btn.disabled = false; }
+    }
+  }
+

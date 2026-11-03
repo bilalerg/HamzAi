@@ -196,8 +196,14 @@
     const tarihRow = document.createElement('div');
     tarihRow.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:10px;';
 
-    const bugun = new Date().toISOString().split('T')[0];
-    const buAyBas = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0];
+    // Yerel saatle YYYY-MM-DD (toISOString UTC'ye çevirip Türkiye'de bir gün kaydırıyordu).
+    // Varsayılan aralık son 12 ay — backend /api/bekleyen-irsaliyeler varsayılanıyla aynı.
+    const _ymd = function(d) {
+      return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    };
+    const bugun = _ymd(new Date());
+    const _oncekiYil = new Date(); _oncekiYil.setFullYear(_oncekiYil.getFullYear() - 1);
+    const buAyBas = _ymd(_oncekiYil);
 
     const baslangicInp = document.createElement('input');
     baslangicInp.type = 'date';
@@ -366,8 +372,8 @@
       const baslik = document.createElement('div');
       baslik.style.cssText = 'font-size:12px;color:var(--muted);margin-bottom:8px;';
       baslik.textContent = onMusteriFiltreParam
-        ? onMusteriFiltreParam + " bakiyesi (Parasut):"
-        : "Güncel bakiyeler (Parasut):";
+        ? onMusteriFiltreParam + " bakiyesi (" + (MUHASEBE.saglayici === 'yerel' ? 'yerel kayıt' : 'Paraşüt') + "):"
+        : "Güncel bakiyeler (" + (MUHASEBE.saglayici === 'yerel' ? 'yerel kayıt' : 'Paraşüt') + "):";
       wrap.appendChild(baslik);
 
       let sonTip = null;

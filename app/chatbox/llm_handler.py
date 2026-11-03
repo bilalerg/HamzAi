@@ -7,7 +7,8 @@ from app.core.config import ANTHROPIC_API_KEY
 from app.core.logger import logger
 
 MODEL = "claude-haiku-4-5-20251001"
-_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+# Anahtar yoksa client oluşturulmaz → soru_cevapla anahtar-kelime moduna düşer.
+_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else None
 
 
 def _ui_key(ui: dict) -> str:
@@ -200,6 +201,56 @@ GENEL SOHBET ÖRNEKLERİ (intent: none ama BİLGİLENDİRİCİ cevap):
 """
 
 
+# ── SAĞLAYICI NOTU ────────────────────────────────────────────────────
+
+def _baglanti_notu() -> str:
+    """Yerel moddayken sistem prompt'undaki Paraşüt ifadelerini geçersiz kılar."""
+    from app.muhasebe import parasut_mu
+    if parasut_mu():
+        return ""
+    return ("\n\n⚠️ GÜNCEL BAĞLANTI DURUMU (yukarıdaki Paraşüt ifadelerinin YERİNE GEÇER): "
+            "Şu an Paraşüt BAĞLI DEĞİL. Tüm cari, irsaliye, fatura, tahsilat/ödeme ve kasa kayıtları "
+            "Profaix'in kendi yerel muhasebe kaydında tutuluyor; istenirse Excel'e aktarılabiliyor. "
+            "Paraşüt modüler bir eklenti: anahtarlar girilince tek ayarla bağlanabiliyor. "
+            "'Nereye bağlısın' sorulursa bunu söyle; Paraşüt'e bağlı olduğunu ASLA söyleme. "
+            "E-fatura/e-arşiv resmi entegrasyon gerektirdiği için yerel modda kesilemez.")
+
+
+# ── ANAHTAR-KELİME YEDEK MODU (Claude anahtarı yokken) ────────────────
+
+_ANAHTAR_KELIMELER = [
+    (("iptal",),                                   "fatura_iptal",         "Fatura iptal ekranını açıyorum."),
+    (("e-fatura", "efatura", "e-arşiv", "earşiv", "resmileştir"), "e_fatura_kes", "E-fatura/e-arşiv ekranını açıyorum."),
+    (("toplu fatura",),                            "toplu_fatura",         "Toplu fatura ekranını açıyorum."),
+    (("alış fatura", "alis fatura", "hurda aldık"), "alis_faturasi_kes",   "Alış faturası ekranını açıyorum."),
+    (("satış fatura", "satis fatura"),             "satis_faturasi_kes",   "Satış faturası ekranını açıyorum."),
+    (("bekleyen", "irsaliye", "faturalanmamış"),   "bekleyen_irsaliyeler", "Bekleyen irsaliyeleri getiriyorum."),
+    (("fatura",),                                  "fatura_sorgula",       "Fatura ekranını açıyorum."),
+    (("tahsilat", "para geldi", "ödeme aldık"),    "tahsilat_ekle",        "Tahsilat ekranını açıyorum."),
+    (("ödeme", "odeme", "ödedik", "odedik"),       "odeme_ekle",           "Ödeme ekranını açıyorum."),
+    (("ödedi", "odedi"),                           "tahsilat_ekle",        "Tahsilat ekranını açıyorum."),
+    (("yeni cari", "cari ekle", "cari oluştur", "yeni müşteri", "yeni tedarikçi"), "yeni_cari", "Yeni cari formunu açıyorum."),
+    (("iletişim", "adres", "telefon", "vergi"),    "cari_detay",           "Cari bilgilerini açıyorum."),
+    (("bakiye", "borç", "borc", "alacak"),         "musteri_bakiyeleri",   "Bakiyeleri açıyorum."),
+    (("hesap özeti", "hesap ozeti", "özet"),       "hesap_ozeti",          "Hesap özetini getiriyorum."),
+    (("günlük", "gunluk", "bugün"),                "gunluk_ozet",          "Bugünün özetine bakıyorum."),
+    (("son fiş", "son fis", "fişler", "fisler"),   "son_fisler",           "Son fişleri getiriyorum."),
+]
+
+_YEDEK_BILGI = ("Şu an basit komut modundayım (Claude API anahtarı tanımlı değil). "
+                "'bekleyen irsaliyeler', 'fatura kes', 'tahsilat', 'ödeme', 'bakiyeler', "
+                "'günlük özet', 'son fişler' gibi yazabilir ya da soldaki menüyü kullanabilirsiniz. "
+                "Kantar fişi fotoğrafını 📎 ile yükleyebilirsiniz.")
+
+
+def _anahtar_kelime_intent(mesaj: str, yetkiler=None) -> dict:
+    m = (mesaj or "").lower()
+    for kelimeler, intent, cevap in _ANAHTAR_KELIMELER:
+        if any(k in m for k in kelimeler):
+            return {"intent": intent, "mesaj": cevap, "params": {}}
+    return {"intent": "none", "mesaj": _YEDEK_BILGI, "params": {}}
+
+
 # ── ANA FONKSİYON ─────────────────────────────────────────────────────
 
 def _yetki_notu(yetkiler) -> str:
@@ -227,12 +278,14 @@ def soru_cevapla(mesaj: str, session_id: str = "", yetkiler=None) -> dict:
     DB işlemi yok — session kaydı BackgroundTasks ile ayrıca yapılır.
     yetkiler verilirse kısıtlı rol için LLM yapamayacağı işleri önermez.
     """
+    if _client is None:
+        return _anahtar_kelime_intent(mesaj, yetkiler)
     try:
         response = _client.messages.create(
             model=MODEL,
             max_tokens=600,  # 200 idi — uzun yetenek listesi cevapları kesilmesin
             temperature=0.0,
-            system=SISTEM_PROMPTU + _yetki_notu(yetkiler),
+            system=SISTEM_PROMPTU + _baglanti_notu() + _yetki_notu(yetkiler),
             tools=INTENT_TOOL,
             tool_choice={"type": "any"},
             messages=[{"role": "user", "content": mesaj}]

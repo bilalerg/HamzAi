@@ -7,7 +7,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import DeclarativeBase, sessionmaker, relationship
 from sqlalchemy.sql import func
 import enum
-from app.core.config import DATABASE_URL
+from app.core.config import DATABASE_URL, IS_SQLITE
 from app.core.logger import logger
 
 # ── BAĞLANTI HAVUZU ────────────────────────────────────────────────────
@@ -19,15 +19,34 @@ from app.core.logger import logger
 # pool_recycle=300 → 5dk'da bir bağlantıyı yenile (Supabase idle timeout koruması)
 # pool_pre_ping   → süresi dolmuş bağlantıyı kullanmadan önce test et
 
-engine = create_engine(
-    DATABASE_URL,
-    pool_size=2,
-    max_overflow=3,
-    pool_timeout=20,
-    pool_recycle=300,
-    pool_pre_ping=True,
-    echo=False
-)
+if IS_SQLITE:
+    # Lokal/demo: tek dosya, kurulum gerektirmez. FastAPI thread'leri aynı
+    # bağlantıyı kullanabilsin diye check_same_thread=False.
+    engine = create_engine(
+        DATABASE_URL,
+        connect_args={"check_same_thread": False, "timeout": 30},
+        pool_pre_ping=True,
+        echo=False,
+    )
+
+    from sqlalchemy import event as _sa_event
+
+    @_sa_event.listens_for(engine, "connect")
+    def _sqlite_pragmalar(dbapi_conn, _record):
+        cur = dbapi_conn.cursor()
+        cur.execute("PRAGMA journal_mode=WAL")      # okuma/yazma çakışmasını azaltır
+        cur.execute("PRAGMA foreign_keys=ON")
+        cur.close()
+else:
+    engine = create_engine(
+        DATABASE_URL,
+        pool_size=2,
+        max_overflow=3,
+        pool_timeout=20,
+        pool_recycle=300,
+        pool_pre_ping=True,
+        echo=False
+    )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
@@ -309,6 +328,9 @@ class GirisLog(Base):
 
 def init_db():
     logger.info("Veritabanı tabloları oluşturuluyor...")
+    # Yerel muhasebe sağlayıcısının tabloları da aynı Base'e kayıtlı —
+    # import edilince create_all onları da oluşturur.
+    import app.muhasebe.yerel.modeller  # noqa: F401
     Base.metadata.create_all(bind=engine)
     logger.info("✅ Tüm tablolar hazır")
 

@@ -57,7 +57,16 @@ async def _startup_background():
         ilk_admin_olustur()
     except Exception as e:
         logger.warning(f"⚠️ Admin oluşturma atlandı: {e}")
-    asyncio.create_task(_keep_alive())
+    try:
+        from app.core.config import MUHASEBE_SAGLAYICI, DEMO_VERI
+        if MUHASEBE_SAGLAYICI == "yerel" and DEMO_VERI:
+            from app.muhasebe.yerel.demo_veri import demo_veri_yukle
+            await asyncio.to_thread(demo_veri_yukle)
+    except Exception as e:
+        logger.warning(f"⚠️ Demo veri yüklenemedi: {e}")
+    # Keep-alive sadece Render gibi uyuyan sunucularda anlamlı — lokalde çalıştırma
+    if ENV == "production" or os.getenv("BASE_URL"):
+        asyncio.create_task(_keep_alive())
 
 
 @asynccontextmanager
@@ -108,6 +117,7 @@ _ACIK_API_YOLLARI = {"/api/login", "/api/logout", "/api/me"}
 # kullanıcılara açık (örn. /api/upload, /api/firma-sec, /api/chat → fiş yükleme akışı).
 # Sıra önemli: spesifik prefix'ler genelden ÖNCE gelmeli.
 _YETKI_PREFIX = [
+    ("/api/muhasebe/excel",          "rapor"),
     ("/api/toplu/",                  "toplu"),
     ("/api/toplu-fatura-kes",        "fatura"),
     ("/api/cari-faturalar",          "fatura"),
@@ -194,6 +204,7 @@ from app.routers import (
     billing as billing_router,  # /api/billing/*, /api/kullanim-ozeti
     admin as admin_router,      # /admin/*
     toplu as toplu_router,      # /api/toplu/onizle, /api/toplu/uygula
+    muhasebe as muhasebe_router,  # /api/muhasebe/durum, /api/muhasebe/excel
 )
 
 app.include_router(auth_router.router)
@@ -207,3 +218,10 @@ app.include_router(rapor_router.router)
 app.include_router(billing_router.router)
 app.include_router(admin_router.router)
 app.include_router(toplu_router.router)
+app.include_router(muhasebe_router.router)
+
+
+@app.get("/", include_in_schema=False)
+async def kok():
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/chat")

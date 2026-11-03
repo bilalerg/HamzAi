@@ -18,154 +18,160 @@ def calistir(engine, db):
     """
     from sqlalchemy import text
 
-    with engine.connect() as conn:
+    from app.core.config import IS_SQLITE
+    if IS_SQLITE:
+        # SQLite (lokal/demo): şema create_all ile modellerden eksiksiz kurulur;
+        # aşağıdaki SQL'ler PostgreSQL'e özgü olduğundan atlanır.
+        logger.info("✅ SQLite: şema modellerden kuruldu, PostgreSQL migration'ları atlandı")
+    else:
+        with engine.connect() as conn:
 
-        # ── TABLO MİGRATIONLARI ───────────────────────────────────────
-        _tablo_olustur(conn, text("""
-            CREATE TABLE IF NOT EXISTS tenants (
-                id VARCHAR(100) PRIMARY KEY,
-                ad VARCHAR(200) NOT NULL,
-                parasut_client_id VARCHAR(200) NOT NULL,
-                parasut_client_secret VARCHAR(200) NOT NULL,
-                parasut_username VARCHAR(200) NOT NULL,
-                parasut_password VARCHAR(200) NOT NULL,
-                parasut_company_id VARCHAR(50) NOT NULL,
-                parasut_hurda_product_id VARCHAR(50),
-                aktif INTEGER DEFAULT 1,
-                created_at TIMESTAMP DEFAULT NOW(),
-                updated_at TIMESTAMP DEFAULT NOW()
-            )
-        """), "tenants")
+            # ── TABLO MİGRATIONLARI ───────────────────────────────────────
+            _tablo_olustur(conn, text("""
+                CREATE TABLE IF NOT EXISTS tenants (
+                    id VARCHAR(100) PRIMARY KEY,
+                    ad VARCHAR(200) NOT NULL,
+                    parasut_client_id VARCHAR(200) NOT NULL,
+                    parasut_client_secret VARCHAR(200) NOT NULL,
+                    parasut_username VARCHAR(200) NOT NULL,
+                    parasut_password VARCHAR(200) NOT NULL,
+                    parasut_company_id VARCHAR(50) NOT NULL,
+                    parasut_hurda_product_id VARCHAR(50),
+                    aktif INTEGER DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    updated_at TIMESTAMP DEFAULT NOW()
+                )
+            """), "tenants")
 
-        _tablo_olustur(conn, text("""
-            CREATE TABLE IF NOT EXISTS islem_logs (
-                id SERIAL PRIMARY KEY,
-                islem_tipi VARCHAR(50) NOT NULL,
-                cari_adi VARCHAR(200),
-                tutar BIGINT,
-                fatura_id VARCHAR(100),
-                irsaliye_id VARCHAR(100),
-                plaka VARCHAR(20),
-                aciklama TEXT,
-                session_id VARCHAR(100),
-                created_at TIMESTAMP DEFAULT NOW()
-            )
-        """), "islem_logs")
+            _tablo_olustur(conn, text("""
+                CREATE TABLE IF NOT EXISTS islem_logs (
+                    id SERIAL PRIMARY KEY,
+                    islem_tipi VARCHAR(50) NOT NULL,
+                    cari_adi VARCHAR(200),
+                    tutar BIGINT,
+                    fatura_id VARCHAR(100),
+                    irsaliye_id VARCHAR(100),
+                    plaka VARCHAR(20),
+                    aciklama TEXT,
+                    session_id VARCHAR(100),
+                    created_at TIMESTAMP DEFAULT NOW()
+                )
+            """), "islem_logs")
 
-        _tablo_olustur(conn, text("""
-            CREATE TABLE IF NOT EXISTS active_logins (
-                id SERIAL PRIMARY KEY,
-                principal_key VARCHAR(150) UNIQUE NOT NULL,
-                session_id VARCHAR(100) NOT NULL,
-                username VARCHAR(100),
-                user_agent TEXT,
-                ip_adresi VARCHAR(50),
-                created_at TIMESTAMP DEFAULT NOW(),
-                updated_at TIMESTAMP DEFAULT NOW()
-            )
-        """), "active_logins")
+            _tablo_olustur(conn, text("""
+                CREATE TABLE IF NOT EXISTS active_logins (
+                    id SERIAL PRIMARY KEY,
+                    principal_key VARCHAR(150) UNIQUE NOT NULL,
+                    session_id VARCHAR(100) NOT NULL,
+                    username VARCHAR(100),
+                    user_agent TEXT,
+                    ip_adresi VARCHAR(50),
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    updated_at TIMESTAMP DEFAULT NOW()
+                )
+            """), "active_logins")
 
-        _tablo_olustur(conn, text("""
-            CREATE TABLE IF NOT EXISTS billable_events (
-                id SERIAL PRIMARY KEY,
-                event_id VARCHAR(100) UNIQUE NOT NULL,
-                event_key VARCHAR(200) UNIQUE,
-                user_id INTEGER,
-                username VARCHAR(100),
-                profaix_user_id VARCHAR(100),
-                event_type VARCHAR(50) NOT NULL,
-                amount INTEGER NOT NULL DEFAULT 1,
-                source VARCHAR(50),
-                description TEXT,
-                metadata_json TEXT,
-                created_at TIMESTAMP DEFAULT NOW()
-            )
-        """), "billable_events")
+            _tablo_olustur(conn, text("""
+                CREATE TABLE IF NOT EXISTS billable_events (
+                    id SERIAL PRIMARY KEY,
+                    event_id VARCHAR(100) UNIQUE NOT NULL,
+                    event_key VARCHAR(200) UNIQUE,
+                    user_id INTEGER,
+                    username VARCHAR(100),
+                    profaix_user_id VARCHAR(100),
+                    event_type VARCHAR(50) NOT NULL,
+                    amount INTEGER NOT NULL DEFAULT 1,
+                    source VARCHAR(50),
+                    description TEXT,
+                    metadata_json TEXT,
+                    created_at TIMESTAMP DEFAULT NOW()
+                )
+            """), "billable_events")
 
-        # ── KOLON MİGRATIONLARI ───────────────────────────────────────
-        _kolon_ekle(conn, text(
-            "ALTER TABLE waybills ADD COLUMN IF NOT EXISTS malzemeler_json TEXT"
-        ), "malzemeler_json (waybills)")
-
-        _kolon_ekle(conn, text(
-            "ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS tam_gecmis TEXT"
-        ), "tam_gecmis (chat_sessions)")
-
-        for kolon, sql_tip in [
-            ("username", "VARCHAR(100)"),
-            ("profaix_user_id", "VARCHAR(100)"),
-            ("auth_session_id", "VARCHAR(100)"),
-            ("ip_adresi", "VARCHAR(50)"),
-        ]:
+            # ── KOLON MİGRATIONLARI ───────────────────────────────────────
             _kolon_ekle(conn, text(
-                f"ALTER TABLE islem_logs ADD COLUMN IF NOT EXISTS {kolon} {sql_tip}"
-            ), f"{kolon} (islem_logs)")
+                "ALTER TABLE waybills ADD COLUMN IF NOT EXISTS malzemeler_json TEXT"
+            ), "malzemeler_json (waybills)")
 
-        # ── TENANT_ID KOLON MİGRATIONLARI ────────────────────────────
-        tenant_kolonlu_tablolar = [
-            "weigh_tickets",
-            "waybills",
-            "invoices",
-            "islem_logs",
-            "usage_logs",
-            "chat_sessions",
-            "vehicles",
-            "audit_logs",
-        ]
-        for tablo in tenant_kolonlu_tablolar:
             _kolon_ekle(conn, text(
-                f"ALTER TABLE {tablo} ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(100)"
-            ), f"tenant_id ({tablo})")
+                "ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS tam_gecmis TEXT"
+            ), "tam_gecmis (chat_sessions)")
 
-        # ── TENANT ÖZELLİKLERİ KOLONU ───────────────────────────────────
-        _kolon_ekle(conn, text(
-            "ALTER TABLE tenants ADD COLUMN IF NOT EXISTS ozellikler TEXT"
-        ), "ozellikler (tenants)")
+            for kolon, sql_tip in [
+                ("username", "VARCHAR(100)"),
+                ("profaix_user_id", "VARCHAR(100)"),
+                ("auth_session_id", "VARCHAR(100)"),
+                ("ip_adresi", "VARCHAR(50)"),
+            ]:
+                _kolon_ekle(conn, text(
+                    f"ALTER TABLE islem_logs ADD COLUMN IF NOT EXISTS {kolon} {sql_tip}"
+                ), f"{kolon} (islem_logs)")
 
-        # ── OCR CONFIDENCE KOLONLARI ──────────────────────────────────────
-        _kolon_ekle(conn, text(
-            "ALTER TABLE weigh_tickets ADD COLUMN IF NOT EXISTS ocr_confidence_plaka FLOAT"
-        ), "ocr_confidence_plaka (weigh_tickets)")
-        _kolon_ekle(conn, text(
-            "ALTER TABLE weigh_tickets ADD COLUMN IF NOT EXISTS ocr_confidence_agirlik FLOAT"
-        ), "ocr_confidence_agirlik (weigh_tickets)")
-        _kolon_ekle(conn, text(
-            "ALTER TABLE weigh_tickets ADD COLUMN IF NOT EXISTS ocr_confidence_fis_no FLOAT"
-        ), "ocr_confidence_fis_no (weigh_tickets)")
-        _kolon_ekle(conn, text(
-            "ALTER TABLE weigh_tickets ADD COLUMN IF NOT EXISTS ocr_confidence_genel FLOAT"
-        ), "ocr_confidence_genel (weigh_tickets)")
+            # ── TENANT_ID KOLON MİGRATIONLARI ────────────────────────────
+            tenant_kolonlu_tablolar = [
+                "weigh_tickets",
+                "waybills",
+                "invoices",
+                "islem_logs",
+                "usage_logs",
+                "chat_sessions",
+                "vehicles",
+                "audit_logs",
+            ]
+            for tablo in tenant_kolonlu_tablolar:
+                _kolon_ekle(conn, text(
+                    f"ALTER TABLE {tablo} ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(100)"
+                ), f"tenant_id ({tablo})")
 
-        # ── TOKEN/BILLING: company_id (sirket bazli kullanim sayaci) ──────
-        _kolon_ekle(conn, text(
-            "ALTER TABLE billable_events ADD COLUMN IF NOT EXISTS company_id VARCHAR(100)"
-        ), "company_id (billable_events)")
+            # ── TENANT ÖZELLİKLERİ KOLONU ───────────────────────────────────
+            _kolon_ekle(conn, text(
+                "ALTER TABLE tenants ADD COLUMN IF NOT EXISTS ozellikler TEXT"
+            ), "ozellikler (tenants)")
 
-        # ── INDEX MİGRATIONLARI ───────────────────────────────────────
-        _index_olustur(conn, text(
-            "CREATE INDEX IF NOT EXISTS idx_weigh_tickets_tenant_status "
-            "ON weigh_tickets(tenant_id, status)"
-        ), "idx_weigh_tickets_tenant_status")
+            # ── OCR CONFIDENCE KOLONLARI ──────────────────────────────────────
+            _kolon_ekle(conn, text(
+                "ALTER TABLE weigh_tickets ADD COLUMN IF NOT EXISTS ocr_confidence_plaka FLOAT"
+            ), "ocr_confidence_plaka (weigh_tickets)")
+            _kolon_ekle(conn, text(
+                "ALTER TABLE weigh_tickets ADD COLUMN IF NOT EXISTS ocr_confidence_agirlik FLOAT"
+            ), "ocr_confidence_agirlik (weigh_tickets)")
+            _kolon_ekle(conn, text(
+                "ALTER TABLE weigh_tickets ADD COLUMN IF NOT EXISTS ocr_confidence_fis_no FLOAT"
+            ), "ocr_confidence_fis_no (weigh_tickets)")
+            _kolon_ekle(conn, text(
+                "ALTER TABLE weigh_tickets ADD COLUMN IF NOT EXISTS ocr_confidence_genel FLOAT"
+            ), "ocr_confidence_genel (weigh_tickets)")
 
-        _index_olustur(conn, text(
-            "CREATE INDEX IF NOT EXISTS idx_waybills_tenant_status "
-            "ON waybills(tenant_id, status)"
-        ), "idx_waybills_tenant_status")
+            # ── TOKEN/BILLING: company_id (sirket bazli kullanim sayaci) ──────
+            _kolon_ekle(conn, text(
+                "ALTER TABLE billable_events ADD COLUMN IF NOT EXISTS company_id VARCHAR(100)"
+            ), "company_id (billable_events)")
 
-        _index_olustur(conn, text(
-            "CREATE INDEX IF NOT EXISTS idx_invoices_tenant_status "
-            "ON invoices(tenant_id, status)"
-        ), "idx_invoices_tenant_status")
+            # ── INDEX MİGRATIONLARI ───────────────────────────────────────
+            _index_olustur(conn, text(
+                "CREATE INDEX IF NOT EXISTS idx_weigh_tickets_tenant_status "
+                "ON weigh_tickets(tenant_id, status)"
+            ), "idx_weigh_tickets_tenant_status")
 
-        _index_olustur(conn, text(
-            "CREATE INDEX IF NOT EXISTS idx_billable_events_user_date "
-            "ON billable_events(profaix_user_id, created_at)"
-        ), "idx_billable_events_user_date")
+            _index_olustur(conn, text(
+                "CREATE INDEX IF NOT EXISTS idx_waybills_tenant_status "
+                "ON waybills(tenant_id, status)"
+            ), "idx_waybills_tenant_status")
 
-        _index_olustur(conn, text(
-            "CREATE INDEX IF NOT EXISTS idx_waybills_parasut_irsaliye_id "
-            "ON waybills(parasut_irsaliye_id)"
-        ), "idx_waybills_parasut_irsaliye_id")
+            _index_olustur(conn, text(
+                "CREATE INDEX IF NOT EXISTS idx_invoices_tenant_status "
+                "ON invoices(tenant_id, status)"
+            ), "idx_invoices_tenant_status")
+
+            _index_olustur(conn, text(
+                "CREATE INDEX IF NOT EXISTS idx_billable_events_user_date "
+                "ON billable_events(profaix_user_id, created_at)"
+            ), "idx_billable_events_user_date")
+
+            _index_olustur(conn, text(
+                "CREATE INDEX IF NOT EXISTS idx_waybills_parasut_irsaliye_id "
+                "ON waybills(parasut_irsaliye_id)"
+            ), "idx_waybills_parasut_irsaliye_id")
 
     # ── YARIMA KALMIŞ İŞLEM TESPİTİ ──────────────────────────────────
     from app.core.database import WeighTicket, TicketStatus
@@ -199,7 +205,9 @@ def _ilk_tenant_olustur(db, engine):
     from sqlalchemy import text
 
     if not PARASUT_USERNAME:
-        logger.warning("⚠️ PARASUT_USERNAME boş — varsayılan tenant oluşturulamadı")
+        from app.core.config import MUHASEBE_SAGLAYICI
+        if MUHASEBE_SAGLAYICI == "parasut":
+            logger.warning("⚠️ PARASUT_USERNAME boş — varsayılan tenant oluşturulamadı")
         return
 
     try:

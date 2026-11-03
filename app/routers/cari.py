@@ -30,7 +30,7 @@ async def cariler_getir(request: Request, background_tasks: BackgroundTasks,
                                    "SORGU", "cari_listesi" + ("_refresh" if refresh else ""),
                                    1, aktif_user.get("profaix_user_id"))
     try:
-        from app.parasut.client import async_cari_listesi_getir, async_cari_cache_yenile
+        from app.muhasebe import async_cari_listesi_getir, async_cari_cache_yenile
         cariler = await async_cari_cache_yenile(tenant_id=tenant_id) if refresh else await async_cari_listesi_getir(tenant_id=tenant_id)
         # Tip filtresi — UI tarafındaki dropdown filtrelerini sunucuya çekiyoruz
         tip_norm = (tip or "").strip().lower()
@@ -55,7 +55,7 @@ async def cari_bilgi_getir(cari_adi: str, request: Request):
     mevcut_kullanici(request)  # auth kontrolü
     tenant_id = _tenant_id_from_user(mevcut_kullanici(request))
     try:
-        from app.parasut.client import async_cari_id_bul, async_cari_detay_getir, cari_listesi_getir
+        from app.muhasebe import async_cari_id_bul, async_cari_detay_getir, cari_listesi_getir
         cari_id = await async_cari_id_bul(cari_adi, tenant_id=tenant_id)
         if not cari_id:
             return JSONResponse({"hata": f"'{cari_adi}' bulunamadı."}, status_code=404)
@@ -96,7 +96,7 @@ async def cari_olustur_endpoint(request: Request, background_tasks: BackgroundTa
     aktif_user = mevcut_kullanici(request)
     tenant_id  = _tenant_id_from_user(aktif_user)
     try:
-        from app.parasut.client import cari_olustur
+        from app.muhasebe import cari_olustur, saglayici_adi
         sonuc = await asyncio.to_thread(cari_olustur, firma_adi, email, telefon, vergi_no, vergi_dairesi, adres, tenant_id, tip)
         if sonuc.get("basarili"):
             if aktif_user:
@@ -116,7 +116,7 @@ async def cari_olustur_endpoint(request: Request, background_tasks: BackgroundTa
             return JSONResponse({"basarili": True, "cevap": (
                 f"✅ Yeni cari oluşturuldu!\n\n🏢 Firma: {firma_adi}\n"
                 f"📧 Email: {email or '-'}\n📞 Telefon: {telefon or '-'}\n"
-                f"🔢 Vergi No: {vergi_no or '-'}\nParaşüt'e kaydedildi."),
+                f"🔢 Vergi No: {vergi_no or '-'}\n{saglayici_adi()} sistemine kaydedildi."),
                 "cari_id": sonuc.get("id")})
         else:
             return JSONResponse({"basarili": False,
@@ -142,7 +142,7 @@ async def cari_guncelle_endpoint(request: Request, background_tasks: BackgroundT
         return JSONResponse({"basarili": False, "hata": "cari_id veya cari_adi zorunlu"}, status_code=400)
 
     try:
-        from app.parasut.client import async_cari_guncelle, async_cari_id_bul
+        from app.muhasebe import async_cari_guncelle, async_cari_id_bul
         if not cari_id:
             cari_id = await async_cari_id_bul(cari_adi_kaynak, tenant_id=tenant_id)
             if not cari_id:

@@ -1,0 +1,4 @@
+# Geliştirme / test araçları
+-r requirements.txt
+pytest>=8
+pyflakes>=3

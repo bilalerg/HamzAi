@@ -169,7 +169,7 @@
           (ro.atlandi ? ` · ${ro.atlandi} atlandı (mevcut)` : '') +
           (ro.hata ? ` · <span style="color:#dc2626;">${ro.hata} hata</span>` : '') + '</div>';
         (res.irsaliyeler || []).forEach(i => {
-          html += `<div style="margin-top:5px;font-size:12px;">📋 <b>${i.cari}</b> — ${i.arac} araç · ${_kgFmt(i.toplam_kg)} kg <span style="color:var(--muted);">(Paraşüt ID: ${i.parasut_id})</span></div>`;
+          html += `<div style="margin-top:5px;font-size:12px;">📋 <b>${i.cari}</b> — ${i.arac} araç · ${_kgFmt(i.toplam_kg)} kg <span style="color:var(--muted);">(İrsaliye No: ${i.parasut_id})</span></div>`;
         });
         const hatalar = (res.sonuclar || []).filter(x => x.durum === 'hata');
         if (hatalar.length) {

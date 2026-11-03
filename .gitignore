@@ -19,3 +19,7 @@ logs/
 
 # Yedekler (lokal kalır, push edilmez)
 *.bak
+
+# Lokal/demo SQLite veritabanı
+profaix_yerel.db*
+

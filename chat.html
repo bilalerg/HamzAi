@@ -71,6 +71,7 @@
         <span class="pg-icon">⚙️</span><span class="pg-title">Sistem</span><span class="pg-chev">▶</span>
       </button>
       <div class="panel-group-items">
+        <button class="panel-btn" data-yetki="rapor" id="excelAktarBtn" style="display:none" onclick="excelAktar(this)"><span class="btn-icon">📗</span> Excel'e aktar</button>
         <button class="panel-btn" data-yetki="cari" onclick="cacheYenile(this)"><span class="btn-icon">🔄</span> Bakiyeleri yenile</button>
       </div>
     </div>
@@ -88,7 +89,8 @@
   </div>
   <div class="sep"></div>
   <div class="header-label">Sorgu Paneli</div>
-  <a href="https://profaix.com/panel" target="_top" style="display:flex;align-items:center;gap:6px;padding:5px 12px;background:var(--accent);border-radius:100px;text-decoration:none;font-size:12px;font-weight:500;color:#fff;transition:opacity 0.15s;" onmouseover="this.style.opacity=0.85" onmouseout="this.style.opacity=1">
+  <span id="muhasebeRozet" class="muhasebe-rozet" style="display:none"></span>
+  <a id="panelDonLink" href="https://profaix.com/panel" target="_top" style="display:flex;align-items:center;gap:6px;padding:5px 12px;background:var(--accent);border-radius:100px;text-decoration:none;font-size:12px;font-weight:500;color:#fff;transition:opacity 0.15s;" onmouseover="this.style.opacity=0.85" onmouseout="this.style.opacity=1">
     <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
     Panele Dön
   </a>

@@ -162,8 +162,13 @@ async def chat_sayfasi(request: Request):
     user = mevcut_kullanici(request)
     if not user:
         from fastapi.responses import RedirectResponse
-        from app.core.config import BASE_URL as _BASE_URL
-        _login_url = f"{_BASE_URL}/login" if _BASE_URL else "https://profaix.com/login"
+        from app.core.config import BASE_URL as _BASE_URL, IS_PRODUCTION as _PROD
+        if _BASE_URL:
+            _login_url = f"{_BASE_URL}/login"
+        elif not _PROD:
+            _login_url = "/login"          # lokal/demo: yerel admin giriş sayfası
+        else:
+            _login_url = "https://profaix.com/login"
         return RedirectResponse(url=_login_url)
     token = request.cookies.get("profaix_token", "")
     return HTMLResponse(content=_chat_html(token))
@@ -302,6 +307,10 @@ async def me(request: Request):
     out = {"giris_yapildi": True, **user}
     from app.core.yetki import yetkiler_getir
     out["yetkiler"] = yetkiler_getir(user.get("rol"))
+    from app.muhasebe import aktif_saglayici, saglayici_adi
+    from app.core.config import ANTHROPIC_API_KEY
+    out["muhasebe"] = {"saglayici": aktif_saglayici(), "ad": saglayici_adi(),
+                       "excel_aktar": aktif_saglayici() == "yerel", "ai_aktif": bool(ANTHROPIC_API_KEY)}
     sid = canonical_chat_session_id(user)
     if sid:
         out["chat_session_id"] = sid

@@ -10,6 +10,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Çalıştırma
 
+**Lokal / demo (en kolay):** `baslat.bat` (Windows) veya `./baslat.sh` — venv kurar, `.env` yoksa
+oluşturur, `yerel_baslat.py` ile sunucuyu açar. `--sifirla` demo veriyi yeniden yükler.
+Giriş `admin / profaix123`. Test: `python -m pytest -q` (geçici SQLite, ağ/ücretli çağrı yok).
+
 ```bash
 python -m venv .venv && .venv\Scripts\activate  # Windows
 pip install -r requirements.txt
@@ -22,9 +26,15 @@ Uygulama başlarken `validate_config()` çalışır — tüm `.env` değerleri d
 
 ## Gerekli .env Değişkenleri
 
+Şablon: `.env.example`. Lokal/yerel modda zorunlu olan sadece `JWT_SECRET_KEY`, `ADMIN_TOKEN`
+(+ admin girişi için `ADMIN_PASSWORD`). `PARASUT_*` yalnızca `MUHASEBE_SAGLAYICI=parasut` iken,
+`ANTHROPIC_API_KEY` yalnızca `ENV=production` iken zorunlu.
+
 ```
-ANTHROPIC_API_KEY
-DATABASE_URL                    # PostgreSQL (Supabase)
+MUHASEBE_SAGLAYICI              # yerel (default) | parasut
+DEMO_VERI                       # 1 → yerel modda tablolar boşsa örnek veri yükle
+ANTHROPIC_API_KEY               # boşsa: sohbet anahtar-kelime modu, OCR elle giriş
+DATABASE_URL                    # boşsa ./profaix_yerel.db (SQLite); prod: PostgreSQL (Supabase)
 PARASUT_CLIENT_ID               # Default tenant credentials (Bilal/admin)
 PARASUT_CLIENT_SECRET
 PARASUT_USERNAME
@@ -125,6 +135,40 @@ static/                  Frontend asset'leri (FastAPI StaticFiles ile /static/ a
 - Bootstrap token inject (`main.py` `_chat_html()`) **01-state.js'in önüne** yapılır — `let AUTH_TOKEN = (window.PROFAIX_BOOTSTRAP_TOKEN || '')` doğru değeri okur.
 
 ## Temel Tasarım Kararları
+
+### Muhasebe Sağlayıcı Katmanı — KRİTİK (app/muhasebe/)
+
+Router'lar muhasebe fonksiyonlarını **sadece** `from app.muhasebe import async_X` ile alır —
+`app.parasut.client`'tan doğrudan import ETME. `app/muhasebe/__init__.py` `.env`'deki
+`MUHASEBE_SAGLAYICI`'ya göre (PEP 562 `__getattr__`) şu modüllerden birine yönlendirir:
+
+| Değer | Modül | Veri |
+|---|---|---|
+| `yerel` (default) | `app/muhasebe/yerel/` | Profaix'in kendi DB'si: `yerel_cariler`, `yerel_faturalar`, `yerel_irsaliyeler`, `yerel_hareketler`, `yerel_hesaplar` |
+| `parasut` | `app/parasut/client.py` | Paraşüt V4 API |
+
+- İki sağlayıcı **aynı fonksiyon adı, parametre sırası ve dönüş formatını** sağlar.
+- Router'larda Paraşüt JSON:API formatında kurulan 3 yazma isteği (`shipment_documents`,
+  `sales_invoices`, `purchase_bills` POST + `shipment_documents` DELETE) yerelde
+  `yerel/servis.py::parasut_post/parasut_delete` tarafından yorumlanıp DB'ye yazılır.
+- Fiş → irsaliye akışı sağlayıcıdan bağımsız: `app/muhasebe/irsaliye_akisi.py`
+  (`app/parasut/irsaliye.py` sadece geriye uyumluluk shim'i).
+- Bakiye işareti Paraşüt ile aynı: `+` cari bize borçlu, `−` biz borçluyuz.
+  Satış faturası +, alış faturası −, tahsilat −, ödeme +.
+- Yerel modda e-fatura/e-arşiv **kesilemez** (resmi GİB entegrasyonu yok) — açık hata döner.
+- `/api/muhasebe/durum` → aktif sağlayıcı; `/api/muhasebe/excel` → yerel kayıtların .xlsx dökümü.
+- Kullanıcıya gösterilen "X'e kaydedildi" metinleri `saglayici_adi()` kullanır.
+
+**Yeni muhasebe fonksiyonu eklerken:** hem `app/parasut/` (+ `async_wrappers.py`) hem
+`app/muhasebe/yerel/servis.py` içine yaz, yerel adı `yerel/__init__.py::_SENKRON` listesine ekle
+(async sürümü otomatik üretilir), `tests/` altına test ekle.
+
+**Claude anahtarı yoksa (lokal demo):** `llm_handler.py` anahtar-kelime eşleştirmeye,
+`ocr/reader.py` "elle giriş" moduna düşer (`FisVerisi.manuel_giris=True`, tüm güven skorları 0 →
+form düzenleme modunda açılır). Production'da `ANTHROPIC_API_KEY` zorunludur.
+
+**SQLite:** `DATABASE_URL` boşsa kullanılır; şema `create_all` ile kurulur, `migrations.py`'deki
+PostgreSQL'e özgü SQL'ler SQLite'ta atlanır.
 
 ### Auth Akışı
 İki kullanıcı tipi:
@@ -442,7 +486,8 @@ otomatik olarak `window.X` olur, herhangi bir modülde tanımlı olabilir.
        return await asyncio.to_thread(yeni_fonksiyon, param, tenant_id)
    ```
 4. **Backward-compat**: `client.py`'a re-export ekle (`from .yeni_modul import yeni_fonksiyon`).
-5. Router'da `await async_yeni_fonksiyon(param, tenant_id=tenant_id)` ile çağır.
+5. Router'da `from app.muhasebe import async_yeni_fonksiyon` → `await async_yeni_fonksiyon(param, tenant_id=tenant_id)`.
+   Aynı fonksiyonu `app/muhasebe/yerel/servis.py`'ye de yaz (bkz. "Muhasebe Sağlayıcı Katmanı").
 6. **Müşteri/tedarikçi ayrımı** gerekiyorsa `dogru_akis` flag'ini kontrol et.
 
 ### Refactor / Modül Değişikliği Sonrası ZORUNLU Smoke Test
@@ -463,6 +508,10 @@ python -c "from app.parasut.async_wrappers import *; print('async OK')"
 
 # 3. Full app
 python -c "import os; os.environ.setdefault('ENV','development'); from main import app; print('Routes:', len(app.routes))"
+
+# 4. Sağlayıcı katmanı (iki mod da import edilebilmeli) + testler
+python -c "from app.muhasebe.yerel import *; print('yerel OK')"
+python -m pytest -q
 ```
 
 **Geçmiş ders**: client.py 12 modüle bölündüğünde 4 ayrı import bug'ı production'a kaçtı
@@ -737,3 +786,6 @@ Demo öncesi NOT eklenmiş ama yapılmamış:
 14. **client.py monolit → per-konu modüller** — eski 2974 satırlık `app/parasut/client.py` (100 satır, **sadece backward-compat re-export shim**) + 12 modüle bölündü: `_state.py` (per-tenant state), `_http.py` (HTTP katmanı), `token.py`, `cari.py`, `tahsilat.py`, `satis.py`, `alis.py`, `fatura_sorgu.py`, `irsaliye_sorgu.py`, `rapor.py`, `e_fatura.py`, `async_wrappers.py`. **KRİTİK**: Module-level state (`_tokens`, `_cari_caches`, `_kasa_hesabi_ids`, vs.) **yalnızca `_state.py`'da tanımlanır** — diğer modüller import edip mutate eder. Hiçbir modül `_tokens = {}` ile **yeniden bind etmemeli** (yoksa tenant izolasyonu çöker). Eski `from app.parasut.client import X` çalışmaya devam eder (re-export sayesinde).
 15. **Refactor sonrası import bug'ları & smoke test zorunluluğu** — client.py 12 modüle bölündüğünde 4 import bug'ı production'a kaçtı (`import re` eksik, `_cari_caches`/`cari_detay_getir` import edilmemiş, `alıs_faturasi_odeme_ekle` Türkçe ı vs ASCII i). Sebep: router'lar lazy import yaptığı için `from main import app` testi modül-level import'ları tetiklemez. **Çözüm**: modül değişikliği sonrası `pyflakes` + `from app.parasut.client import *` (eager) + `from app.parasut.async_wrappers import *` testleri ZORUNLU (bkz. "Refactor / Modül Değişikliği Sonrası ZORUNLU Smoke Test"). PowerShell ile satır kopyalarken daima `-Encoding UTF8` (Türkçe karakter koruması).
 16. **Async çağrılarda tenant_id atlanmaz** — `routers/fatura.py`'de fatura kesim sonrası `async_cari_cache_yenile()` parametresiz çağrılıyordu → default tenant'a (`bilaleroglu3663@gmail.com`) sızıyordu (3-4 sn boşa + cross-tenant cache karışması). Tüm `await async_*(...)` çağrılarına `tenant_id=tenant_id` geçilmeli.
+17. **Muhasebe sağlayıcı katmanı (2026-11)** — Paraşüt erişimi kaybedilince Profaix'in Paraşüt'süz
+   çalışabilmesi için `app/muhasebe/` eklendi; `yerel` sağlayıcı default. Paraşüt kodu silinmedi,
+   `MUHASEBE_SAGLAYICI=parasut` ile aynen çalışır. Router'lar artık `app.muhasebe`'den import eder.

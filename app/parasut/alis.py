@@ -14,8 +14,10 @@ from app.core.logger import logger
 
 from ._state import _resolve_tid, _cari_caches
 from .token import _tenant_credentials, get_tenant_config
-from ._http import parasut_get, parasut_post, parasut_put, parasut_patch
+from ._http import parasut_get, parasut_post, parasut_put, parasut_patch, parasut_delete
 from .cari import cari_id_bul
+from .tahsilat import _kasa_hesabi_bul
+from app.core.config import PARASUT_HURDA_PRODUCT_ID
 from .satis import _attrs_ve_rels_hazirla, _PURCHASE_BILL_ATTRIBUTES, _fatura_dict_olustur
 
 

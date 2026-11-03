@@ -32,7 +32,7 @@ async def tahsilat_ekle_endpoint(request: Request, background_tasks: BackgroundT
     aktif_user = mevcut_kullanici(request)
     tenant_id  = _tenant_id_from_user(aktif_user)
     try:
-        from app.parasut.client import async_tahsilat_ekle, async_cari_id_bul, async_cari_detay_getir, async_cari_tipi_bul
+        from app.muhasebe import async_tahsilat_ekle, async_cari_id_bul, async_cari_detay_getir, async_cari_tipi_bul, saglayici_adi
         from app.core.tenant import get_tenant_ozellik
         from datetime import datetime
 
@@ -118,7 +118,7 @@ async def tahsilat_ekle_endpoint(request: Request, background_tasks: BackgroundT
                 "cevap": (f"✅ Tahsilat kaydedildi!\n\n🏢 Cari: {cari_adi}\n"
                           f"💰 Tutar: {tr_para(float(tutar),2)} TL\n"
                           f"📅 Tarih: {datetime.strptime(tarih_str, '%Y-%m-%d').strftime('%d.%m.%Y') if tarih_str else 'Bugün'}\n"
-                          f"Paraşüt'e kaydedildi.{yontem_bilgi}{uyari}")
+                          f"{saglayici_adi()} sistemine kaydedildi.{yontem_bilgi}{uyari}")
             })
         else:
             return JSONResponse({"basarili": False,
@@ -146,7 +146,7 @@ async def tahsilat_sil_endpoint(request: Request, background_tasks: BackgroundTa
     if not odeme_id and not transaction_id:
         return JSONResponse({"basarili": False, "hata": "odeme_id veya transaction_id zorunlu"}, status_code=400)
     try:
-        from app.parasut.client import async_tahsilat_sil
+        from app.muhasebe import async_tahsilat_sil
         sonuc = await async_tahsilat_sil(odeme_id, tenant_id=tenant_id, transaction_id=transaction_id)
         if sonuc.get("basarili"):
             if aktif_user:
@@ -185,7 +185,7 @@ async def odeme_ekle_endpoint(request: Request, background_tasks: BackgroundTask
 
     # Not: Ödeme her zaman purchase_bills payment'e eklenir. Müşteri seçim
     # kontrolü UI tarafında yapılır (form müşteri fatura seçemez zaten).
-    from app.parasut.client import async_alıs_faturasi_odeme_ekle
+    from app.muhasebe import async_alıs_faturasi_odeme_ekle
     sonuc = await async_alıs_faturasi_odeme_ekle(
         fatura_id=fatura_id, tutar=tutar, kasa_id=kasa_id,
         tarih=tarih, notlar=notlar, tenant_id=tenant_id
@@ -225,7 +225,7 @@ async def cari_odeme_endpoint(request: Request, background_tasks: BackgroundTask
             status_code=400,
         )
     try:
-        from app.parasut.client import async_cari_bazli_odeme, async_cari_id_bul
+        from app.muhasebe import async_cari_bazli_odeme, async_cari_id_bul
         if not cari_id:
             cari_id = await async_cari_id_bul(cari_adi, tenant_id=tenant_id)
             if not cari_id:
@@ -269,7 +269,7 @@ async def hesaplar_getir(request: Request):
     """Kasa ve banka hesaplarını listeler."""
     aktif_user = mevcut_kullanici(request)
     tenant_id  = _tenant_id_from_user(aktif_user)
-    from app.parasut.client import async_hesap_listesi_getir
+    from app.muhasebe import async_hesap_listesi_getir
     try:
         hesaplar = await async_hesap_listesi_getir(tenant_id=tenant_id)
         return JSONResponse({"hesaplar": hesaplar, "toplam": len(hesaplar)})
@@ -294,7 +294,7 @@ async def para_transferi_endpoint(request: Request, background_tasks: Background
     if not kaynak_id or not hedef_id or tutar <= 0:
         return JSONResponse({"hata": "kaynak_id, hedef_id ve tutar zorunlu"}, status_code=400)
 
-    from app.parasut.client import async_para_transferi
+    from app.muhasebe import async_para_transferi
     sonuc = await async_para_transferi(
         kaynak_id=kaynak_id, hedef_id=hedef_id, tutar=tutar,
         tarih=tarih, aciklama=aciklama, tenant_id=tenant_id
@@ -316,7 +316,7 @@ async def stok_hareketleri_endpoint(request: Request, urun_id: str = None, limit
     """Stok giriş/çıkış hareketleri."""
     aktif_user = mevcut_kullanici(request)
     tenant_id  = _tenant_id_from_user(aktif_user)
-    from app.parasut.client import async_stok_hareketleri_getir
+    from app.muhasebe import async_stok_hareketleri_getir
     from app.core.database import SessionLocal, Waybill, WeighTicket
     try:
         hareketler = await async_stok_hareketleri_getir(urun_id=urun_id, limit=limit, tenant_id=tenant_id)

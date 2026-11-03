@@ -158,7 +158,9 @@
             const icon   = lvl === 'red' ? '🔴' : '🟡';
             const renk   = lvl === 'red' ? '#ef4444' : '#f59e0b';
             const bg     = lvl === 'red' ? 'rgba(239,68,68,0.08)' : 'rgba(245,158,11,0.08)';
-            const mesaj  = lvl === 'red'
+            const mesaj  = data.manuel_giris
+              ? 'Elle giriş — kırmızı alanları doldurun.'
+              : lvl === 'red'
               ? `OCR güven skoru düşük (%${pct}) — kırmızı alanları düzeltin.`
               : `OCR güven skoru orta (%${pct}) — sarı alanları kontrol edin.`;
             confBanner.style.cssText = `font-size:12px;padding:5px 9px;border-radius:6px;color:${renk};background:${bg};border:1px solid ${renk};`;

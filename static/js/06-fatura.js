@@ -160,7 +160,7 @@
     const uyari = document.createElement('div');
     uyari.style.cssText = 'font-size:12px;color:#78350f;background:#fffbeb;border:1.5px solid #f59e0b;border-radius:8px;padding:8px 12px;margin-bottom:10px;line-height:1.6;';
     const _odemeSozcuk = onTip === 'supplier' ? 'ödemesi' : 'tahsilatı';
-    uyari.innerHTML = '⚠️ <b>Dikkat:</b> İptal edilen fatura Paraşüt\'te geri alınamayabilir. Ödenmiş faturalar önce ' + _odemeSozcuk + ' silinmeden iptal edilemez.';
+    uyari.innerHTML = '⚠️ <b>Dikkat:</b> İptal edilen fatura geri alınamayabilir. Ödenmiş faturalar önce ' + _odemeSozcuk + ' silinmeden iptal edilemez.';
     wrap.appendChild(uyari);
 
     function satir(label, el) {
@@ -175,7 +175,7 @@
     }
 
     const idInp = document.createElement('input');
-    idInp.type = 'text'; idInp.className = 'fiyat-input'; idInp.placeholder = 'Fatura ID (Paraşüt URL\'den)';
+    idInp.type = 'text'; idInp.className = 'fiyat-input'; idInp.placeholder = MUHASEBE.saglayici === 'yerel' ? 'Fatura ID' : 'Fatura ID (Paraşüt URL\'den)';
     if (faturaId) idInp.value = String(faturaId);
     wrap.appendChild(satir('Fatura ID *', idInp));
 
@@ -242,7 +242,7 @@
 
     const bilgi = document.createElement('div');
     bilgi.style.cssText = 'font-size:12px;color:var(--muted);margin-bottom:10px;padding:8px 12px;background:var(--accent-lt);border-radius:8px;border-left:3px solid var(--accent);';
-    bilgi.innerHTML = 'Sadece doldurduğun alanlar Paraşüt\'e gönderilir. Boş bırakılanlar değişmez.<br>⚠️ Kalemler ve tutar değişmez — onun için faturayı iptal et, yeniden kes.';
+    bilgi.innerHTML = 'Sadece doldurduğun alanlar güncellenir. Boş bırakılanlar değişmez.<br>⚠️ Kalemler ve tutar değişmez — onun için faturayı iptal et, yeniden kes.';
     wrap.appendChild(bilgi);
 
     function toIsoTarih(t) {
@@ -326,7 +326,7 @@
     const resmiBody = document.createElement('div');
     const invoiceNoInp = document.createElement('input');
     invoiceNoInp.type = 'text'; invoiceNoInp.className = 'fiyat-input';
-    invoiceNoInp.placeholder = 'Boş bırakılırsa Paraşüt otomatik atar';
+    invoiceNoInp.placeholder = 'Boş bırakılırsa sistem otomatik atar';
     resmiBody.appendChild(satir('Fatura No', invoiceNoInp));
 
     const invoiceSeriesInp = document.createElement('input');
